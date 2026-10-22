@@ -29,7 +29,7 @@ There are no build, lint or test commands yet. The plan is a Rust core and CLI (
 There is no server. A Git repository of standard Beancount files is the single source of truth, and every client works on its own clone.
 
 - **Clients:** the CLI handles `init`, CSV import, `status`, `check`, `prices`, `export tax` and `adopt`. The Android app handles triage and manual capture. Fava or rustfava is the read-only desktop view. An own web UI (`lentil serve`) and a Tauri app wait until Fava plus the CLI demonstrably fall short.
-- **One core:** all clients compute with the same core, which is rustledger pinned to an exact version (GPL-3.0-only). The spec itself does not depend on any core library. If a ledger uses anything outside the supported profile (SPEC §14), the client treats the repository as read-only instead of computing it approximately.
+- **One core:** all clients compute with the same core, which is rustledger pinned to an exact version (GPL-3.0-only). The spec itself does not depend on any core library. If a ledger uses anything outside the supported profile (SPEC §14), the client treats the repository as read-only instead of computing it approximately. Git runs inside the core too, so the CLI and the Android app share one sync implementation. The Android app holds no finance logic; it keeps its pending intents in its own storage and hands them to the core for replay. UniFFI generates the Kotlin bindings to the core.
 - **Roles and write areas (§7):**
   - Importers only create new files (`imports/<source-id>/`, later `prices/`).
   - Editors change the flag, account, payee, narration and metadata of existing transactions, and write only under `manual/<device-id>/`.
@@ -65,12 +65,12 @@ Each one is spelled out in the spec section given in brackets.
 
 The full list is in `CONTRIBUTING.md`; network, secrets and language rules are NFRs in the PRD. The points that shape code most:
 
-- Use traits only at I/O boundaries: Git, file system, clock, randomness and import sources. Replay, ID generation and validation stay pure functions.
+- Use traits only at I/O boundaries: Git, file system, clock, randomness and import sources. Replay, ID generation and validation stay pure functions. Tests replace the boundaries with fakes, not a mocking library. The Android app wires its dependencies by hand, without a DI framework.
 - Tests:
   - Unit tests, differential tests against Python Beancount's `bean-check`, and mutation tests. The mutation tests are the actual quality gate; 80 % line coverage of `lentil-core` is only a floor.
   - Multi-writer sync tests, which fail on lost intents, duplicates or non-linear history, plus property-based tests for replay.
   - Test dependencies are dev-only.
-- Linting: for Rust, clippy with warnings as errors plus selected pedantic lints, and rustfmt. For Kotlin, Android Lint plus detekt or ktlint.
-- Dependencies: justify every new direct dependency in its PR, and run cargo-deny. Use no update bots, and pin GitHub Actions by commit SHA.
+- Linting: for Rust, clippy with warnings as errors plus selected pedantic lints, and rustfmt. For Kotlin, Android Lint and detekt with warnings as errors, plus ktfmt.
+- Dependencies: justify every new direct dependency in its PR, and run cargo-deny plus the license check for Gradle dependencies. Pin rustledger and UniFFI exactly. Use no update bots, and pin GitHub Actions by commit SHA.
 - Network: no telemetry, and no traffic except to the Git remote and the ECB. Secrets never go into the repository, `lentil.toml` included.
-- Internationalization is built in from v0.1, with German as the first translation. `spec_version` governs compatibility between clients, not the app version.
+- Internationalization is built in from v0.1, with German as the first translation. The core reports findings and conflicts as typed codes that each client translates, never as English text. `spec_version` governs compatibility between clients, not the app version.
