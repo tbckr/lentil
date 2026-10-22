@@ -67,10 +67,12 @@ The full list is in `CONTRIBUTING.md`; network, secrets and language rules are N
 
 - Use traits only at I/O boundaries: Git, file system, clock, randomness and import sources. Replay, ID generation and validation stay pure functions. Tests replace the boundaries with fakes, not a mocking library. The Android app wires its dependencies by hand, without a DI framework.
 - Tests:
-  - Unit tests, differential tests against Python Beancount's `bean-check`, and mutation tests. The mutation tests are the actual quality gate; 80 % line coverage of `lentil-core` is only a floor.
+  - Unit tests, differential tests against Python Beancount's `bean-check`, and mutation tests with cargo-mutants. The mutation tests are the actual quality gate; 80 % line coverage of `lentil-core`, measured with cargo-llvm-cov, is only a floor.
   - Multi-writer sync tests, which fail on lost intents, duplicates or non-linear history, plus property-based tests for replay.
+  - cargo-nextest runs the Rust tests but skips doc tests, so `cargo test --doc` runs those separately.
   - Test dependencies are dev-only.
-- Linting: for Rust, clippy with warnings as errors plus selected pedantic lints, and rustfmt. For Kotlin, Android Lint and detekt with warnings as errors, plus ktfmt.
-- Dependencies: justify every new direct dependency in its PR, and run cargo-deny plus the license check for Gradle dependencies. Pin rustledger and UniFFI exactly. Use no update bots, and pin GitHub Actions by commit SHA.
+- Linting: for Rust, clippy over all targets with warnings as errors plus selected pedantic lints, configured in `[workspace.lints]`, and rustfmt with default settings. For Kotlin, Android Lint and detekt with warnings as errors, plus ktfmt.
+- Dependencies: justify every new direct dependency in its PR. Run cargo-deny, cargo-machete and the license check for Gradle dependencies; cargo-deny admits only crates.io unless its configuration lists an explicit exception. Pin rustledger and UniFFI exactly. Use no update bots, and pin GitHub Actions by commit SHA.
+- Toolchain: Rust is pinned only in `rust-toolchain.toml`. The Nix dev shell reads it through rust-overlay and supplies every cargo tool, so never `cargo install` one.
 - Network: no telemetry, and no traffic except to the Git remote and the ECB. Secrets never go into the repository, `lentil.toml` included.
 - Internationalization is built in from v0.1, with German as the first translation. The core reports findings and conflicts as typed codes that each client translates, never as English text. `spec_version` governs compatibility between clients, not the app version.
