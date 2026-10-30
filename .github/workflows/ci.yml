@@ -1,0 +1,73 @@
+# Every job runs inside the flake's development shell, so CI uses exactly the
+# local toolchain. Actions are pinned by commit SHA (CONTRIBUTING: CI and hosting).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      - name: Format
+        run: nix develop --command cargo fmt --all --check
+      - name: Lint
+        run: nix develop --command cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: nix develop --command cargo nextest run --workspace
+      - name: Doc tests
+        run: nix develop --command cargo test --workspace --doc
+      - name: Dependencies
+        run: |
+          nix develop --command cargo deny check
+          nix develop --command cargo machete
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      - name: Line coverage of lentil-core (floor 80 %)
+        run: nix develop --command cargo llvm-cov nextest -p lentil-core --fail-under-lines 80
+
+  mutants:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      - name: Mutation tests on the changed code of lentil-core
+        if: github.event_name == 'pull_request'
+        run: |
+          git diff origin/${{ github.base_ref }}... > pr.diff
+          nix develop --command cargo mutants -p lentil-core --in-diff pr.diff --test-tool nextest
+      - name: Mutation tests on lentil-core
+        if: github.event_name == 'push'
+        run: nix develop --command cargo mutants -p lentil-core --test-tool nextest
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      - name: Build, lint and unit-test the app
+        working-directory: android
+        run: nix develop .. --command ./gradlew --no-daemon :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
+
+  nix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      - run: nix flake check --all-systems
