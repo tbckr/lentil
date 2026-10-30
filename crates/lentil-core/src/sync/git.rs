@@ -566,27 +566,49 @@ fn auth_failed() -> git2::Error {
     )
 }
 
-/// Points OpenSSL at Android's CA certificates, once per process: the
-/// vendored OpenSSL has no CA bundle of its own there.
-#[cfg(target_os = "android")]
+/// A PEM bundle of trusted CA certificates, set by [`use_ca_bundle`].
+static CA_BUNDLE: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+/// Makes every later fetch and push trust the certificates in the PEM file at
+/// `path` instead of OpenSSL's defaults. The Android app exports the system's
+/// trusted certificates to such a file at start, because the vendored OpenSSL
+/// cannot read Android's CA directories. Only the first call takes effect.
+pub fn use_ca_bundle(path: &Path) {
+    let _ = CA_BUNDLE.set(path.to_path_buf());
+}
+
+/// Applies the TLS settings once per process: the CA bundle from
+/// [`use_ca_bundle`] if set, otherwise on Android the system CA directories.
 fn init_tls() -> Result<(), GitError> {
     use std::sync::OnceLock;
-    /// Updatable store (Android 14+) first, then the system image's.
-    const CA_DIRS: &str = "/apex/com.android.conscrypt/cacerts:/system/etc/security/cacerts";
     static INIT: OnceLock<Result<(), GitError>> = OnceLock::new();
     INIT.get_or_init(|| {
-        // SAFETY: git2 marks this unsafe because libgit2 changes its global
-        // TLS settings without synchronization. Every network operation of
-        // this crate calls `init_tls` first, and `OnceLock` blocks concurrent
-        // callers until the setting is made, so no fetch or push of this
-        // crate runs while it changes.
-        unsafe { git2::opts::set_ssl_cert_dir(CA_DIRS) }.map_err(|e| map_error(&e))
+        if let Some(bundle) = CA_BUNDLE.get() {
+            // SAFETY: git2 marks this unsafe because libgit2 changes its global
+            // TLS settings without synchronization. Every network operation of
+            // this crate calls `init_tls` first, and `OnceLock` blocks
+            // concurrent callers until the setting is made, so no fetch or push
+            // of this crate runs while it changes.
+            return unsafe { git2::opts::set_ssl_cert_file(bundle) }.map_err(|e| map_error(&e));
+        }
+        system_ca_dirs()
     })
     .clone()
 }
 
+/// Points OpenSSL at Android's CA directories: the vendored OpenSSL has no CA
+/// bundle of its own there. May not match OpenSSL 3's hash names; the app
+/// therefore sets a bundle with [`use_ca_bundle`].
+#[cfg(target_os = "android")]
+fn system_ca_dirs() -> Result<(), GitError> {
+    /// Updatable store (Android 14+) first, then the system image's.
+    const CA_DIRS: &str = "/apex/com.android.conscrypt/cacerts:/system/etc/security/cacerts";
+    // SAFETY: as in `init_tls`, which is the only caller.
+    unsafe { git2::opts::set_ssl_cert_dir(CA_DIRS) }.map_err(|e| map_error(&e))
+}
+
 #[cfg(not(target_os = "android"))]
-fn init_tls() -> Result<(), GitError> {
+fn system_ca_dirs() -> Result<(), GitError> {
     Ok(())
 }
 
