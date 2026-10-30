@@ -1,0 +1,76 @@
+//! `lentil init` (PRD N1, FR-A1).
+
+use std::path::Path;
+use std::process::ExitCode;
+
+use lentil_core::config::CONFIG_FILE;
+use lentil_core::layout::{self, InitOptions};
+use lentil_core::snapshot::Snapshot;
+use lentil_core::sync::git::Git2Backend;
+use lentil_core::sync::{Credentials, ThreadSleeper, Work, run_sync};
+use lentil_core::validate::Role;
+
+use crate::context;
+use crate::i18n::{self, Lang, Msg};
+use crate::{CliError, CliResult};
+
+/// Creates the repository files in `dir`, commits them as admin and, with a
+/// remote, uploads them.
+pub fn run(lang: Lang, dir: &Path, title: &str, currency: &str, remote: Option<&str>) -> CliResult {
+    let shown = dir.display().to_string();
+    if dir.join(CONFIG_FILE).exists() {
+        return Err(CliError(i18n::msg(
+            lang,
+            Msg::InitExists,
+            &[("dir", &shown)],
+        )));
+    }
+    std::fs::create_dir_all(dir).map_err(|e| CliError(e.to_string()))?;
+    let files = layout::init_files(&InitOptions {
+        title: title.to_owned(),
+        currency: currency.to_owned(),
+    });
+    write_files(dir, &files)?;
+
+    let mut git = if dir.join(".git").exists() {
+        Git2Backend::open(dir, Credentials::Default)
+    } else {
+        Git2Backend::init(dir)
+    }
+    .map_err(|e| CliError(i18n::git_error(lang, &e)))?;
+    if let Some(url) = remote {
+        git.set_remote(url)
+            .map_err(|e| CliError(i18n::git_error(lang, &e)))?;
+    }
+    let author = context::author(lang, &git)?;
+    let identity = context::identity(Role::Admin)?;
+    run_sync(&mut git, &mut ThreadSleeper, &identity, &author, |before| {
+        let mut after = before.clone();
+        for (path, content) in files.files() {
+            after.insert(path, content);
+        }
+        Work::Commit {
+            after,
+            subject: "init repository".to_owned(),
+            result: (),
+        }
+    })
+    .map_err(|e| context::sync_error(lang, e))?;
+
+    println!("{}", i18n::msg(lang, Msg::InitDone, &[("dir", &shown)]));
+    if let Some(url) = remote {
+        println!("{}", i18n::msg(lang, Msg::InitPushed, &[("remote", url)]));
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn write_files(dir: &Path, files: &Snapshot) -> Result<(), CliError> {
+    for (path, content) in files.files() {
+        let target = dir.join(path);
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| CliError(e.to_string()))?;
+        }
+        std::fs::write(&target, content).map_err(|e| CliError(e.to_string()))?;
+    }
+    Ok(())
+}
