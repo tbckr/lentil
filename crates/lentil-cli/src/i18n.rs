@@ -258,10 +258,14 @@ pub fn finding_template(lang: Lang, code: FindingCode) -> &'static str {
         (AccountNotOpen, De) => "Konto {account} ist an diesem Datum nicht eröffnet.",
         (DuplicateLentilId, En) => "Two transactions share the ID {id}.",
         (DuplicateLentilId, De) => "Zwei Buchungen haben dieselbe ID {id}.",
-        (OutsideWriteArea, En) => "The {role} role must not change {path}.",
-        (OutsideWriteArea, De) => "Die Rolle {role} darf {path} nicht ändern.",
+        (OutsideWriteArea, En) => "The {role} role must not change {path} ({reason}).",
+        (OutsideWriteArea, De) => "Die Rolle {role} darf {path} nicht ändern ({reason}).",
         (OutsideProfile, En) => "Not supported by Lentil yet: {construct}",
         (OutsideProfile, De) => "Von Lentil noch nicht unterstützt: {construct}",
+        (FavaFileMismatch, En) => "fava.beancount may only hold Fava options and sidebar links.",
+        (FavaFileMismatch, De) => {
+            "fava.beancount darf nur Fava-Optionen und Seitenleisten-Links enthalten."
+        }
         (MainFileMismatch, En) => "main.beancount differs from the convention: {detail}",
         (MainFileMismatch, De) => "main.beancount weicht von der Konvention ab: {detail}",
         (IncludeOutsideRepository, En) => "An include points outside the repository: {include}",

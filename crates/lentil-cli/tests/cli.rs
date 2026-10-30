@@ -1,6 +1,8 @@
 //! End-to-end: `init`, a CSV import through a local remote, a repeated import,
 //! `status` and `check`, run as the real binary.
 
+#![allow(clippy::unwrap_used)] // Test helpers outside #[test] functions.
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
