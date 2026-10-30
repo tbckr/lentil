@@ -4,14 +4,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-Lentil is still being designed. The repository holds documents only, with no code, build system or tests:
+Lentil is still being designed. The repository holds documents and the development shell, but no code, build system or tests yet:
 
 - `docs/PRD.md`: product requirements. Covers principles, goals, usage scenarios (`N1` …), functional requirements (`FR-A1` …) and non-functional requirements, each with a target release, plus a release plan.
 - `docs/SPEC.md`: the Lentil Convention Spec. Its RFC 2119 rules make every client interchangeable on one Git repository of Beancount files. It is at `spec_version` 0, so any change may break until version 1.
 - `CONTRIBUTING.md`: engineering standards for testing, linting, dependencies, CI and releases.
 - `README.md`: short overview with links to the documents above and the non-goals. When a non-goal changes in the PRD, change the README too.
+- `flake.nix`: the Nix development shell, the only source of development tools. Rust is pinned in `rust-toolchain.toml`, Python Beancount in `pyproject.toml` and `uv.lock`.
 
-There are no build, lint or test commands yet. The plan is a Rust core and CLI (`lentil-core` on rustledger) plus a Kotlin Android app. When that code lands, add the real commands here instead of guessing them.
+There are no build, lint or test commands for Lentil itself yet. The plan is a Rust core and CLI (`lentil-core` on rustledger) plus a Kotlin Android app. When that code lands, add the real commands here instead of guessing them.
+
+## Development shell
+
+Every development tool comes from the flake's development shell, Python packages through its uv, so never install one any other way.
+
+- Enter it with direnv (`.envrc` contains `use flake`) or with `nix develop`. After a change to `flake.nix` or `flake.lock`, rebuild it with `nix-direnv-reload`.
+- `uv run bean-check <file>` runs the reference check of Python Beancount from anywhere in the repository. uv creates `.venv` from `uv.lock` on first use.
+- `nix fmt` formats `flake.nix`, and `nix flake check --all-systems` evaluates the flake for every supported system.
 
 ## Editing the documents
 
@@ -73,6 +82,6 @@ The full list is in `CONTRIBUTING.md`; network, secrets and language rules are N
   - Test dependencies are dev-only.
 - Linting: for Rust, clippy over all targets with warnings as errors plus selected pedantic lints, configured in `[workspace.lints]`, and rustfmt with default settings. For Kotlin, Android Lint and detekt with warnings as errors, plus ktfmt.
 - Dependencies: justify every new direct dependency in its PR. Run cargo-deny, cargo-machete and the license check for Gradle dependencies; cargo-deny admits only crates.io unless its configuration lists an explicit exception. Pin rustledger and UniFFI exactly. Use no update bots, and pin GitHub Actions by commit SHA.
-- Toolchain: Rust is pinned only in `rust-toolchain.toml`. The Nix dev shell reads it through rust-overlay and supplies every cargo tool, so never `cargo install` one.
+- Toolchain: Rust is pinned only in `rust-toolchain.toml`. The Nix dev shell reads it through rust-overlay and supplies every cargo tool, so never `cargo install` one. It also supplies Python and uv, and Python Beancount is pinned in `pyproject.toml` and `uv.lock`, so never `pip install` it.
 - Network: no telemetry, and no traffic except to the Git remote and the ECB. Secrets never go into the repository, `lentil.toml` included.
 - Internationalization is built in from v0.1, with German as the first translation. The core reports findings and conflicts as typed codes that each client translates, never as English text. `spec_version` governs compatibility between clients, not the app version.
