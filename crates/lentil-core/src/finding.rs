@@ -26,16 +26,21 @@ pub enum FindingCode {
     ParseError,
     /// A transaction does not balance. Args: `detail`.
     TransactionUnbalanced,
-    /// A posting uses an account that is not open, or already closed. Args: `account`.
+    /// A posting uses an account that is not open, or already closed. Args: `account`, `detail`.
     AccountNotOpen,
     /// Two transactions share a `lentil_id`. Args: `id`.
     DuplicateLentilId,
-    /// A change lies outside the write areas of the commit's role. Args: `path`, `role`.
+    /// A change lies outside the write areas of the commit's role. Args: `path`, `role`,
+    /// `reason` (see `validate::reason`).
     OutsideWriteArea,
-    /// A construct outside the supported profile (spec section 14). Args: `construct`.
+    /// A construct outside the supported profile (spec section 14). Args: `construct`
+    /// (see `validate::construct`).
     OutsideProfile,
     /// `main.beancount` differs from spec section 3. Args: `detail`.
     MainFileMismatch,
+    /// `fava.beancount` holds a directive other than `custom "fava-option"` and
+    /// `custom "fava-sidebar-link"` (spec section 3). Args: none.
+    FavaFileMismatch,
     /// An include points outside the repository. Args: `include`.
     IncludeOutsideRepository,
     /// A new balance assertion by an importer lacks `~ 0.00`. Args: `account`.
@@ -46,7 +51,8 @@ pub enum FindingCode {
     PadOnSourceAccount,
     /// A `lentil_id`, `lentil_ref` or `lentil_desc` was changed or removed. Args: `id`, `key`.
     ProtectedMetadataChanged,
-    /// A transaction was removed or its date or source posting changed by an editor. Args: `id`.
+    /// A transaction was removed or its date or source posting changed by an editor. Args: `id`,
+    /// `reason` (see `validate::reason`).
     ProtectedTransactionChanged,
     /// A `.beancount` file outside the include patterns of spec section 3. Args: `path`.
     StrayLedgerFile,
