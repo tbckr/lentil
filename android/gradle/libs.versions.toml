@@ -1,0 +1,11 @@
+[versions]
+# The Android toolchain. The Nix development shell reads these four values, so
+# the SDK it provides always matches the build.
+android-compileSdk = "37"
+android-compileSdkMinor = "0"
+android-buildTools = "37.0.0"
+android-ndk = "30.0.16248370"
+
+android-minSdk = "33"
+android-targetSdk = "37"
+

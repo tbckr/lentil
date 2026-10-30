@@ -2,3 +2,5 @@
 channel = "1.99.1"
 profile = "minimal"
 components = ["rustfmt", "clippy", "rust-analyzer", "rust-src", "llvm-tools"]
+# The Android ABIs of the app: arm64-v8a for devices, x86_64 for the emulator.
+targets = ["aarch64-linux-android", "x86_64-linux-android"]
