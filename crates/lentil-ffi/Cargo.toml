@@ -14,12 +14,20 @@ name = "lentil_ffi"
 # Generates the Kotlin bindings during the Gradle build (CONTRIBUTING: Build).
 name = "uniffi-bindgen"
 path = "src/bin/uniffi-bindgen.rs"
+required-features = ["bindgen"]
+
+[features]
+# Only the host's bindings generator needs UniFFI's command line; the library
+# built for Android stays without it.
+bindgen = ["uniffi/cli"]
 
 [dependencies]
 lentil-core.workspace = true
-uniffi = { workspace = true, features = ["cli"] }
+uniffi.workspace = true
+# Reads the local `main` for offline reading; the core's GitBackend only
+# offers the fetched head.
+git2.workspace = true
 jiff.workspace = true
-serde_json.workspace = true
 thiserror.workspace = true
 
 [lints]

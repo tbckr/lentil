@@ -968,9 +968,9 @@ dependencies = [
 name = "lentil-ffi"
 version = "0.1.0"
 dependencies = [
+ "git2",
  "jiff",
  "lentil-core",
- "serde_json",
  "thiserror",
  "uniffi",
 ]

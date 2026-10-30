@@ -1,0 +1,6 @@
+[bindings.kotlin]
+package_name = "app.lentil.ffi"
+cdylib_name = "lentil_ffi"
+# minSdk 33 has android.system.SystemCleaner.
+android = true
+kotlin_target_version = "2.0.0"

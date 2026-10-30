@@ -1,0 +1,516 @@
+//! The app's handle on its clone.
+//!
+//! Reading works offline on the local `main`: the app's pending intents are
+//! replayed on it, so its edits show before they are synced (PRD: FR-D5).
+
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex, PoisonError};
+
+use lentil_core::config::{CONFIG_FILE, Config, ConfigError};
+use lentil_core::finding::{Finding, FindingCode};
+use lentil_core::intent::{self, PendingIntent};
+use lentil_core::ledger::{self, Ledger, Txn};
+use lentil_core::sync::git::Git2Backend;
+use lentil_core::sync::{self, BRANCH, CommitId, Credentials, GitBackend, Identity, ThreadSleeper};
+use lentil_core::validate::{self, Role};
+
+use crate::error::LentilError;
+use crate::types::{
+    FfiAuthor, FfiCredentials, FfiFinding, FfiIdentity, FfiPendingIntent, QueueItem, SyncReport,
+    findings, outcomes, pending_intents,
+};
+
+/// A local clone of a Lentil repository.
+#[derive(Debug, uniffi::Object)]
+pub struct LentilRepo {
+    path: PathBuf,
+    /// The last loaded view; the app asks for queue, accounts and opening
+    /// date of the same state in a row, so the ledger loads once.
+    cache: Mutex<Option<Arc<View>>>,
+    /// One sync at a time per clone.
+    sync_lock: Mutex<()>,
+}
+
+/// The ledger of the local `main` with pending intents replayed.
+#[derive(Debug)]
+struct View {
+    head: Option<CommitId>,
+    pending: Vec<PendingIntent>,
+    config: Config,
+    ledger: Ledger,
+}
+
+#[uniffi::export]
+impl LentilRepo {
+    /// Opens the clone at `path`.
+    ///
+    /// # Errors
+    ///
+    /// Fails if `path` is not a Git repository.
+    #[uniffi::constructor]
+    pub fn open(path: String) -> Result<Arc<Self>, LentilError> {
+        let path = PathBuf::from(path);
+        Git2Backend::open(&path, Credentials::Default)?;
+        Ok(Arc::new(Self::new(path)))
+    }
+
+    /// Clones `url` into `path` without a working tree; `path` must not exist
+    /// or be empty.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the remote is unreachable, rejects the credentials or has no
+    /// `main` branch.
+    #[uniffi::constructor]
+    pub fn clone_repo(
+        url: &str,
+        path: String,
+        credentials: FfiCredentials,
+    ) -> Result<Arc<Self>, LentilError> {
+        let path = PathBuf::from(path);
+        Git2Backend::clone_bare(url, &path, credentials.into())?;
+        Ok(Arc::new(Self::new(path)))
+    }
+
+    /// The review queue with `pending` applied: open transactions, newest
+    /// first (PRD: FR-D1).
+    ///
+    /// # Errors
+    ///
+    /// Fails if the clone cannot be read or `lentil.toml` is invalid.
+    pub fn queue(&self, pending: Vec<FfiPendingIntent>) -> Result<Vec<QueueItem>, LentilError> {
+        let view = self.view(pending)?;
+        Ok(queue_items(&view.config, &view.ledger))
+    }
+
+    /// Accounts that are open and not closed, with `pending` applied, sorted.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::queue`].
+    pub fn accounts(&self, pending: Vec<FfiPendingIntent>) -> Result<Vec<String>, LentilError> {
+        Ok(open_accounts(&self.view(pending)?.ledger))
+    }
+
+    /// The opening date for accounts the user opens during triage: the date
+    /// of the oldest transaction, as `YYYY-MM-DD`; `None` without transactions.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::queue`].
+    pub fn default_open_date(
+        &self,
+        pending: Vec<FfiPendingIntent>,
+    ) -> Result<Option<String>, LentilError> {
+        Ok(oldest_transaction_date(&self.view(pending)?.ledger))
+    }
+
+    /// Why the local `main` is read-only for the app (spec section 13); empty
+    /// if the app may write.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the clone cannot be read.
+    pub fn read_only_reasons(&self) -> Result<Vec<FfiFinding>, LentilError> {
+        let head = self.local_head()?;
+        let git = Git2Backend::open(&self.path, Credentials::Default)?;
+        let snapshot = git.snapshot(head.as_ref())?;
+        Ok(findings(validate::read_only_reasons(&snapshot)))
+    }
+
+    /// Pushes `pending` as editor (spec section 11). On success, the caller
+    /// removes applied and already-applied intents and moves conflicts to the
+    /// user's conflict list; on error it keeps every intent.
+    ///
+    /// # Errors
+    ///
+    /// See [`LentilError`].
+    pub fn sync(
+        &self,
+        pending: Vec<FfiPendingIntent>,
+        identity: FfiIdentity,
+        author: FfiAuthor,
+        credentials: FfiCredentials,
+    ) -> Result<SyncReport, LentilError> {
+        let pending = pending_intents(pending)?;
+        let _syncing = self
+            .sync_lock
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let mut git = Git2Backend::open(&self.path, credentials.into())?;
+        let identity = Identity {
+            role: Role::Editor,
+            client: identity.client,
+            device: identity.device,
+        };
+        let result = sync::sync_intents(
+            &mut git,
+            &mut ThreadSleeper,
+            &identity,
+            &author.into(),
+            &pending,
+        );
+        // Even a failed sync may have moved the local `main`.
+        *self.cache.lock().unwrap_or_else(PoisonError::into_inner) = None;
+        let result = result?;
+        Ok(SyncReport {
+            outcomes: outcomes(result.outcomes),
+            committed: result.commit.is_some(),
+            warnings: findings(result.warnings),
+        })
+    }
+}
+
+impl LentilRepo {
+    fn new(path: PathBuf) -> Self {
+        Self {
+            path,
+            cache: Mutex::new(None),
+            sync_lock: Mutex::new(()),
+        }
+    }
+
+    /// The commit of the local `main`, `None` in an empty repository.
+    fn local_head(&self) -> Result<Option<CommitId>, LentilError> {
+        let repo = git2::Repository::open(&self.path)?;
+        match repo.refname_to_id(&format!("refs/heads/{BRANCH}")) {
+            Ok(oid) => Ok(Some(CommitId(oid.to_string()))),
+            Err(err) if err.code() == git2::ErrorCode::NotFound => Ok(None),
+            Err(err) => Err(err.into()),
+        }
+    }
+
+    fn view(&self, pending: Vec<FfiPendingIntent>) -> Result<Arc<View>, LentilError> {
+        let pending = pending_intents(pending)?;
+        let head = self.local_head()?;
+        let mut cache = self.cache.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(view) = cache.as_ref()
+            && view.head == head
+            && view.pending == pending
+        {
+            return Ok(Arc::clone(view));
+        }
+
+        let git = Git2Backend::open(&self.path, Credentials::Default)?;
+        let snapshot = git.snapshot(head.as_ref())?;
+        let config = parse_config(snapshot.text(CONFIG_FILE))?;
+        let snapshot = if pending.is_empty() {
+            snapshot
+        } else {
+            intent::replay(&snapshot, &config, &pending).snapshot
+        };
+        let ledger = ledger::load(&snapshot, &config.main_file);
+        let view = Arc::new(View {
+            head,
+            pending,
+            config,
+            ledger,
+        });
+        *cache = Some(Arc::clone(&view));
+        Ok(view)
+    }
+}
+
+/// Parses `lentil.toml`; a missing or invalid file makes the repository
+/// read-only, like any other blocking finding.
+fn parse_config(text: Option<&str>) -> Result<Config, LentilError> {
+    let finding = match text.map(Config::parse) {
+        Some(Ok(config)) => return Ok(config),
+        Some(Err(ConfigError::UnsupportedSpecVersion { found, supported })) => {
+            Finding::blocking(FindingCode::SpecVersionUnsupported)
+                .arg("found", found.to_string())
+                .arg("supported", supported.to_string())
+        }
+        Some(Err(err)) => {
+            Finding::blocking(FindingCode::ConfigInvalid).arg("detail", err.to_string())
+        }
+        None => Finding::blocking(FindingCode::ConfigInvalid)
+            .arg("detail", format!("{CONFIG_FILE} is missing")),
+    };
+    Err(LentilError::ReadOnly {
+        findings: vec![finding.at(CONFIG_FILE, None).into()],
+    })
+}
+
+/// The queue items of `ledger`, newest first.
+fn queue_items(config: &Config, ledger: &Ledger) -> Vec<QueueItem> {
+    ledger
+        .open_queue()
+        .into_iter()
+        .map(|txn| queue_item(config, txn))
+        .collect()
+}
+
+fn queue_item(config: &Config, txn: &Txn) -> QueueItem {
+    let source = source_posting(config, txn);
+    // Only an unambiguous counter posting is offered for editing; splits stay
+    // read-only in the app (PRD: FR-D10).
+    let counter = source.and_then(|source| {
+        let mut others = (0..txn.postings.len()).filter(|&i| i != source);
+        match (others.next(), others.next()) {
+            (Some(only), None) => Some(only),
+            _ => None,
+        }
+    });
+    let source = source.and_then(|i| txn.postings.get(i));
+    let counter = counter.and_then(|i| Some((i, txn.postings.get(i)?)));
+    let units = source.and_then(|p| p.units.as_ref());
+    QueueItem {
+        id: txn.id.clone(),
+        date: txn.date.to_string(),
+        payee: txn.payee.clone(),
+        narration: txn.narration.clone(),
+        desc: txn.desc.clone(),
+        amount: units.map(|(number, _)| number.to_string()),
+        currency: units.map(|(_, currency)| currency.clone()),
+        source_account: source.map(|p| p.account.clone()),
+        counter_account: counter.map(|(_, p)| p.account.clone()),
+        counter_posting: counter.and_then(|(i, _)| u32::try_from(i).ok()),
+        file: txn.file.clone(),
+        line: txn.line,
+    }
+}
+
+/// The index of the source posting: in a run file under
+/// `imports/<source-id>/`, the posting on that source's account; elsewhere
+/// the first posting on any source account.
+fn source_posting(config: &Config, txn: &Txn) -> Option<usize> {
+    let run_source = txn
+        .file
+        .strip_prefix("imports/")
+        .and_then(|rest| rest.split('/').next())
+        .and_then(|id| config.source(id));
+    match run_source {
+        Some(source) => txn
+            .postings
+            .iter()
+            .position(|p| p.account == source.account),
+        None => txn
+            .postings
+            .iter()
+            .position(|p| config.is_source_account(&p.account)),
+    }
+}
+
+fn open_accounts(ledger: &Ledger) -> Vec<String> {
+    ledger
+        .accounts
+        .iter()
+        .filter(|(_, state)| state.opened.is_some() && state.closed.is_none())
+        .map(|(account, _)| account.clone())
+        .collect()
+}
+
+fn oldest_transaction_date(ledger: &Ledger) -> Option<String> {
+    ledger
+        .transactions
+        .iter()
+        .map(|txn| txn.date)
+        .min()
+        .map(|date| date.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use lentil_core::snapshot::Snapshot;
+
+    use super::*;
+
+    const CONFIG: &str = r#"spec_version = 0
+main_file = "main.beancount"
+fallback_account = "Expenses:Uncategorized"
+unattributed_account = "Expenses:Unattributed"
+
+[[source]]
+id = "giro"
+account = "Assets:Bank:Giro"
+currency = "EUR"
+importer = "csv"
+mapping = "sources/giro.toml"
+
+[[source]]
+id = "card"
+account = "Liabilities:Card"
+currency = "EUR"
+importer = "csv"
+mapping = "sources/card.toml"
+"#;
+
+    const MAIN: &str = r#"option "operating_currency" "EUR"
+include "accounts.beancount"
+include "imports/*/*/*.beancount"
+"#;
+
+    const ACCOUNTS: &str = "2026-01-01 open Assets:Bank:Giro EUR
+2026-01-01 open Liabilities:Card EUR
+2026-01-01 open Expenses:Groceries EUR
+2026-01-01 open Expenses:Uncategorized EUR
+2026-01-01 open Expenses:Travel EUR
+2026-02-01 close Expenses:Travel
+";
+
+    const GIRO_RUN: &str = r#"2026-10-18 ! "Corner Grocery" "Weekly shopping"
+  lentil_id: "giro-3f9a1c2e7b4d"
+  lentil_desc: "CORNER GROCERY 4711 CARD PAYMENT"
+  Assets:Bank:Giro  -42.10 EUR
+  Expenses:Groceries
+
+2026-10-19 * "Card settlement"
+  lentil_id: "giro-0a1b2c3d4e5f"
+  lentil_desc: "CARD SETTLEMENT"
+  Assets:Bank:Giro  -100.00 EUR
+  Liabilities:Card  100.00 EUR
+
+2026-10-20 ! "Split purchase"
+  lentil_id: "giro-111111111111"
+  Assets:Bank:Giro  -30.00 EUR
+  Expenses:Groceries  20.00 EUR
+  Expenses:Uncategorized  10.00 EUR
+"#;
+
+    const CARD_RUN: &str = r#"2026-10-19 ! "Card settlement"
+  lentil_id: "card-222222222222"
+  lentil_desc: "PAYMENT RECEIVED"
+  Assets:Bank:Giro  -100.00 EUR
+  Liabilities:Card  100.00 EUR
+"#;
+
+    fn sample() -> (Config, Ledger) {
+        let snapshot = Snapshot::from_files([
+            ("lentil.toml", CONFIG),
+            ("main.beancount", MAIN),
+            ("accounts.beancount", ACCOUNTS),
+            ("imports/giro/2026/20261020T071502Z.beancount", GIRO_RUN),
+            ("imports/card/2026/20261020T071503Z.beancount", CARD_RUN),
+        ]);
+        let config = parse_config(snapshot.text(CONFIG_FILE)).unwrap();
+        let ledger = ledger::load(&snapshot, &config.main_file);
+        (config, ledger)
+    }
+
+    #[test]
+    fn queue_lists_open_transactions_newest_first() {
+        let (config, ledger) = sample();
+
+        let ids: Vec<_> = queue_items(&config, &ledger)
+            .into_iter()
+            .map(|item| item.id)
+            .collect();
+
+        assert_eq!(
+            ids,
+            vec![
+                Some("giro-111111111111".to_owned()),
+                Some("card-222222222222".to_owned()),
+                Some("giro-3f9a1c2e7b4d".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn queue_item_names_source_and_counter_posting() {
+        let (config, ledger) = sample();
+        let items = queue_items(&config, &ledger);
+
+        let grocery = items
+            .iter()
+            .find(|item| item.id.as_deref() == Some("giro-3f9a1c2e7b4d"))
+            .unwrap();
+        assert_eq!(
+            grocery,
+            &QueueItem {
+                id: Some("giro-3f9a1c2e7b4d".to_owned()),
+                date: "2026-10-18".to_owned(),
+                payee: Some("Corner Grocery".to_owned()),
+                narration: "Weekly shopping".to_owned(),
+                desc: Some("CORNER GROCERY 4711 CARD PAYMENT".to_owned()),
+                amount: Some("-42.10".to_owned()),
+                currency: Some("EUR".to_owned()),
+                source_account: Some("Assets:Bank:Giro".to_owned()),
+                counter_account: Some("Expenses:Groceries".to_owned()),
+                counter_posting: Some(1),
+                file: "imports/giro/2026/20261020T071502Z.beancount".to_owned(),
+                line: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn source_posting_follows_the_run_files_source() {
+        let (config, ledger) = sample();
+        let items = queue_items(&config, &ledger);
+
+        // Imported from the card: the card posting is the source posting,
+        // although the giro posting comes first.
+        let settlement = items
+            .iter()
+            .find(|item| item.id.as_deref() == Some("card-222222222222"))
+            .unwrap();
+        assert_eq!(
+            settlement.source_account.as_deref(),
+            Some("Liabilities:Card")
+        );
+        assert_eq!(settlement.amount.as_deref(), Some("100.00"));
+        assert_eq!(
+            settlement.counter_account.as_deref(),
+            Some("Assets:Bank:Giro")
+        );
+        assert_eq!(settlement.counter_posting, Some(0));
+    }
+
+    #[test]
+    fn split_has_no_counter_posting() {
+        let (config, ledger) = sample();
+        let items = queue_items(&config, &ledger);
+
+        let split = items
+            .iter()
+            .find(|item| item.id.as_deref() == Some("giro-111111111111"))
+            .unwrap();
+        assert_eq!(split.source_account.as_deref(), Some("Assets:Bank:Giro"));
+        assert_eq!(split.counter_account, None);
+        assert_eq!(split.counter_posting, None);
+    }
+
+    #[test]
+    fn accounts_are_open_and_not_closed() {
+        let (_, ledger) = sample();
+
+        assert_eq!(
+            open_accounts(&ledger),
+            vec![
+                "Assets:Bank:Giro",
+                "Expenses:Groceries",
+                "Expenses:Uncategorized",
+                "Liabilities:Card",
+            ]
+        );
+    }
+
+    #[test]
+    fn default_open_date_is_the_oldest_transaction() {
+        let (_, ledger) = sample();
+
+        assert_eq!(
+            oldest_transaction_date(&ledger).as_deref(),
+            Some("2026-10-18")
+        );
+        assert_eq!(oldest_transaction_date(&Ledger::default()), None);
+    }
+
+    #[test]
+    fn missing_or_newer_config_makes_the_repository_read_only() {
+        let Err(LentilError::ReadOnly { findings }) = parse_config(None) else {
+            panic!("expected ReadOnly");
+        };
+        assert_eq!(findings[0].code, "ConfigInvalid");
+        assert_eq!(findings[0].file.as_deref(), Some("lentil.toml"));
+
+        let newer = CONFIG.replace("spec_version = 0", "spec_version = 7");
+        let Err(LentilError::ReadOnly { findings }) = parse_config(Some(&newer)) else {
+            panic!("expected ReadOnly");
+        };
+        assert_eq!(findings[0].code, "SpecVersionUnsupported");
+        assert_eq!(findings[0].args.get("found").map(String::as_str), Some("7"));
+    }
+}
