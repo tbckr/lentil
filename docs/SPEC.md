@@ -60,7 +60,7 @@ include "manual/*/*.beancount"
 include "prices/*/*.beancount"
 ```
 
-- Include paths are relative to the file that contains them. Glob patterns use at most one `*` per path segment, with no `**` and no character classes. Python Beancount 2.3.6, rustledger and go-beancount resolve these patterns identically.
+- Include paths are relative to the file that contains them. Glob patterns use at most one `*` per path segment, with no `**` and no character classes. Python Beancount 3.2.3, rustledger and go-beancount resolve these patterns identically.
 - Every `.beancount` file matched by these patterns is part of the ledger. Clients MUST NOT create `.beancount` files elsewhere.
 - `fava.beancount` contains only `custom "fava-option"` and `custom "fava-sidebar-link"` directives, for example links to the open transactions and to `Expenses:Uncategorized`. Other tools ignore them.
 - `init` creates a `.gitignore` containing `.*.cache` and `.*.picklecache`. rustledger and Python Beancount write load caches next to `main.beancount` by default; caches MUST NOT be committed.
