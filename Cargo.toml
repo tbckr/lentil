@@ -1,0 +1,63 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-only"
+publish = false
+
+[workspace.dependencies]
+lentil-core = { path = "crates/lentil-core" }
+
+# The core. Pinned exactly and upgraded deliberately, guarded by the
+# differential tests against Python Beancount.
+rustledger-core = { version = "=0.24.0", default-features = false }
+rustledger-parser = { version = "=0.24.0", default-features = false }
+rustledger-loader = { version = "=0.24.0", default-features = false, features = ["validation"] }
+
+# Pinned exactly, because the runtime crate and the generated bindings must match.
+uniffi = { version = "=0.32.2" }
+
+clap = { version = "4.6", features = ["derive"] }
+csv = "1.3"
+encoding_rs = "0.8.44"
+git2 = { version = "0.21", default-features = false, features = ["https", "ssh", "vendored-libgit2", "vendored-openssl"] }
+jiff = { version = "0.2", features = ["serde"] }
+regex = "1.11"
+rust_decimal = "1.42"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"
+thiserror = "2"
+toml = "1.1"
+
+proptest = "1"
+tempfile = "3"
+
+[workspace.lints.rust]
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+# Selected pedantic lints.
+cast_lossless = "warn"
+cast_possible_truncation = "warn"
+cast_possible_wrap = "warn"
+cast_sign_loss = "warn"
+checked_conversions = "warn"
+explicit_iter_loop = "warn"
+implicit_clone = "warn"
+manual_let_else = "warn"
+needless_pass_by_value = "warn"
+redundant_closure_for_method_calls = "warn"
+semicolon_if_nothing_returned = "warn"
+uninlined_format_args = "warn"
+unnested_or_patterns = "warn"
+# Finance code must not panic on bad input; tests may unwrap (clippy.toml).
+unwrap_used = "warn"
+expect_used = "warn"
+
+[profile.release]
+lto = "thin"

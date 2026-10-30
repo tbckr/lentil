@@ -1,0 +1,26 @@
+[package]
+name = "lentil-ffi"
+description = "UniFFI bindings of lentil-core for the Android app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "lentil_ffi"
+
+[[bin]]
+# Generates the Kotlin bindings during the Gradle build (CONTRIBUTING: Build).
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+
+[dependencies]
+lentil-core.workspace = true
+uniffi = { workspace = true, features = ["cli"] }
+jiff.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,38 @@
+[package]
+name = "lentil-core"
+description = "Lentil core: convention spec, import, replay, validation and sync"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# Parsing, booking and validation of Beancount.
+rustledger-core.workspace = true
+rustledger-parser.workspace = true
+rustledger-loader.workspace = true
+# Dates and decimals, the same types rustledger uses.
+jiff.workspace = true
+rust_decimal.workspace = true
+# lentil.toml, rules.toml and mapping files.
+serde.workspace = true
+toml.workspace = true
+# Pending intents cross the FFI and the CLI's state file as JSON.
+serde_json.workspace = true
+# CSV adapter (spec section 15).
+csv.workspace = true
+encoding_rs.workspace = true
+# RE2-syntax regular expressions without lookaround (spec section 16).
+regex.workspace = true
+# Deterministic import IDs (spec section 5).
+sha2.workspace = true
+# Git transport for synchronization (spec section 11).
+git2.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true
