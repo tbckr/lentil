@@ -1,0 +1,12 @@
+[project]
+name = "lentil-dev"
+version = "0.0.0"
+description = "Python tools for developing Lentil; never shipped."
+requires-python = ">=3.14"
+dependencies = []
+
+[dependency-groups]
+dev = ["beancount==3.2.3"]
+
+[tool.uv]
+package = false
