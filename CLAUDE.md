@@ -18,9 +18,9 @@ There are no build, lint or test commands for Lentil itself yet. The plan is a R
 
 Every development tool comes from the flake's development shell, Python packages through its uv, so never install one any other way.
 
-- Enter it with direnv (`.envrc` contains `use flake`) or with `nix develop`. After a change to `flake.nix` or `flake.lock`, rebuild it with `nix-direnv-reload`.
+- Enter it with direnv (`.envrc` contains `use flake`) or with `nix develop`. A change to `flake.nix`, `flake.lock` or `rust-toolchain.toml` rebuilds the shell on the next direnv load, or on `nix-direnv-reload` where nix-direnv reloads manually; under `nix develop`, enter the shell again.
 - `uv run bean-check <file>` runs the reference check of Python Beancount from anywhere in the repository. uv creates `.venv` from `uv.lock` on first use.
-- `nix fmt` formats `flake.nix`, and `nix flake check --all-systems` evaluates the flake for every supported system.
+- `nix fmt` formats every Nix file, and `nix flake check --all-systems` evaluates the flake for every supported system.
 
 ## Editing the documents
 
