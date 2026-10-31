@@ -55,70 +55,96 @@
           jdk = pkgs.jdk21_headless;
           buildTools = androidVersions.android-buildTools;
           ndk = androidVersions.android-ndk;
-          androidSdk =
-            (pkgs.androidenv.composeAndroidPackages {
-              platformVersions = [
-                "${androidVersions.android-compileSdk}.${androidVersions.android-compileSdkMinor}"
-              ];
-              buildToolsVersions = [ buildTools ];
-              includeNDK = true;
-              ndkVersions = [ ndk ];
-              includeCmake = false;
-              includeEmulator = false;
-              includeSystemImages = false;
-              toolsVersion = null;
-            }).androidsdk;
-          sdkRoot = "${androidSdk}/libexec/android-sdk";
+          compileSdk = "${androidVersions.android-compileSdk}.${androidVersions.android-compileSdkMinor}";
+          composeSdk =
+            args:
+            (pkgs.androidenv.composeAndroidPackages (
+              {
+                platformVersions = [ compileSdk ];
+                buildToolsVersions = [ buildTools ];
+                includeNDK = true;
+                ndkVersions = [ ndk ];
+                includeCmake = false;
+                includeEmulator = false;
+                includeSystemImages = false;
+                toolsVersion = null;
+              }
+              // args
+            )).androidsdk;
+          # The emulator and a system image add more than a gigabyte, so only
+          # the emulator shell has them. API 36 is the newest platform with an
+          # image without Google services for x86_64.
+          emulatorApi = "36";
+
+          mkShell =
+            androidSdk:
+            let
+              sdkRoot = "${androidSdk}/libexec/android-sdk";
+            in
+            pkgs.mkShell (
+              {
+                packages = [
+                  # Rust is pinned only in rust-toolchain.toml.
+                  (pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
+                  pkgs.cargo-nextest
+                  pkgs.cargo-mutants
+                  # Its test suite runs against nixpkgs' rustc, whose
+                  # coverage-instrumented binaries crash on exit. The shell uses the
+                  # upstream toolchain above, where coverage works. Drop this once
+                  # cache.nixos.org serves cargo-llvm-cov again.
+                  (pkgs.cargo-llvm-cov.overrideAttrs { doCheck = false; })
+                  pkgs.cargo-deny
+                  pkgs.cargo-machete
+                  pkgs.osv-scanner
+                  pkgs.nixfmt
+                  # Python Beancount comes through uv, pinned in uv.lock.
+                  pkgs.uv
+                ]
+                ++ lib.optionals withAndroid [
+                  androidSdk
+                  jdk
+                  pkgs.cargo-ndk
+                  # Builds the vendored OpenSSL for Android.
+                  pkgs.perl
+                  # Only to regenerate the Gradle wrapper; builds run ./gradlew.
+                  pkgs.gradle
+                  # Kotlin formatting and static analysis.
+                  pkgs.ktfmt
+                  pkgs.detekt
+                ];
+
+                # uv only ever uses this Python and never downloads one. Python
+                # stays off PATH, so its setup hook puts no PYTHONPATH in front of
+                # uv's virtual environment.
+                UV_PYTHON = "${python}/bin/python3";
+                UV_PYTHON_DOWNLOADS = "never";
+              }
+              // lib.optionalAttrs withAndroid {
+                ANDROID_HOME = sdkRoot;
+                ANDROID_SDK_ROOT = sdkRoot;
+                ANDROID_NDK_HOME = "${sdkRoot}/ndk/${ndk}";
+                JAVA_HOME = jdk.home;
+                # The aapt2 that the Android Gradle Plugin fetches from Maven does
+                # not run on NixOS; use the SDK's own.
+                GRADLE_OPTS = "-Dorg.gradle.project.android.aapt2FromMavenOverride=${sdkRoot}/build-tools/${buildTools}/aapt2";
+              }
+            );
         in
         {
-          default = pkgs.mkShell (
-            {
-              packages = [
-                # Rust is pinned only in rust-toolchain.toml.
-                (pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
-                pkgs.cargo-nextest
-                pkgs.cargo-mutants
-                # Its test suite runs against nixpkgs' rustc, whose
-                # coverage-instrumented binaries crash on exit. The shell uses the
-                # upstream toolchain above, where coverage works. Drop this once
-                # cache.nixos.org serves cargo-llvm-cov again.
-                (pkgs.cargo-llvm-cov.overrideAttrs { doCheck = false; })
-                pkgs.cargo-deny
-                pkgs.cargo-machete
-                pkgs.osv-scanner
-                pkgs.nixfmt
-                # Python Beancount comes through uv, pinned in uv.lock.
-                pkgs.uv
-              ]
-              ++ lib.optionals withAndroid [
-                androidSdk
-                jdk
-                pkgs.cargo-ndk
-                # Builds the vendored OpenSSL for Android.
-                pkgs.perl
-                # Only to regenerate the Gradle wrapper; builds run ./gradlew.
-                pkgs.gradle
-                # Kotlin formatting and static analysis.
-                pkgs.ktfmt
-                pkgs.detekt
-              ];
-
-              # uv only ever uses this Python and never downloads one. Python
-              # stays off PATH, so its setup hook puts no PYTHONPATH in front of
-              # uv's virtual environment.
-              UV_PYTHON = "${python}/bin/python3";
-              UV_PYTHON_DOWNLOADS = "never";
-            }
-            // lib.optionalAttrs withAndroid {
-              ANDROID_HOME = sdkRoot;
-              ANDROID_SDK_ROOT = sdkRoot;
-              ANDROID_NDK_HOME = "${sdkRoot}/ndk/${ndk}";
-              JAVA_HOME = jdk.home;
-              # The aapt2 that the Android Gradle Plugin fetches from Maven does
-              # not run on NixOS; use the SDK's own.
-              GRADLE_OPTS = "-Dorg.gradle.project.android.aapt2FromMavenOverride=${sdkRoot}/build-tools/${buildTools}/aapt2";
-            }
-          );
+          default = mkShell (composeSdk { });
+        }
+        // lib.optionalAttrs withAndroid {
+          # For UI tests and manual runs: `nix develop .#emulator`.
+          emulator = mkShell (composeSdk {
+            platformVersions = [
+              compileSdk
+              emulatorApi
+            ];
+            includeEmulator = true;
+            includeSystemImages = true;
+            systemImageTypes = [ "default" ];
+            abiVersions = [ "x86_64" ];
+          });
         }
       );
 
