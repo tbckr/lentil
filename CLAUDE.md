@@ -4,15 +4,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-Lentil is still being designed. The repository holds documents and the development shell, but no code, build system or tests yet:
+Lentil has a first, unreleased draft of v0.1 next to its design documents:
 
 - `docs/PRD.md`: product requirements. Covers principles, goals, usage scenarios (`N1` …), functional requirements (`FR-A1` …) and non-functional requirements, each with a target release, plus a release plan.
 - `docs/SPEC.md`: the Lentil Convention Spec. Its RFC 2119 rules make every client interchangeable on one Git repository of Beancount files. It is at `spec_version` 0, so any change may break until version 1.
 - `CONTRIBUTING.md`: engineering standards for testing, linting, dependencies, CI and releases.
 - `README.md`: short overview with links to the documents above and the non-goals. When a non-goal changes in the PRD, change the README too.
 - `flake.nix`: the Nix development shell, the only source of development tools. Rust is pinned in `rust-toolchain.toml`, Python Beancount in `pyproject.toml` and `uv.lock`.
+- `crates/lentil-core`: all logic, on rustledger. Everything works on a `Snapshot` (repository files in memory): `ledger` indexes a snapshot with exact byte spans, `intent` replays edit intents, `validate` checks a state and a role's changes, `import` plans CSV import runs, `sync` runs the fetch–replay–validate–commit–push loop on libgit2.
+- `crates/lentil-cli`: the `lentil` binary (`init`, `import`, `status`, `check`); its messages come from a catalog in `i18n.rs`, English and German.
+- `crates/lentil-ffi`: UniFFI bindings of the core for the Android app.
+- `testdata/`: synthetic bank exports and their mappings.
 
-There are no build, lint or test commands for Lentil itself yet. The plan is a Rust core and CLI (`lentil-core` on rustledger) plus a Kotlin Android app. When that code lands, add the real commands here instead of guessing them.
+## Commands
+
+Run every command inside the development shell.
+
+- `cargo nextest run --workspace` runs the tests; `cargo test --workspace --doc` runs the doc tests, which nextest skips.
+- `cargo clippy --workspace --all-targets -- -D warnings` and `cargo fmt --all` lint and format.
+- `cargo deny check` and `cargo machete` check the dependencies.
+- `cargo llvm-cov nextest -p lentil-core` measures coverage, and `cargo mutants -p lentil-core --test-tool nextest` runs the mutation tests.
+- The differential tests in `crates/lentil-core/tests/differential.rs` compare rustledger with Python Beancount through `uv`; `LENTIL_SKIP_DIFFERENTIAL=1` skips them where uv is missing. `cargo test -p lentil-core --release --test differential -- --ignored --nocapture` measures the load time of a synthetic 50,000-transaction ledger.
+- `cargo run -p lentil-cli -- <command>` runs the CLI.
 
 ## Development shell
 
@@ -70,7 +83,7 @@ Each one is spelled out in the spec section given in brackets.
 - Never commit load caches (`.*.cache`, `.*.picklecache`) (§3).
 - Report a failing balance assertion. Never hide it or correct it automatically.
 
-## Engineering standards (once code exists)
+## Engineering standards
 
 The full list is in `CONTRIBUTING.md`; network, secrets and language rules are NFRs in the PRD. The points that shape code most:
 

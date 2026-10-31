@@ -4,7 +4,7 @@ Lentil makes [Beancount](https://github.com/beancount/beancount/) practical for 
 
 ## Status
 
-Lentil is in the design phase; there is no code yet.
+Lentil has a first, unreleased draft of v0.1: the `lentil` CLI (`init`, `import`, `status`, `check`) on a Rust core, and an Android triage app.
 
 - [Product requirements](docs/PRD.md): principles, goals, requirements and release plan.
 - [Convention spec](docs/SPEC.md): the rules every client follows.
