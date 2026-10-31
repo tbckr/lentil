@@ -1,0 +1,58 @@
+# Mutation testing of lentil-core (cargo-mutants, scripts/mutation.sh).
+#
+# Mutates only the lines a pull request or a push to main changes, and fails if
+# the tests miss any of these mutants; the log lists them. The full run with
+# its test-efficacy floor is a local check, because it would take hours on a
+# runner.
+#
+# cargo-mutants comes from the development shell and is pinned by flake.lock
+# like every other tool, so it needs no sandbox of its own.
+#
+# A workflow skipped by its paths filter reports no check, so a required
+# status check would stay pending; switch to job-level filtering before making
+# this check required.
+#
+# Actions are pinned by commit SHA (CONTRIBUTING: CI and hosting).
+name: Mutation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/lentil-core/src/**"
+      - .cargo/mutants.toml
+      - scripts/mutation.sh
+      - .github/workflows/mutation.yml
+  pull_request:
+    paths:
+      - "crates/lentil-core/src/**"
+      - .cargo/mutants.toml
+      - scripts/mutation.sh
+      - .github/workflows/mutation.yml
+
+permissions:
+  contents: read
+
+# A new push cancels a pull request's run; on main, the running run finishes
+# and only the newest waiting one follows it.
+concurrency:
+  group: mutation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  cargo-mutants:
+    name: lentil-core (mutation testing of the changed lines)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The diff needs the merge base with main.
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      - name: Mutation testing of the changed lines
+        env:
+          # A pull request against its base branch, a push against the state
+          # of main before it.
+          BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
+        run: nix develop --command scripts/mutation.sh "$BASE"

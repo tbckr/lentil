@@ -24,11 +24,13 @@ Run every command inside the development shell.
 - `cargo nextest run --workspace` runs the tests; `cargo test --workspace --doc` runs the doc tests, which nextest skips.
 - `cargo clippy --workspace --all-targets -- -D warnings` and `cargo fmt --all` lint and format.
 - `cargo deny check` and `cargo machete` check the dependencies.
-- `cargo llvm-cov nextest -p lentil-core` measures coverage, and `cargo mutants -p lentil-core --test-tool nextest` runs the mutation tests.
+- `cargo llvm-cov nextest -p lentil-core` measures coverage.
+- `scripts/mutation.sh origin/main` mutation-tests the lines of `lentil-core` changed since the merge base and fails if the tests miss a mutant, as CI does. Without a ref, it mutates all of `lentil-core` and fails below 85 % test efficacy, which takes hours. The settings are in `.cargo/mutants.toml`.
 - The differential tests in `crates/lentil-core/tests/differential.rs` compare rustledger with Python Beancount through `uv`; `LENTIL_SKIP_DIFFERENTIAL=1` skips them where uv is missing. `cargo test -p lentil-core --release --test differential -- --ignored --nocapture` measures the load time of a synthetic 50,000-transaction ledger.
 - `cargo run -p lentil-cli -- <command>` runs the CLI.
 - In `android/`, `./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lint` builds the app with the core for `arm64-v8a` and `x86_64`, runs its unit tests and Android Lint. Gradle verifies every dependency against `gradle/verification-metadata.xml` and locks the app's configurations in `app/gradle.lockfile`; after a dependency change, rewrite both with `--write-verification-metadata sha256 --write-locks` and an empty Gradle user home (`-g <empty directory>`), because a warm cache hides artifacts that the clean CI build resolves.
 - `detekt --build-upon-default-config --config android/detekt.yml --input android/app/src,android/build-logic/src` and `ktfmt --kotlinlang-style` check the Kotlin code.
+- `actionlint` checks the GitHub workflows, with shellcheck on their `run` scripts.
 - `nix develop .#emulator` adds an emulator and an x86_64 system image for manual tests.
 
 ## Development shell
@@ -94,7 +96,7 @@ The full list is in `CONTRIBUTING.md`; network, secrets and language rules are N
 
 - Use traits only at I/O boundaries: Git, file system, clock, randomness and import sources. Replay, ID generation and validation stay pure functions. Tests replace the boundaries with fakes, not a mocking library. The Android app wires its dependencies by hand, without a DI framework.
 - Tests:
-  - Unit tests, differential tests against Python Beancount's `bean-check`, and mutation tests with cargo-mutants. The mutation tests are the actual quality gate; 80 % line coverage of `lentil-core`, measured with cargo-llvm-cov, is only a floor.
+  - Unit tests, differential tests against Python Beancount's `bean-check`, and mutation tests with cargo-mutants. The mutation tests are the actual quality gate: CI fails if the tests miss a mutant in the changed lines of `lentil-core`, and an equivalent mutant goes into `exclude_re` in `.cargo/mutants.toml` with its reason. 80 % line coverage of `lentil-core`, measured with cargo-llvm-cov, is only a floor.
   - Multi-writer sync tests, which fail on lost intents, duplicates or non-linear history, plus property-based tests for replay.
   - cargo-nextest runs the Rust tests but skips doc tests, so `cargo test --doc` runs those separately.
   - Test dependencies are dev-only.

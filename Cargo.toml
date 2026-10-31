@@ -61,3 +61,9 @@ expect_used = "warn"
 
 [profile.release]
 lto = "thin"
+
+# Mutation testing (.cargo/mutants.toml): without debug info, every mutant
+# builds and links faster.
+[profile.mutants]
+inherits = "test"
+debug = "none"

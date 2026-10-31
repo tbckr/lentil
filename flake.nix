@@ -97,6 +97,8 @@
                   pkgs.cargo-machete
                   pkgs.osv-scanner
                   pkgs.nixfmt
+                  # Checks the GitHub workflows.
+                  pkgs.actionlint
                   # Python Beancount comes through uv, pinned in uv.lock.
                   pkgs.uv
                 ]

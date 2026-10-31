@@ -1,0 +1,15 @@
+# cargo-mutants settings for mutation testing, see scripts/mutation.sh, which
+# also holds the floor. cargo-mutants reads this file on every run, so a bare
+# `cargo mutants` mutates the same scope as the script.
+
+# The scope of the coverage floor: lentil-core, where all finance logic lives.
+# The CLI and the FFI bindings hold none. An exclusion and not examine_globs,
+# because cargo-mutants adds --file globs to examine_globs instead of narrowing
+# them.
+exclude_globs = ["crates/lentil-cli/**", "crates/lentil-ffi/**"]
+
+test_tool = "nextest"
+
+# The test profile without debug info (Cargo.toml), so every mutant builds and
+# links faster.
+profile = "mutants"

@@ -40,22 +40,6 @@ jobs:
       - name: Line coverage of lentil-core (floor 80 %)
         run: nix develop --command cargo llvm-cov nextest -p lentil-core --fail-under-lines 80
 
-  mutants:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
-      - name: Mutation tests on the changed code of lentil-core
-        if: github.event_name == 'pull_request'
-        run: |
-          git diff origin/${{ github.base_ref }}... > pr.diff
-          nix develop --command cargo mutants -p lentil-core --in-diff pr.diff --test-tool nextest
-      - name: Mutation tests on lentil-core
-        if: github.event_name == 'push'
-        run: nix develop --command cargo mutants -p lentil-core --test-tool nextest
-
   android:
     runs-on: ubuntu-latest
     steps:
@@ -67,7 +51,7 @@ jobs:
       - name: detekt and ktfmt
         run: |
           nix develop --command detekt --build-upon-default-config --config android/detekt.yml --input android/app/src,android/build-logic/src
-          nix develop --command bash -c 'ktfmt --kotlinlang-style --dry-run --set-exit-if-changed $(find android -name "*.kt" -not -path "*/build/*")'
+          nix develop --command find android -name "*.kt" -not -path "*/build/*" -exec ktfmt --kotlinlang-style --dry-run --set-exit-if-changed {} +
 
   nix:
     runs-on: ubuntu-latest
