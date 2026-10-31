@@ -206,3 +206,38 @@ fn check_agrees_with_bean_check() {
     let out = ok(&env.lentil(&["-C", repo, "check", "--reference", "--bean-check", &command]));
     assert!(out.contains("bean-check agrees"), "{out}");
 }
+
+#[test]
+fn init_fills_an_existing_repository_without_commits() {
+    let env = Env::new();
+    std::fs::create_dir_all(&env.repo).unwrap();
+    env.git(&env.repo, &["init", "-q", "-b", "master"]);
+    let repo = env.repo.to_str().unwrap();
+    ok(&env.lentil(&["init", repo]));
+    assert!(env.repo.join("lentil.toml").is_file());
+    assert!(ok(&env.lentil(&["-C", repo, "check"])).contains("valid"));
+    assert_eq!(
+        env.git(&env.repo, &["branch", "--show-current"]).trim(),
+        "main"
+    );
+}
+
+#[test]
+fn init_refuses_a_remote_with_commits() {
+    let env = Env::new();
+    let first = env.home.join("first");
+    ok(&env.lentil(&[
+        "init",
+        first.to_str().unwrap(),
+        "--remote",
+        env.remote.to_str().unwrap(),
+    ]));
+    let out = env.lentil(&[
+        "init",
+        env.repo.to_str().unwrap(),
+        "--remote",
+        env.remote.to_str().unwrap(),
+    ]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("has commits already"));
+}

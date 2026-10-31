@@ -6,7 +6,7 @@ use std::process::ExitCode;
 use lentil_core::config::CONFIG_FILE;
 use lentil_core::layout::{self, InitOptions};
 use lentil_core::sync::git::Git2Backend;
-use lentil_core::sync::{Credentials, ThreadSleeper, Work, run_sync};
+use lentil_core::sync::{Credentials, GitBackend, ThreadSleeper, Work, run_sync};
 use lentil_core::validate::Role;
 
 use crate::context;
@@ -17,11 +17,13 @@ use crate::{CliError, CliResult};
 /// and, with a remote, uploads them.
 pub fn run(lang: Lang, dir: &Path, title: &str, currency: &str, remote: Option<&str>) -> CliResult {
     let shown = dir.display().to_string();
-    if dir.join(CONFIG_FILE).exists() {
+    let config = dir.join(CONFIG_FILE);
+    if config.exists() {
+        let config = config.display().to_string();
         return Err(CliError(i18n::msg(
             lang,
             Msg::InitExists,
-            &[("dir", &shown)],
+            &[("dir", &config)],
         )));
     }
     std::fs::create_dir_all(dir).map_err(|e| CliError(e.to_string()))?;
@@ -35,9 +37,29 @@ pub fn run(lang: Lang, dir: &Path, title: &str, currency: &str, remote: Option<&
         Git2Backend::init(dir)
     }
     .map_err(|e| CliError(i18n::git_error(lang, &e)))?;
+    git.point_unborn_head_to_main()
+        .map_err(|e| CliError(i18n::git_error(lang, &e)))?;
     if let Some(url) = remote {
         git.set_remote(url)
             .map_err(|e| CliError(i18n::git_error(lang, &e)))?;
+    }
+    // A new repository starts empty: never overwrite files of an existing one.
+    let head = git
+        .fetch()
+        .map_err(|e| CliError(i18n::git_error(lang, &e)))?;
+    if head.is_some() {
+        return Err(CliError(i18n::msg(
+            lang,
+            Msg::InitNotEmpty,
+            &[("dir", &shown)],
+        )));
+    }
+    if let Some(existing) = files.paths().find(|p| dir.join(p).exists()) {
+        return Err(CliError(i18n::msg(
+            lang,
+            Msg::InitExists,
+            &[("dir", existing)],
+        )));
     }
     let author = context::author(lang, &git)?;
     let identity = context::identity(Role::Admin)?;
@@ -56,7 +78,11 @@ pub fn run(lang: Lang, dir: &Path, title: &str, currency: &str, remote: Option<&
 
     println!("{}", i18n::msg(lang, Msg::InitDone, &[("dir", &shown)]));
     if let Some(url) = remote {
-        println!("{}", i18n::msg(lang, Msg::InitPushed, &[("remote", url)]));
+        let shown = lentil_core::sync::git::redact(url);
+        println!(
+            "{}",
+            i18n::msg(lang, Msg::InitPushed, &[("remote", &shown)])
+        );
     }
     Ok(ExitCode::SUCCESS)
 }

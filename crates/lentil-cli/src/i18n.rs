@@ -43,6 +43,7 @@ impl Lang {
 pub enum Msg {
     InitDone,
     InitExists,
+    InitNotEmpty,
     InitPushed,
     NoRepository,
     ConfigMissing,
@@ -101,8 +102,14 @@ pub fn text(lang: Lang, msg: Msg) -> &'static str {
     match (msg, lang) {
         (InitDone, En) => "Created a Lentil repository in {dir}.",
         (InitDone, De) => "Lentil-Repository in {dir} angelegt.",
-        (InitExists, En) => "{dir} already contains a lentil.toml.",
-        (InitExists, De) => "{dir} enthält bereits eine lentil.toml.",
+        (InitExists, En) => "{dir} exists already.",
+        (InitExists, De) => "{dir} existiert bereits.",
+        (InitNotEmpty, En) => {
+            "The repository at {dir} or its remote has commits already; init needs an empty one."
+        }
+        (InitNotEmpty, De) => {
+            "Das Repository in {dir} oder sein Remote hat bereits Commits; init braucht ein leeres."
+        }
         (InitPushed, En) => "Uploaded to {remote}.",
         (InitPushed, De) => "Nach {remote} hochgeladen.",
         (NoRepository, En) => "No Lentil repository found at {dir} or above.",

@@ -101,6 +101,28 @@ impl Git2Backend {
         Self::create(path, false, Credentials::Default)
     }
 
+    /// Points an unborn HEAD (a repository without commits, for example
+    /// created with another default branch) at `main`, so a later checkout
+    /// fills the working tree.
+    ///
+    /// # Errors
+    ///
+    /// [`GitError::LocalChanges`] if HEAD already points at commits on
+    /// another branch.
+    pub fn point_unborn_head_to_main(&mut self) -> Result<(), GitError> {
+        match self.repo.head() {
+            Ok(head) if head.name().ok() == Some(LOCAL_REF) => Ok(()),
+            Ok(head) => Err(GitError::LocalChanges(format!(
+                "HEAD is on {}, not {BRANCH}",
+                head.shorthand().unwrap_or("?")
+            ))),
+            Err(e) if e.code() == ErrorCode::UnbornBranch => {
+                self.repo.set_head(LOCAL_REF).map_err(|e| map_error(&e))
+            }
+            Err(e) => Err(map_error(&e)),
+        }
+    }
+
     /// Sets `origin` to `url`.
     ///
     /// # Errors
@@ -712,7 +734,9 @@ fn map_error(error: &git2::Error) -> GitError {
 
 /// Removes passwords and tokens embedded in URLs (`https://user:token@host`)
 /// from libgit2 messages, which may quote the remote URL.
-fn redact(message: &str) -> String {
+/// Replaces credentials embedded in URLs (`https://user:token@host`) with `***`.
+#[must_use]
+pub fn redact(message: &str) -> String {
     static USERINFO: LazyLock<Regex> = LazyLock::new(|| {
         #[allow(clippy::unwrap_used)] // A constant pattern.
         Regex::new(r"(?i)\b([a-z][a-z0-9+.-]*://)[^/@\s]+@").unwrap()

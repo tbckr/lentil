@@ -88,16 +88,24 @@ pub fn run(lang: Lang, repo: Option<&Path>, args: &Args) -> CliResult {
         accepted: BTreeSet::new(),
     };
     let mut plan = plan(&inputs, &answers, &current, started, run_date);
+    // Ask for the balance only if the run brings something new; a repeated
+    // import of the same export asks nothing.
+    let anything_new = !plan.transactions.is_empty() || !plan.possible_duplicates.is_empty();
     if plan.balance == BalanceOutcome::NeedsInput {
-        println!("{}", i18n::text(lang, Msg::BalanceNeedsInput));
-        answers.balance = if args.yes || !prompt::interactive() {
+        if anything_new {
+            println!("{}", i18n::text(lang, Msg::BalanceNeedsInput));
+        }
+        answers.balance = if args.yes || !prompt::interactive() || !anything_new {
             UserBalance::Skipped
         } else {
             ask_balance(lang, run_date)
         };
         plan = self::plan(&inputs, &answers, &current, started, run_date);
     }
-    if !plan.possible_duplicates.is_empty() && !args.yes && prompt::interactive() {
+    // Possible duplicates are always shown; only an interactive run may
+    // import them after confirmation (spec section 8).
+    let ask = !args.yes && prompt::interactive();
+    if !plan.possible_duplicates.is_empty() {
         for dup in &plan.possible_duplicates {
             println!("{}", i18n::text(lang, Msg::DuplicateHeader));
             let amount = format!("{} {}", dup.amount, dup.currency);
@@ -129,8 +137,9 @@ pub fn run(lang: Lang, repo: Option<&Path>, args: &Args) -> CliResult {
                     ],
                 )
             );
-            if prompt::ask(i18n::text(lang, Msg::PromptImportAnyway))
-                .is_some_and(|a| prompt::is_yes(&a))
+            if ask
+                && prompt::ask(i18n::text(lang, Msg::PromptImportAnyway))
+                    .is_some_and(|a| prompt::is_yes(&a))
             {
                 answers.accepted.insert(dup.new_id.clone());
             }
