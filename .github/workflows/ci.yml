@@ -1,24 +1,57 @@
 # Every job runs inside the flake's development shell, so CI uses exactly the
-# local toolchain. Actions are pinned by commit SHA (CONTRIBUTING: CI and hosting).
+# local toolchain. Mutation testing runs in mutation.yml, static analysis in
+# codeql.yml and the daily vulnerability scan in scan.yml.
+#
+# install-nix-action gets the job's read-only token, so Nix's fetches from
+# GitHub stay clear of the rate limit for anonymous API requests.
+#
+# Actions are pinned by commit SHA with a "# vX.Y.Z" comment (CONTRIBUTING: CI
+# and hosting); Dependabot (.github/dependabot.yml) bumps them monthly.
 name: CI
 
+# Changes that touch only documentation skip CI, since no job reads these
+# files. Keep the list in sync with codeql.yml. A workflow skipped by
+# paths-ignore reports no checks, so a required status check would stay
+# pending; switch to job-level filtering before making a check required.
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - LICENSE
   pull_request:
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - LICENSE
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+# A new push cancels a pull request's run; on main, the running run finishes
+# and only the newest waiting one follows it.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   rust:
+    name: Rust (${{ matrix.os }})
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
       - name: Format
         run: nix develop --command cargo fmt --all --check
       - name: Lint
@@ -33,18 +66,30 @@ jobs:
           nix develop --command cargo machete
 
   coverage:
+    name: lentil-core (line coverage)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
       - name: Line coverage of lentil-core (floor 80 %)
         run: nix develop --command cargo llvm-cov nextest -p lentil-core --fail-under-lines 80
 
   android:
+    name: Android (build, lint, unit tests)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
       - name: Build, lint and unit-test the app
         working-directory: android
         run: nix develop .. --command ./gradlew --no-daemon :app:assembleDebug :app:testDebugUnitTest :app:lint
@@ -54,8 +99,37 @@ jobs:
           nix develop --command find android -name "*.kt" -not -path "*/build/*" -exec ktfmt --kotlinlang-style --dry-run --set-exit-if-changed {} +
 
   nix:
+    name: Nix (flake check)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
       - run: nix flake check --all-systems
+
+  # Vulnerabilities and licenses of the dependencies that a pull request or a
+  # push to main adds or updates: Rust crates, Python packages and GitHub
+  # Actions. GitHub's dependency graph does not see the Gradle dependencies.
+  # On a push the check runs after the fact, so a failure there needs a
+  # follow-up commit. The policy is in the config file; inputs set here would
+  # override it. A manual run has no change to review.
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          config-file: ./.github/dependency-review-config.yml
+          # A push has no default refs. On pull requests both stay empty:
+          # explicit refs would take precedence over the pull request's own.
+          base-ref: ${{ github.event_name == 'push' && github.event.before || '' }}
+          head-ref: ${{ github.event_name == 'push' && github.sha || '' }}

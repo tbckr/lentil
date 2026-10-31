@@ -1,0 +1,17 @@
+# Dependabot only keeps the SHA-pinned GitHub Actions current (CONTRIBUTING:
+# Vulnerability scanning). Every other dependency is upgraded by hand.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    # Let new releases settle before they run in CI.
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: ci

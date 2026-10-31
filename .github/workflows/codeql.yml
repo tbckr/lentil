@@ -1,0 +1,66 @@
+# Static application security testing with CodeQL (CONTRIBUTING: Static
+# analysis): the Rust code and the workflows themselves, on every change and
+# weekly with the latest queries over the full tree. The Kotlin code is left
+# out because CodeQL would have to build it, and the app holds no finance
+# logic.
+#
+# CodeQL is GitHub's analysis and does not come from the development shell.
+# For Rust it needs no build, but reads the workspace through cargo; the
+# runner's rustup installs the toolchain that rust-toolchain.toml pins, the
+# same one the shell uses.
+#
+# Actions are pinned by commit SHA with a "# vX.Y.Z" comment (CONTRIBUTING: CI
+# and hosting); Dependabot (.github/dependabot.yml) bumps them monthly.
+name: CodeQL
+
+# Same paths-ignore as ci.yml (see the caveat there); the weekly run still
+# scans the full tree.
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - LICENSE
+  pull_request:
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - LICENSE
+  schedule:
+    - cron: "37 4 * * 1" # weekly, Monday 04:37 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# As in ci.yml: a new push cancels a pull request's run; on main, the running
+# run finishes and only the newest waiting one follows it.
+concurrency:
+  group: codeql-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  analyze:
+    name: CodeQL (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [rust, actions]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          queries: security-extended
+      - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          category: /language:${{ matrix.language }}

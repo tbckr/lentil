@@ -1,0 +1,4 @@
+# Every pull request requests a review from the maintainer, including
+# Dependabot's. GitHub never requests a review from a pull request's own
+# author, so the maintainer's own pull requests stay unassigned.
+* @tbckr

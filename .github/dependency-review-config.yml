@@ -1,0 +1,42 @@
+# Policy for the dependency review in ci.yml (CONTRIBUTING: Dependencies). It
+# checks the dependencies that a pull request or a push to main adds or
+# updates: Rust crates, Python packages and GitHub Actions. GitHub's dependency
+# graph does not see the Gradle dependencies.
+#
+# Any known vulnerability fails the check, in every scope, as in cargo-deny and
+# the daily osv-scanner run (scan.yml).
+#
+# Licenses must allow distributing Lentil under GPL-3.0-only. The list is the
+# one in [licenses] of deny.toml; keep both in sync. The license check covers
+# dev-only dependencies and GitHub Actions too, since it ignores
+# fail-on-scopes. A new license is a decision for the change that brings it
+# in. Dependencies without license data, like most GitHub Actions, are
+# reported but do not fail the check.
+fail-on-severity: low
+fail-on-scopes:
+  - runtime
+  - development
+  - unknown
+
+allow-licenses:
+  - Apache-2.0
+  - Apache-2.0 WITH LLVM-exception
+  - BSD-3-Clause
+  - BSL-1.0
+  # Lentil's own license. Also matches GPL-3.0-or-later and GPL-2.0-or-later;
+  # GPL-2.0-only is incompatible with it and does not pass.
+  - GPL-3.0-only
+  - MIT
+  - MPL-2.0
+  - Unicode-3.0
+  - Unlicense
+  - Zlib
+
+# Exempt per package (any version): Python Beancount and its dependencies are
+# the reference implementation for the differential tests. They run only in
+# development and CI and never ship (pyproject.toml).
+allow-dependencies-licenses:
+  # GPL-2.0-only.
+  - pkg:pypi/beancount
+  # Apache-2.0 AND CNRI-Python.
+  - pkg:pypi/regex
