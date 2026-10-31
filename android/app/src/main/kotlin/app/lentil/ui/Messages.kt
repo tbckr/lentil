@@ -22,9 +22,11 @@ private val findingMessages =
         "TransactionUnbalanced" to Message(R.string.finding_transaction_unbalanced, "detail"),
         "AccountNotOpen" to Message(R.string.finding_account_not_open, "account"),
         "DuplicateLentilId" to Message(R.string.finding_duplicate_lentil_id, "id"),
-        "OutsideWriteArea" to Message(R.string.finding_outside_write_area, "path", "role"),
+        "OutsideWriteArea" to
+            Message(R.string.finding_outside_write_area, "path", "role", "reason"),
         "OutsideProfile" to Message(R.string.finding_outside_profile, "construct"),
         "MainFileMismatch" to Message(R.string.finding_main_file_mismatch, "detail"),
+        "FavaFileMismatch" to Message(R.string.finding_fava_file_mismatch),
         "IncludeOutsideRepository" to
             Message(R.string.finding_include_outside_repository, "include"),
         "MissingZeroTolerance" to Message(R.string.finding_missing_zero_tolerance, "account"),
@@ -34,7 +36,7 @@ private val findingMessages =
         "ProtectedMetadataChanged" to
             Message(R.string.finding_protected_metadata_changed, "id", "key"),
         "ProtectedTransactionChanged" to
-            Message(R.string.finding_protected_transaction_changed, "id"),
+            Message(R.string.finding_protected_transaction_changed, "id", "reason"),
         "StrayLedgerFile" to Message(R.string.finding_stray_ledger_file, "path"),
         "InvalidPath" to Message(R.string.finding_invalid_path, "path"),
         "LoadCacheCommitted" to Message(R.string.finding_load_cache_committed, "path"),
@@ -47,6 +49,41 @@ private val findingMessages =
                 "difference",
                 "currency",
                 "asserted",
+            ),
+    )
+
+/**
+ * Arguments whose values are codes as well (lentil-core `validate::reason`, `validate::construct`).
+ */
+private val codedArgs =
+    mapOf(
+        "reason" to
+            mapOf(
+                "path" to R.string.reason_path,
+                "directive" to R.string.reason_directive,
+                "flag" to R.string.reason_flag,
+                "missing-lentil-id" to R.string.reason_missing_lentil_id,
+                "missing-lentil-desc" to R.string.reason_missing_lentil_desc,
+                "posting-count" to R.string.reason_posting_count,
+                "source-posting" to R.string.reason_source_posting,
+                "balance" to R.string.reason_balance,
+                "transaction-without-id" to R.string.reason_transaction_without_id,
+                "new-transaction" to R.string.reason_new_transaction,
+                "comment" to R.string.reason_comment,
+                "posting-flag" to R.string.reason_posting_flag,
+                "date" to R.string.reason_date,
+                "units" to R.string.reason_units,
+                "removed" to R.string.reason_removed,
+            ),
+        "construct" to
+            mapOf(
+                "option" to R.string.construct_option,
+                "include" to R.string.construct_include,
+                "plugin" to R.string.construct_plugin,
+                "tag-stack" to R.string.construct_tag_stack,
+                "cost" to R.string.construct_cost,
+                "elided-postings" to R.string.construct_elided_postings,
+                "pad" to R.string.construct_pad,
             ),
     )
 
@@ -72,11 +109,17 @@ fun findingText(finding: Finding): String {
         if (message == null) {
             stringResource(R.string.finding_unknown, finding.code)
         } else {
-            val args = message.args.map { finding.args[it] ?: "?" }.toTypedArray<Any>()
+            val args = message.args.map { argText(it, finding.args[it]) }.toTypedArray<Any>()
             stringResource(message.id, *args)
         }
     val location = finding.file?.let { file -> finding.line?.let { "$file:$it" } ?: file }
     return if (location == null) text else stringResource(R.string.finding_location, text, location)
+}
+
+@Composable
+private fun argText(key: String, value: String?): String {
+    val id = codedArgs[key]?.get(value)
+    return if (id != null) stringResource(id) else value ?: "?"
 }
 
 @Composable

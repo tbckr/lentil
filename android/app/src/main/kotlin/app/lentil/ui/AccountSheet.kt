@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -19,6 +20,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import app.lentil.R
@@ -53,6 +55,7 @@ fun AccountSheet(
             if (isAccountName(trimmed) && trimmed !in accounts) {
                 item {
                     ListItem(
+                        colors = transparent(),
                         headlineContent = {
                             Text(stringResource(R.string.account_open_new, trimmed))
                         },
@@ -77,10 +80,14 @@ private fun Header(text: String) {
 @Composable
 private fun Account(account: String, onSelect: (String) -> Unit) {
     ListItem(
+        colors = transparent(),
         headlineContent = { Text(account) },
         modifier = Modifier.clickable { onSelect(account) },
     )
 }
+
+/** List items on the sheet's own background. */
+@Composable private fun transparent() = ListItemDefaults.colors(containerColor = Color.Transparent)
 
 /**
  * Whether [name] looks like a Beancount account, such as `Expenses:Garden`. Only a hint for the

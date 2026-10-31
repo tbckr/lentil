@@ -1,5 +1,6 @@
 package app.lentil.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -25,9 +26,15 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.lentil.R
 
 @Composable
-fun ConnectScreen(viewModel: ConnectViewModel, onConnected: () -> Unit) {
+fun ConnectScreen(
+    viewModel: ConnectViewModel,
+    onConnected: () -> Unit,
+    onCancel: (() -> Unit)? = null,
+) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     LaunchedEffect(state.connected) { if (state.connected) onConnected() }
+    // Back returns to the current connection, if there is one.
+    BackHandler(enabled = onCancel != null && !state.connecting) { onCancel?.invoke() }
     Scaffold { padding ->
         Column(
             modifier =

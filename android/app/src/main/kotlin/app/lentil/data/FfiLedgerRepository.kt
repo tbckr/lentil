@@ -31,10 +31,16 @@ class FfiLedgerRepository(
 
     override fun hasClone(): Boolean = directory.isDirectory
 
+    /** Clones next to the current clone and replaces it only on success. */
     override suspend fun clone(url: String, credentials: Credentials) = call {
         prepareNetwork()
+        val fresh = File(directory.parentFile, "${directory.name}.new")
+        fresh.deleteRecursively()
+        LentilRepo.cloneRepo(url, fresh.path, credentials.toFfi()).destroy()
+        opened?.destroy()
+        opened = null
         directory.deleteRecursively()
-        opened = LentilRepo.cloneRepo(url, directory.path, credentials.toFfi())
+        check(fresh.renameTo(directory)) { "cannot replace ${directory.name}" }
     }
 
     override suspend fun load(pending: List<StoredIntent>): LedgerView = call {

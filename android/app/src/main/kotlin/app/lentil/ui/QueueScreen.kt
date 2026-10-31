@@ -53,10 +53,11 @@ import java.text.NumberFormat
 import java.util.Locale
 
 @Composable
-fun QueueScreen(viewModel: QueueViewModel) {
+fun QueueScreen(viewModel: QueueViewModel, onChangeConnection: () -> Unit) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var accountFor by remember { mutableStateOf<QueueEntry?>(null) }
     var dismissFor by remember { mutableStateOf<QueueEntry?>(null) }
+    var menu by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -68,6 +69,23 @@ fun QueueScreen(viewModel: QueueViewModel) {
                             painterResource(R.drawable.ic_sync),
                             contentDescription = stringResource(R.string.action_sync),
                         )
+                    }
+                    Box {
+                        IconButton(onClick = { menu = true }) {
+                            Icon(
+                                painterResource(R.drawable.ic_more_vert),
+                                contentDescription = stringResource(R.string.action_more),
+                            )
+                        }
+                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.action_change_connection)) },
+                                onClick = {
+                                    menu = false
+                                    onChangeConnection()
+                                },
+                            )
+                        }
                     }
                 },
             )

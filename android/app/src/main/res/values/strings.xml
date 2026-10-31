@@ -23,6 +23,7 @@
     <string name="action_confirm">Confirm</string>
     <string name="action_more">More actions</string>
     <string name="action_dismiss">Dismiss as duplicate</string>
+    <string name="action_change_connection">Change connection</string>
     <string name="dismiss_title">Dismiss as duplicate?</string>
     <string name="dismiss_text">The transaction stays in its file as a comment and is never imported again.</string>
     <string name="dismiss_confirm">Dismiss</string>
@@ -86,20 +87,45 @@
     <string name="finding_transaction_unbalanced">A transaction doesn\'t balance: %1$s</string>
     <string name="finding_account_not_open">The account %1$s isn\'t open on that date.</string>
     <string name="finding_duplicate_lentil_id">Two transactions share the ID %1$s.</string>
-    <string name="finding_outside_write_area">%1$s lies outside what the %2$s role may change.</string>
+    <string name="finding_outside_write_area">The %2$s role may not change %1$s: %3$s.</string>
     <string name="finding_outside_profile">The ledger uses %1$s, which Lentil doesn\'t support.</string>
     <string name="finding_main_file_mismatch">main.beancount differs from the convention: %1$s</string>
+    <string name="finding_fava_file_mismatch">fava.beancount may only hold Fava options and sidebar links.</string>
     <string name="finding_include_outside_repository">An include points outside the repository: %1$s</string>
     <string name="finding_missing_zero_tolerance">A new balance assertion for %1$s lacks the zero tolerance.</string>
     <string name="finding_manual_posting_on_source_account">The manual transaction %2$s posts to the imported account %1$s.</string>
     <string name="finding_pad_on_source_account">A pad posts to the imported account %1$s.</string>
     <string name="finding_protected_metadata_changed">%2$s of transaction %1$s was changed or removed.</string>
-    <string name="finding_protected_transaction_changed">Transaction %1$s was removed, or its date or bank posting changed.</string>
+    <string name="finding_protected_transaction_changed">Transaction %1$s was changed where no client may change it: %2$s.</string>
     <string name="finding_stray_ledger_file">%1$s isn\'t included by main.beancount.</string>
     <string name="finding_invalid_path">The path %1$s breaks the naming rules.</string>
     <string name="finding_load_cache_committed">A load cache was committed: %1$s</string>
     <string name="finding_core_error">Ledger error %1$s: %2$s</string>
     <string name="finding_balance_assertion_failed">The balance of %1$s on %2$s is off by %3$s %4$s (expected %5$s %4$s).</string>
+    <!-- Values of the reason argument -->
+    <string name="reason_path">a file this role may not create, change or remove</string>
+    <string name="reason_directive">a directive this role may not write or change here</string>
+    <string name="reason_flag">an imported transaction without the flag !</string>
+    <string name="reason_missing_lentil_id">a new transaction without lentil_id</string>
+    <string name="reason_missing_lentil_desc">an imported transaction without lentil_desc</string>
+    <string name="reason_posting_count">the number of postings</string>
+    <string name="reason_source_posting">the bank posting</string>
+    <string name="reason_balance">a balance assertion off the imported account</string>
+    <string name="reason_transaction_without_id">a transaction without lentil_id</string>
+    <string name="reason_new_transaction">a new transaction outside the device\'s own files</string>
+    <string name="reason_comment">a removed comment</string>
+    <string name="reason_posting_flag">the flag of a posting</string>
+    <string name="reason_date">the date</string>
+    <string name="reason_units">an amount, cost or price</string>
+    <string name="reason_removed">a transaction removed instead of commented out</string>
+    <!-- Values of the construct argument -->
+    <string name="construct_option">an option other than title and operating_currency</string>
+    <string name="construct_include">an include outside main.beancount</string>
+    <string name="construct_plugin">a plugin</string>
+    <string name="construct_tag_stack">pushtag or poptag</string>
+    <string name="construct_cost">a cost annotation</string>
+    <string name="construct_elided_postings">more than one posting without an amount</string>
+    <string name="construct_pad">a pad on an account without balance snapshots</string>
     <string name="finding_unknown">Unknown problem: %1$s</string>
     <string name="finding_location">%1$s (%2$s)</string>
 

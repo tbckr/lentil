@@ -5,6 +5,7 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
 import androidx.core.content.edit
+import java.security.GeneralSecurityException
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -18,17 +19,26 @@ import javax.crypto.spec.GCMParameterSpec
 class KeystoreSecretStore(private val preferences: SharedPreferences) : SecretStore {
     override fun hasToken(): Boolean = preferences.contains(TOKEN)
 
+    /** The token, or `null` if none is stored or it cannot be decrypted any more. */
+    @Suppress("SwallowedException")
     override fun token(): String? {
         val stored = preferences.getString(TOKEN, null) ?: return null
-        val bytes = Base64.decode(stored, Base64.NO_WRAP)
-        val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(
-            Cipher.DECRYPT_MODE,
-            key(),
-            GCMParameterSpec(TAG_BITS, bytes, 0, IV_BYTES),
-        )
-        val plain = cipher.doFinal(bytes, IV_BYTES, bytes.size - IV_BYTES)
-        return String(plain, Charsets.UTF_8)
+        return try {
+            val bytes = Base64.decode(stored, Base64.NO_WRAP)
+            val cipher = Cipher.getInstance(TRANSFORMATION)
+            cipher.init(
+                Cipher.DECRYPT_MODE,
+                key(),
+                GCMParameterSpec(TAG_BITS, bytes, 0, IV_BYTES),
+            )
+            String(cipher.doFinal(bytes, IV_BYTES, bytes.size - IV_BYTES), Charsets.UTF_8)
+        } catch (e: GeneralSecurityException) {
+            // The key is gone, for example after the device's lock screen was reset; the user
+            // signs in again.
+            null
+        } catch (e: IllegalArgumentException) {
+            null
+        }
     }
 
     override fun saveToken(token: String) {
