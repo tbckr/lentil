@@ -8,5 +8,9 @@ gradlePlugin {
             id = "lentil.rust-android"
             implementationClass = "RustAndroidPlugin"
         }
+        register("licenseCheck") {
+            id = "lentil.license-check"
+            implementationClass = "LicenseCheckPlugin"
+        }
     }
 }

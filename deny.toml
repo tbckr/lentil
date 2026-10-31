@@ -14,9 +14,10 @@ ignore = [
 
 [licenses]
 version = 2
-# Licenses compatible with distributing Lentil under GPL-3.0-only. The dependency
-# review in CI uses the same list (.github/dependency-review-config.yml); change
-# both together.
+# Licenses compatible with distributing Lentil under GPL-3.0-only. The Gradle
+# build reads this list for its license check (:app:checkLicenses). The dependency
+# review in CI uses a copy (.github/dependency-review-config.yml); change both
+# together.
 allow = [
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",

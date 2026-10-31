@@ -80,7 +80,7 @@ jobs:
         run: nix develop --command cargo llvm-cov nextest -p lentil-core --fail-under-lines 80
 
   android:
-    name: Android (build, lint, unit tests)
+    name: Android (build, lint, unit tests, licenses)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -90,9 +90,9 @@ jobs:
       - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build, lint and unit-test the app
+      - name: Build, lint and unit-test the app, check its licenses
         working-directory: android
-        run: nix develop .. --command ./gradlew --no-daemon :app:assembleDebug :app:testDebugUnitTest :app:lint
+        run: nix develop .. --command ./gradlew --no-daemon :app:assembleDebug :app:testDebugUnitTest :app:lint :app:checkLicenses
       - name: detekt and ktfmt
         run: |
           nix develop --command detekt --build-upon-default-config --config android/detekt.yml --input android/app/src,android/build-logic/src

@@ -3,6 +3,7 @@ plugins {
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
     id("lentil.rust-android")
+    id("lentil.license-check")
 }
 
 android {
@@ -65,6 +66,14 @@ rust {
     libraryName = "lentil_ffi"
     // arm64-v8a for devices, x86_64 for the emulator (PRD: Platforms).
     abis = listOf("arm64-v8a", "x86_64")
+}
+
+// The licenses of the runtime and test dependencies, against cargo-deny's allowlist
+// (CONTRIBUTING: Dependencies).
+licenseCheck {
+    denyToml = rootProject.layout.projectDirectory.file("../deny.toml")
+    // EPL-1.0, which GPL-3.0-only does not admit; JUnit only runs the unit tests and never ships.
+    exempt.add("junit:junit")
 }
 
 // Lockfile for reproducible resolution and for osv-scanner (CONTRIBUTING: Vulnerability scanning).
