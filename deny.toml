@@ -3,6 +3,10 @@
 [graph]
 all-features = true
 
+# Checked without dev-dependencies (scripts/scan.sh rust), on every change in
+# ci.yml and daily on main and the latest release: only the crates that ship
+# count (CONTRIBUTING: Vulnerability scanning). The scan of the latest release
+# applies the ignores below from main as well.
 [advisories]
 version = 2
 yanked = "deny"

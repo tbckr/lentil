@@ -1,6 +1,6 @@
 # Every job runs inside the flake's development shell, so CI uses exactly the
 # local toolchain. Mutation testing runs in mutation.yml, static analysis in
-# codeql.yml and the daily vulnerability scan in scan.yml.
+# codeql.yml and the vulnerability scans in scan.yml and scan-release.yml.
 #
 # install-nix-action gets the job's read-only token, so Nix's fetches from
 # GitHub stay clear of the rate limit for anonymous API requests.
@@ -60,9 +60,12 @@ jobs:
         run: nix develop --command cargo nextest run --workspace
       - name: Doc tests
         run: nix develop --command cargo test --workspace --doc
+      # Advisories only for the crates that ship, as in scan.yml; licenses,
+      # bans and sources for every crate, dev-dependencies included.
       - name: Dependencies
         run: |
-          nix develop --command cargo deny check
+          nix develop --command cargo deny check bans licenses sources
+          nix develop --command scripts/scan.sh rust
           nix develop --command cargo machete
 
   coverage:

@@ -23,7 +23,7 @@ Run every command inside the development shell.
 
 - `cargo nextest run --workspace` runs the tests; `cargo test --workspace --doc` runs the doc tests, which nextest skips.
 - `cargo clippy --workspace --all-targets -- -D warnings` and `cargo fmt --all` lint and format.
-- `cargo deny check` and `cargo machete` check the dependencies.
+- `cargo deny check bans licenses sources`, `scripts/scan.sh rust` and `cargo machete` check the dependencies, as CI does. `scripts/scan.sh` without an argument also runs the other checks of `scan.yml`: vulnerabilities in the packages of the APK (`gradle`) and known malware in any package (`malware`).
 - `cargo llvm-cov nextest -p lentil-core` measures coverage.
 - `scripts/mutation.sh origin/main` mutation-tests the lines of `lentil-core` changed since the merge base and fails if the tests miss a mutant, as CI does. Without a ref, it mutates all of `lentil-core` and fails below 85 % test efficacy, which takes hours. The settings are in `.cargo/mutants.toml`.
 - The differential tests in `crates/lentil-core/tests/differential.rs` compare rustledger with Python Beancount through `uv`; `LENTIL_SKIP_DIFFERENTIAL=1` skips them where uv is missing. `cargo test -p lentil-core --release --test differential -- --ignored --nocapture` measures the load time of a synthetic 50,000-transaction ledger.

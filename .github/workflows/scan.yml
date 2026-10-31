@@ -1,4 +1,21 @@
-# Daily vulnerability scan of the lockfiles (CONTRIBUTING: Vulnerability scanning).
+# Vulnerability scans of main (CONTRIBUTING: Vulnerability scanning), daily
+# and whenever a lockfile changes. Only precise signals fail the run; the
+# checks are in scripts/scan.sh:
+#   - rust: cargo-deny's advisories check of the crates that ship, without
+#     dev-dependencies, with the ignores in deny.toml. ci.yml runs it on every
+#     change, so only the daily and manual runs run it here: they catch
+#     advisories published while main stays put.
+#   - gradle: osv-scanner on the packages that ship in the APK
+#     (releaseRuntimeClasspath). A vulnerability needs attacker input, and
+#     build, lint and test tools only process our own code. The dependency
+#     review in ci.yml does not see the Gradle dependencies, so this check
+#     also runs whenever their lockfiles change.
+#   - malware: known malware does harm wherever it runs. Build and test tools
+#     run on developer machines and in CI, so it fails the run for every
+#     package in every lockfile: dev- and build-dependencies of the crates,
+#     Python Beancount and every artifact Gradle downloads
+#     (android/gradle/verification-metadata.xml).
+# scan-release.yml scans the latest release.
 #
 # install-nix-action gets the job's read-only token, as in ci.yml.
 #
@@ -7,6 +24,27 @@
 name: Scan
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - Cargo.lock
+      - uv.lock
+      - android/app/gradle.lockfile
+      - android/settings-gradle.lockfile
+      - android/gradle/verification-metadata.xml
+      - osv-scanner.toml
+      - scripts/scan.sh
+      - .github/workflows/scan.yml
+  pull_request:
+    paths:
+      - Cargo.lock
+      - uv.lock
+      - android/app/gradle.lockfile
+      - android/settings-gradle.lockfile
+      - android/gradle/verification-metadata.xml
+      - osv-scanner.toml
+      - scripts/scan.sh
+      - .github/workflows/scan.yml
   schedule:
     - cron: "17 4 * * *" # daily, 04:17 UTC
   workflow_dispatch:
@@ -14,16 +52,19 @@ on:
 permissions:
   contents: read
 
-# A manual run while the scheduled one is running waits for it.
+# A new push cancels a pull request's run; on main, the running run finishes
+# and only the newest waiting one follows it.
 concurrency:
-  group: scan-${{ github.ref }}
-  cancel-in-progress: false
+  group: scan-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  osv:
-    name: osv-scanner (lockfiles)
+  # One job, since every check needs the development shell. Each step runs
+  # even if one before it failed, so a run reports every finding.
+  scan:
+    name: cargo-deny and osv-scanner (main)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -31,4 +72,12 @@ jobs:
       - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
-      - run: nix develop --command osv-scanner scan source --lockfile Cargo.lock --lockfile uv.lock --recursive android
+      - name: Vulnerabilities in the shipped crates
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: nix develop --command scripts/scan.sh rust
+      - name: Vulnerabilities in the packages of the APK
+        if: ${{ !cancelled() }}
+        run: nix develop --command scripts/scan.sh gradle
+      - name: Malware in any package
+        if: ${{ !cancelled() }}
+        run: nix develop --command scripts/scan.sh malware

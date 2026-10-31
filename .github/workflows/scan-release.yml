@@ -1,0 +1,94 @@
+# Vulnerability scans of the latest release (CONTRIBUTING: Vulnerability
+# scanning), daily. A fix on main turns scan.yml green while users still run
+# the released version; this run stays red until a release ships the fix. The
+# same signals as in scan.yml fail it, on the release's lockfiles
+# (scripts/scan.sh):
+#   - rust: cargo-deny's advisories check of the crates that ship, without
+#     dev-dependencies. It needs the release's workspace manifests too, not
+#     only its Cargo.lock.
+#   - gradle: osv-scanner on the packages that ship in the APK
+#     (releaseRuntimeClasspath).
+# Malware in a package that ships fails both as a vulnerability of that
+# package. Malware in build and test tools does its harm where they run, so
+# scan.yml checks for it on main. The settings, the ignores in deny.toml and
+# osv-scanner.toml included, come from main: they hold the current
+# assessment. A commit does not change the release, so pushes and pull
+# requests only run this to test changes to its own configuration.
+#
+# install-nix-action gets the job's read-only token, as in ci.yml.
+#
+# Actions are pinned by commit SHA with a "# vX.Y.Z" comment (CONTRIBUTING: CI
+# and hosting); Dependabot (.github/dependabot.yml) bumps them monthly.
+name: Scan (latest release)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - deny.toml
+      - osv-scanner.toml
+      - scripts/scan.sh
+      - .github/workflows/scan-release.yml
+  pull_request:
+    paths:
+      - deny.toml
+      - osv-scanner.toml
+      - scripts/scan.sh
+      - .github/workflows/scan-release.yml
+  schedule:
+    - cron: "47 4 * * *" # daily, 04:47 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A new push cancels a pull request's run; on main, the running run finishes
+# and only the newest waiting one follows it.
+concurrency:
+  group: scan-release-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  release:
+    name: Find the latest release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.latest.outputs.tag }}
+    steps:
+      - id: latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts \
+            --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName // empty')"
+          if [ -z "$tag" ]; then
+            echo "::notice::No release yet, nothing to scan."
+            exit 0
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  scan:
+    name: cargo-deny and osv-scanner (latest release)
+    needs: release
+    if: needs.release.outputs.tag != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # main for the development shell, the script and the settings.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release.outputs.tag }}
+          path: release
+          persist-credentials: false
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Vulnerabilities in the shipped crates
+        run: nix develop --command scripts/scan.sh rust release
+      - name: Vulnerabilities in the packages of the APK
+        if: ${{ !cancelled() }}
+        run: nix develop --command scripts/scan.sh gradle release

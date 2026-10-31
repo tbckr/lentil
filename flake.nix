@@ -96,6 +96,8 @@
                   pkgs.cargo-deny
                   pkgs.cargo-machete
                   pkgs.osv-scanner
+                  # Reads osv-scanner's report in scripts/scan.sh.
+                  pkgs.jq
                   pkgs.nixfmt
                   # Checks the GitHub workflows.
                   pkgs.actionlint
