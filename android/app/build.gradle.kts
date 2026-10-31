@@ -67,6 +67,9 @@ rust {
     abis = listOf("arm64-v8a", "x86_64")
 }
 
+// Lockfile for reproducible resolution and for osv-scanner (CONTRIBUTING: Vulnerability scanning).
+dependencyLocking { lockAllConfigurations() }
+
 dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
