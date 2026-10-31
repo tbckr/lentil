@@ -167,9 +167,16 @@
         pkgs:
         let
           inherit (pkgs) lib;
-          # The development shell's toolchain, so the package adds no download.
+          # The Rust version of rust-toolchain.toml without the development
+          # shell's components and Android targets, so installing the package
+          # downloads only what the build needs. The shell already holds these
+          # components.
           craneLib = (crane.mkLib pkgs).overrideToolchain (
-            p: p.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml
+            p:
+            p.rust-bin.fromRustupToolchain {
+              inherit ((lib.importTOML ./rust-toolchain.toml).toolchain) channel;
+              profile = "minimal";
+            }
           );
           commonArgs = {
             # Only the workspace, so changes elsewhere do not rebuild the CLI.
