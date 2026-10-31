@@ -1,0 +1,8 @@
+Example Card statement,Limit 2.000 ¤
+Posting date,Description,Debit,Credit,Balance,Status
+2026-10-21,"Café Lumière, Lyon",4.20,,,PENDING
+2026-10-19,"Café Lumière, Lyon",18.40,,"-1,268.40",BOOKED
+2026-10-17,Librairie ¼uvre,"-1,250.00",,"-1,250.00",BOOKED
+2026-10-16,Card Repayment,,500.00,0.00,BOOKED
+
+2026-10-02,Train Tickets,500.00,,-500.00,BOOKED

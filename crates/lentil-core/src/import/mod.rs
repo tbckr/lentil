@@ -13,10 +13,11 @@ pub mod rules;
 use jiff::civil::Date;
 use rust_decimal::Decimal;
 
+pub use csv::read_statement;
 pub use mapping::{Mapping, MappingError};
 pub use plan::{
-    BalanceOutcome, ImportPlan, ImportRequest, PlannedTxn, PossibleDuplicate, RunFile,
-    SuggestionKind, UserBalance, plan_import,
+    BalanceOutcome, ImportPlan, ImportRequest, OPENING_BALANCE_ACCOUNT, PlannedTxn,
+    PossibleDuplicate, RunFile, SuggestionKind, UserBalance, opening_id, plan_import,
 };
 pub use rules::{Learned, Rules, RulesError};
 
@@ -92,4 +93,15 @@ pub enum ImportError {
     /// `from = "text"` found no balance line.
     #[error("balance text not found")]
     BalanceNotFound,
+    /// Two rows of one export carry the same reference, so the reference
+    /// column cannot identify transactions (spec section 5).
+    #[error("line {line}: reference {reference:?} repeats line {first_line}")]
+    DuplicateReference {
+        /// 1-based line of the repeated reference.
+        line: usize,
+        /// 1-based line where the reference first appears.
+        first_line: usize,
+        /// The reference.
+        reference: String,
+    },
 }

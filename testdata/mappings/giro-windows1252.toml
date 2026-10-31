@@ -1,0 +1,28 @@
+# Fictional German-style giro export: Windows-1252, preamble, ";" delimiter,
+# decimal comma, pending rows and a stated balance after the table.
+
+[file]
+encoding = "windows-1252"
+delimiter = ";"
+header = ["Buchungsdatum", "Betrag"]
+end = "^Kontostand"
+
+[numbers]
+decimal = ","
+thousands = "."
+
+[columns]
+booking_date = { column = "Buchungsdatum", format = "%d.%m.%Y" }
+amount = { column = "Betrag" }
+currency = "Währung"
+counterparty = ["Zahlungspflichtiger/-empfänger"]
+purpose = ["Verwendungszweck"]
+
+[[skip]]
+column = "Status"
+equals = "Vorgemerkt"
+
+[balance]
+from = "text"
+pattern = 'Kontostand am (?P<date>\d{2}\.\d{2}\.\d{4}): (?P<amount>[-+]?[\d.]+,\d{2}) EUR'
+date_format = "%d.%m.%Y"

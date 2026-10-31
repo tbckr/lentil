@@ -1,0 +1,22 @@
+# Fictional card export: ISO-8859-15, debit and credit columns, a running
+# balance, newest first, and pending rows.
+
+[file]
+encoding = "iso-8859-15"
+header = ["Posting date", "Debit", "Credit"]
+
+[numbers]
+thousands = ","
+
+[columns]
+booking_date = { column = "Posting date", format = "%Y-%m-%d" }
+amount = { debit = "Debit", credit = "Credit" }
+counterparty = ["Description"]
+
+[[skip]]
+column = "Status"
+matches = "(?i)^pending$"
+
+[balance]
+from = "column"
+column = "Balance"

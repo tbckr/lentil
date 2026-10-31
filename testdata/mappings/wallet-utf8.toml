@@ -1,0 +1,16 @@
+# Fictional payment service export: UTF-8 with byte order mark, a unique
+# reference per row, spending as positive amounts and no balance.
+
+[file]
+header = ["Date", "Reference", "Amount"]
+
+[columns]
+booking_date = { column = "Date", format = "%m/%d/%Y" }
+amount = { column = "Amount", invert = true }
+currency = "Currency"
+counterparty = ["Name", "City"]
+purpose = ["Note"]
+reference = "Reference"
+
+[balance]
+from = "none"
