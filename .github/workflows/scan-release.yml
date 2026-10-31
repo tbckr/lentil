@@ -28,12 +28,14 @@ on:
       - deny.toml
       - osv-scanner.toml
       - scripts/scan.sh
+      - justfile
       - .github/workflows/scan-release.yml
   pull_request:
     paths:
       - deny.toml
       - osv-scanner.toml
       - scripts/scan.sh
+      - justfile
       - .github/workflows/scan-release.yml
   schedule:
     - cron: "47 4 * * *" # daily, 04:47 UTC
@@ -88,7 +90,7 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
       - name: Vulnerabilities in the shipped crates
-        run: nix develop --command scripts/scan.sh rust release
+        run: nix develop --command just scan rust release
       - name: Vulnerabilities in the packages of the APK
         if: ${{ !cancelled() }}
-        run: nix develop --command scripts/scan.sh gradle release
+        run: nix develop --command just scan gradle release

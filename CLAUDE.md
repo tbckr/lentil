@@ -21,6 +21,7 @@ Lentil has a first, unreleased draft of v0.1 next to its design documents:
 
 Run every command inside the development shell.
 
+- `just` lists the recipes of the `justfile`, which name the commands below; CI runs the same recipes, so change a command there and not in a workflow.
 - `cargo nextest run --workspace` runs the tests; `cargo test --workspace --doc` runs the doc tests, which nextest skips.
 - `cargo clippy --workspace --all-targets -- -D warnings` and `cargo fmt --all` lint and format.
 - `cargo deny check bans licenses sources`, `scripts/scan.sh rust` and `cargo machete` check the dependencies, as CI does. `scripts/scan.sh` without an argument also runs the other checks of `scan.yml`: vulnerabilities in the packages of the APK (`gradle`) and known malware in any package (`malware`).

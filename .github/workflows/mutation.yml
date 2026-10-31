@@ -25,12 +25,14 @@ on:
       - "crates/lentil-core/src/**"
       - .cargo/mutants.toml
       - scripts/mutation.sh
+      - justfile
       - .github/workflows/mutation.yml
   pull_request:
     paths:
       - "crates/lentil-core/src/**"
       - .cargo/mutants.toml
       - scripts/mutation.sh
+      - justfile
       - .github/workflows/mutation.yml
 
 permissions:
@@ -63,4 +65,4 @@ jobs:
           # A pull request against its base branch, a push against the state
           # of main before it.
           BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
-        run: nix develop --command scripts/mutation.sh "$BASE"
+        run: nix develop --command just mutants "$BASE"

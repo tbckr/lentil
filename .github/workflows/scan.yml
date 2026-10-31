@@ -35,6 +35,7 @@ on:
       - android/gradle/verification-metadata.xml
       - osv-scanner.toml
       - scripts/scan.sh
+      - justfile
       - .github/workflows/scan.yml
   pull_request:
     paths:
@@ -45,6 +46,7 @@ on:
       - android/gradle/verification-metadata.xml
       - osv-scanner.toml
       - scripts/scan.sh
+      - justfile
       - .github/workflows/scan.yml
   schedule:
     - cron: "17 4 * * *" # daily, 04:17 UTC
@@ -75,10 +77,10 @@ jobs:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
       - name: Vulnerabilities in the shipped crates
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-        run: nix develop --command scripts/scan.sh rust
+        run: nix develop --command just scan rust
       - name: Vulnerabilities in the packages of the APK
         if: ${{ !cancelled() }}
-        run: nix develop --command scripts/scan.sh gradle
+        run: nix develop --command just scan gradle
       - name: Malware in any package
         if: ${{ !cancelled() }}
-        run: nix develop --command scripts/scan.sh malware
+        run: nix develop --command just scan malware

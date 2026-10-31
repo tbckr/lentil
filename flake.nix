@@ -92,6 +92,8 @@
             pkgs.mkShell (
               {
                 packages = [
+                  # Runs the recipes of the justfile, locally and in CI.
+                  pkgs.just
                   # Rust is pinned only in rust-toolchain.toml.
                   (pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
                   pkgs.cargo-nextest

@@ -1,7 +1,8 @@
-# Every job runs inside the flake's development shell, so CI uses exactly the
-# local toolchain. Mutation testing runs in mutation.yml, static analysis in
-# codeql.yml, the vulnerability scans in scan.yml and scan-release.yml, and the
-# weekly run against the newest dependencies in latest-deps.yml.
+# The jobs run the recipes of the justfile inside the flake's development
+# shell, so CI runs exactly the local commands with the local toolchain.
+# Mutation testing runs in mutation.yml, static analysis in codeql.yml, the
+# vulnerability scans in scan.yml and scan-release.yml, and the weekly run
+# against the newest dependencies in latest-deps.yml.
 #
 # install-nix-action gets the job's read-only token, so Nix's fetches from
 # GitHub stay clear of the rate limit for anonymous API requests.
@@ -54,20 +55,17 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
       - name: Format
-        run: nix develop --command cargo fmt --all --check
+        run: nix develop --command just fmt-check
       - name: Lint
-        run: nix develop --command cargo clippy --workspace --all-targets -- -D warnings
+        run: nix develop --command just lint
       - name: Test
-        run: nix develop --command cargo nextest run --workspace
+        run: nix develop --command just test
       - name: Doc tests
-        run: nix develop --command cargo test --workspace --doc
+        run: nix develop --command just test-doc
       # Advisories only for the crates that ship, as in scan.yml; licenses,
       # bans and sources for every crate, dev-dependencies included.
       - name: Dependencies
-        run: |
-          nix develop --command cargo deny check bans licenses sources
-          nix develop --command scripts/scan.sh rust
-          nix develop --command cargo machete
+        run: nix develop --command just deps-check
 
   coverage:
     name: lentil-core (line coverage)
@@ -81,7 +79,7 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
       - name: Line coverage of lentil-core (floor 80 %)
-        run: nix develop --command cargo llvm-cov nextest -p lentil-core --fail-under-lines 80
+        run: nix develop --command just coverage
 
   android:
     name: Android (build, lint, unit tests, licenses)
@@ -95,15 +93,14 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
       - name: Build, lint and unit-test the app, check its licenses
-        working-directory: android
-        run: nix develop .. --command ./gradlew --no-daemon :app:assembleDebug :app:testDebugUnitTest :app:lint :app:checkLicenses
+        run: nix develop --command just android --no-daemon
       - name: detekt and ktfmt
-        run: |
-          nix develop --command detekt --build-upon-default-config --config android/detekt.yml --input android/app/src,android/build-logic/src
-          nix develop --command find android -name "*.kt" -not -path "*/build/*" -exec ktfmt --kotlinlang-style --dry-run --set-exit-if-changed {} +
+        run: nix develop --command just kotlin-lint
 
   # Evaluates the flake for every system and builds the CLI package for this
-  # one, which compiles every dependency without a cache.
+  # one, which compiles every dependency without a cache. It runs the command
+  # of `just flake-check` directly, because the development shell, which
+  # supplies just, would download the Android SDK only for that.
   nix:
     name: Nix (flake check)
     runs-on: ubuntu-latest

@@ -67,10 +67,10 @@ jobs:
             export TMPDIR="$HOME/tmp"
             mkdir -p "$TMPDIR"
             source "$RUNNER_TOOL_CACHE/$SHELL_DIR/env.sh"
-            scripts/deps.sh upgrade rust
-            cargo clippy --workspace --all-targets -- -D warnings
-            cargo nextest run --workspace
-            cargo test --workspace --doc
+            just upgrade rust
+            just lint
+            just test
+            just test-doc
 
   android:
     name: Android (latest catalog versions within their majors)
@@ -100,7 +100,7 @@ jobs:
             source "$RUNNER_TOOL_CACHE/$SHELL_DIR/env.sh"
             # Prints each version it raises, then builds, unit-tests and lints
             # the app and checks its licenses.
-            scripts/deps.sh upgrade android
+            just upgrade android
 
   pins:
     name: rustledger, UniFFI and Beancount (latest releases)
@@ -128,12 +128,12 @@ jobs:
             export TMPDIR="$HOME/tmp"
             mkdir -p "$TMPDIR"
             source "$RUNNER_TOOL_CACHE/$SHELL_DIR/env.sh"
-            scripts/deps.sh upgrade pins
-            cargo clippy --workspace --all-targets -- -D warnings
+            just upgrade pins
+            just lint
             # Includes the differential tests against Python Beancount.
-            cargo nextest run --workspace
-            cargo test --workspace --doc
-            (cd android && ./gradlew --no-daemon :app:assembleDebug :app:testDebugUnitTest)
+            just test
+            just test-doc
+            just gradle --no-daemon :app:assembleDebug :app:testDebugUnitTest
 
   # Runs no dependency code, only reads registries, so it needs no sandbox.
   outdated:
@@ -150,7 +150,7 @@ jobs:
       - name: Versions to review
         run: |
           report="$RUNNER_TEMP/outdated.txt"
-          nix develop --command scripts/deps.sh outdated > "$report"
+          nix develop --command just outdated > "$report"
           cat "$report"
           {
             echo '```'
