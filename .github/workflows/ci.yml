@@ -102,10 +102,12 @@ jobs:
           nix develop --command detekt --build-upon-default-config --config android/detekt.yml --input android/app/src,android/build-logic/src
           nix develop --command find android -name "*.kt" -not -path "*/build/*" -exec ktfmt --kotlinlang-style --dry-run --set-exit-if-changed {} +
 
+  # Evaluates the flake for every system and builds the CLI package for this
+  # one, which compiles every dependency without a cache.
   nix:
     name: Nix (flake check)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

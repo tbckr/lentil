@@ -1,5 +1,5 @@
 {
-  description = "Lentil development shell";
+  description = "Lentil: development shell and CLI package";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -7,10 +7,18 @@
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # Builds the CLI package.
+    crane.url = "github:ipetkov/crane";
   };
 
   outputs =
-    { nixpkgs, rust-overlay, ... }:
+    {
+      self,
+      nixpkgs,
+      rust-overlay,
+      crane,
+      ...
+    }:
     let
       systems = [
         "x86_64-linux"
@@ -154,6 +162,60 @@
           });
         }
       );
+
+      packages = forAllSystems (
+        pkgs:
+        let
+          inherit (pkgs) lib;
+          # The development shell's toolchain, so the package adds no download.
+          craneLib = (crane.mkLib pkgs).overrideToolchain (
+            p: p.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml
+          );
+          commonArgs = {
+            # Only the workspace, so changes elsewhere do not rebuild the CLI.
+            src = lib.fileset.toSource {
+              root = ./.;
+              fileset = lib.fileset.unions [
+                ./Cargo.toml
+                ./Cargo.lock
+                (craneLib.fileset.commonCargoSources ./crates)
+              ];
+            };
+            pname = "lentil";
+            version = (lib.importTOML ./Cargo.toml).workspace.package.version;
+            strictDeps = true;
+            cargoExtraArgs = "--locked -p lentil-cli";
+            # Builds the vendored OpenSSL.
+            nativeBuildInputs = [ pkgs.perl ];
+            # CI's development shell jobs run the tests with the same toolchain.
+            doCheck = false;
+          };
+          lentil = craneLib.buildPackage (
+            commonArgs
+            // {
+              cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+              # Fails the build if the binary does not start.
+              nativeInstallCheckInputs = [ pkgs.versionCheckHook ];
+              doInstallCheck = true;
+              meta = {
+                description = "Everyday Beancount on a Git repository";
+                homepage = "https://github.com/tbckr/lentil";
+                license = lib.licenses.gpl3Only;
+                mainProgram = "lentil";
+              };
+            }
+          );
+        in
+        {
+          inherit lentil;
+          default = lentil;
+        }
+      );
+
+      # CI's `nix flake check` builds the package through this.
+      checks = forAllSystems (pkgs: {
+        inherit (self.packages.${pkgs.stdenv.hostPlatform.system}) lentil;
+      });
 
       formatter = forAllSystems (pkgs: pkgs.nixfmt-tree);
     };

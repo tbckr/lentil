@@ -10,7 +10,7 @@ Lentil has a first, unreleased draft of v0.1 next to its design documents:
 - `docs/SPEC.md`: the Lentil Convention Spec. Its RFC 2119 rules make every client interchangeable on one Git repository of Beancount files. It is at `spec_version` 0, so any change may break until version 1.
 - `CONTRIBUTING.md`: engineering standards for testing, linting, dependencies, CI and releases.
 - `README.md`: short overview with links to the documents above and the non-goals. When a non-goal changes in the PRD, change the README too.
-- `flake.nix`: the Nix development shell, the only source of development tools. Rust is pinned in `rust-toolchain.toml`, Python Beancount in `pyproject.toml` and `uv.lock`.
+- `flake.nix`: the Nix development shell, the only source of development tools, and the `lentil` package of the CLI, built with crane. Rust is pinned in `rust-toolchain.toml`, Python Beancount in `pyproject.toml` and `uv.lock`.
 - `crates/lentil-core`: all logic, on rustledger. Everything works on a `Snapshot` (repository files in memory): `ledger` indexes a snapshot with exact byte spans, `intent` replays edit intents, `validate` checks a state and a role's changes, `import` plans CSV import runs, `sync` runs the fetch–replay–validate–commit–push loop on libgit2.
 - `crates/lentil-cli`: the `lentil` binary (`init`, `import`, `status`, `check`); its messages come from a catalog in `i18n.rs`, English and German.
 - `crates/lentil-ffi`: UniFFI bindings of the core for the Android app.
@@ -29,6 +29,7 @@ Run every command inside the development shell.
 - `scripts/mutation.sh origin/main` mutation-tests the lines of `lentil-core` changed since the merge base and fails if the tests miss a mutant, as CI does. Without a ref, it mutates all of `lentil-core` and fails below 85 % test efficacy, which takes hours. The settings are in `.cargo/mutants.toml`.
 - The differential tests in `crates/lentil-core/tests/differential.rs` compare rustledger with Python Beancount through `uv`; `LENTIL_SKIP_DIFFERENTIAL=1` skips them where uv is missing. `cargo test -p lentil-core --release --test differential -- --ignored --nocapture` measures the load time of a synthetic 50,000-transaction ledger.
 - `cargo run -p lentil-cli -- <command>` runs the CLI.
+- `nix build` builds the CLI as a package into `result/bin/lentil`, and `nix run . -- <command>` runs it.
 - In `android/`, `./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lint :app:checkLicenses` builds the app with the core for `arm64-v8a` and `x86_64`, runs its unit tests and Android Lint, and checks the licenses of its runtime and test dependencies against the allowlist in `deny.toml`. Gradle verifies every dependency against `gradle/verification-metadata.xml` and locks the app's configurations in `app/gradle.lockfile`; after a dependency change, rewrite both with `--write-verification-metadata sha256 --write-locks` and an empty Gradle user home (`-g <empty directory>`), because a warm cache hides artifacts that the clean CI build resolves. `scripts/deps.sh upgrade android` does both after raising the catalog.
 - `detekt --build-upon-default-config --config android/detekt.yml --input android/app/src,android/build-logic/src` and `ktfmt --kotlinlang-style` check the Kotlin code.
 - `actionlint` checks the GitHub workflows, with shellcheck on their `run` scripts.
@@ -40,7 +41,7 @@ Every development tool comes from the flake's development shell, Python packages
 
 - Enter it with direnv (`.envrc` contains `use flake`) or with `nix develop`. A change to `flake.nix`, `flake.lock` or `rust-toolchain.toml` rebuilds the shell on the next direnv load, or on `nix-direnv-reload` where nix-direnv reloads manually; under `nix develop`, enter the shell again.
 - `uv run bean-check <file>` runs the reference check of Python Beancount from anywhere in the repository. uv creates `.venv` from `uv.lock` on first use.
-- `nix fmt` formats every Nix file, and `nix flake check --all-systems` evaluates the flake for every supported system.
+- `nix fmt` formats every Nix file, and `nix flake check --all-systems` evaluates the flake for every supported system and builds the package for the local one.
 
 ## Editing the documents
 
