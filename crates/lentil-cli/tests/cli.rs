@@ -84,6 +84,34 @@ impl Env {
             .unwrap()
     }
 
+    /// Adds the source `giro` by hand, as the README explains, pushes it and
+    /// returns the path of a matching export.
+    fn add_giro_source(&self) -> PathBuf {
+        let repo = self.repo.to_str().unwrap();
+        let config = std::fs::read_to_string(self.repo.join("lentil.toml")).unwrap();
+        std::fs::write(self.repo.join("lentil.toml"), format!("{config}{SOURCE}")).unwrap();
+        std::fs::create_dir_all(self.repo.join("sources")).unwrap();
+        std::fs::write(self.repo.join("sources/giro.toml"), MAPPING).unwrap();
+        let accounts = std::fs::read_to_string(self.repo.join("accounts.beancount")).unwrap();
+        std::fs::write(
+            self.repo.join("accounts.beancount"),
+            format!(
+                "{accounts}2000-01-01 open Assets:Bank:Giro EUR\n2000-01-01 open Income:Salary\n"
+            ),
+        )
+        .unwrap();
+        ok(&self.lentil(&["-C", repo, "check"]));
+        self.git(&self.repo, &["add", "-A"]);
+        self.git(
+            &self.repo,
+            &["commit", "-q", "-m", "admin: add source giro"],
+        );
+        self.git(&self.repo, &["push", "-q", "origin", "main"]);
+        let export = self.home.join("export.csv");
+        std::fs::write(&export, EXPORT).unwrap();
+        export
+    }
+
     fn git(&self, cwd: &Path, args: &[&str]) -> String {
         let out = Command::new("git")
             .args(args)
@@ -123,24 +151,7 @@ fn init_import_status_check() {
     assert!(log.contains("Lentil-Role: admin"), "{log}");
     assert!(ok(&env.lentil(&["-C", repo, "check"])).contains("valid"));
 
-    // The admin adds a source by hand, as the README explains.
-    let config = std::fs::read_to_string(env.repo.join("lentil.toml")).unwrap();
-    std::fs::write(env.repo.join("lentil.toml"), format!("{config}{SOURCE}")).unwrap();
-    std::fs::create_dir_all(env.repo.join("sources")).unwrap();
-    std::fs::write(env.repo.join("sources/giro.toml"), MAPPING).unwrap();
-    let accounts = std::fs::read_to_string(env.repo.join("accounts.beancount")).unwrap();
-    std::fs::write(
-        env.repo.join("accounts.beancount"),
-        format!("{accounts}2000-01-01 open Assets:Bank:Giro EUR\n2000-01-01 open Income:Salary\n"),
-    )
-    .unwrap();
-    ok(&env.lentil(&["-C", repo, "check"]));
-    env.git(&env.repo, &["add", "-A"]);
-    env.git(&env.repo, &["commit", "-q", "-m", "admin: add source giro"]);
-    env.git(&env.repo, &["push", "-q", "origin", "main"]);
-
-    let export = env.home.join("export.csv");
-    std::fs::write(&export, EXPORT).unwrap();
+    let export = env.add_giro_source();
     let export = export.to_str().unwrap();
     let out = ok(&env.lentil(&[
         "-C",
@@ -191,6 +202,65 @@ fn init_import_status_check() {
     // History stays linear.
     let parents = env.git(&env.remote, &["log", "--format=%p", "main"]);
     assert!(parents.lines().all(|p| !p.contains(' ')), "{parents}");
+}
+
+#[test]
+fn first_checked_import_books_the_opening_balance() {
+    let env = Env::new();
+    let repo = env.repo.to_str().unwrap();
+    ok(&env.lentil(&["init", repo, "--remote", env.remote.to_str().unwrap()]));
+    let export = env.add_giro_source();
+    let export = export.to_str().unwrap();
+
+    // The first import skips the balance.
+    let import = |extra: &[&str]| {
+        let mut args = vec![
+            "-C",
+            repo,
+            "import",
+            "giro",
+            export,
+            "--run-date",
+            "2026-10-20",
+        ];
+        args.extend(extra);
+        ok(&env.lentil(&args))
+    };
+    import(&["--yes"]);
+    let status = ok(&env.lentil(&["-C", repo, "status"]));
+    assert!(
+        status.contains("Imports without a balance check: 1"),
+        "{status}"
+    );
+
+    // A later balance of 2500.00 explains 106.17 before the first transaction.
+    let out = import(&["--balance", "2500,00", "--balance-date", "2026-10-19"]);
+    assert!(out.contains("opening balance 106.17 EUR"), "{out}");
+    let runs: Vec<String> = std::fs::read_dir(env.repo.join("imports/giro/2026"))
+        .unwrap()
+        .map(|e| std::fs::read_to_string(e.unwrap().path()).unwrap())
+        .collect();
+    let second = runs.iter().find(|r| r.contains("Opening balance")).unwrap();
+    assert!(
+        second.contains("2026-10-02 ! \"Opening balance\""),
+        "{second}"
+    );
+    assert!(
+        second.contains("Assets:Bank:Giro        106.17 EUR"),
+        "{second}"
+    );
+    assert!(
+        second.contains("2026-10-20 balance Assets:Bank:Giro  2500.00 ~ 0.00 EUR"),
+        "{second}"
+    );
+
+    let status = ok(&env.lentil(&["-C", repo, "status"]));
+    assert!(
+        !status.contains("Imports without a balance check"),
+        "{status}"
+    );
+    assert!(!status.contains("Failed balance checks"), "{status}");
+    assert!(ok(&env.lentil(&["-C", repo, "check"])).contains("valid"));
 }
 
 #[test]

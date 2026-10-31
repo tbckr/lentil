@@ -4,8 +4,8 @@
 
 use std::collections::BTreeSet;
 
-use jiff::Timestamp;
 use jiff::civil::Date;
+use jiff::{SignedDuration, Timestamp};
 use rust_decimal::Decimal;
 
 use super::render::{render_run, run_path};
@@ -284,12 +284,13 @@ pub fn plan_import(request: &ImportRequest<'_>) -> ImportPlan {
         || matches!(balance, BalanceOutcome::Assertion { .. });
     let run_file = (has_new && balance != BalanceOutcome::NeedsInput).then(|| {
         let all: Vec<PlannedTxn> = opening.iter().chain(&transactions).cloned().collect();
+        let started = free_start(request);
         RunFile {
-            path: run_path(&source.id, request.started),
+            path: run_path(&source.id, started),
             content: render_run(
                 &source.id,
                 &source.account,
-                request.started,
+                started,
                 request.client,
                 &all,
                 &balance,
@@ -519,12 +520,31 @@ fn sum(amounts: impl IntoIterator<Item = Decimal>) -> Option<Decimal> {
         .try_fold(Decimal::ZERO, Decimal::checked_add)
 }
 
-/// The opening balance transaction of a source's first run: only if the
-/// ledger has no transaction on the source account yet (active or
-/// dismissed) and the run writes an assertion. It is dated on the earliest
-/// planned record, but always before the assertion, and books the part of the
-/// asserted balance that the planned records before the assertion do not
-/// explain. Omitted if that part is zero.
+/// The run's start time, moved on by whole seconds while a run file of that
+/// name exists: two runs of one source within a second would otherwise share
+/// a file name (spec section 8).
+fn free_start(request: &ImportRequest<'_>) -> Timestamp {
+    let mut started = request.started;
+    while request
+        .ledger
+        .files
+        .contains(&run_path(&request.source.id, started))
+    {
+        match started.checked_add(SignedDuration::from_secs(1)) {
+            Ok(next) => started = next,
+            Err(_) => break,
+        }
+    }
+    started
+}
+
+/// The opening balance transaction (spec section 8): written by the first run
+/// that writes an assertion for the source, unless the ledger already holds
+/// it, active or dismissed. It books the part of the asserted balance that the
+/// source's transactions before the assertion, in the ledger and in this run,
+/// do not explain, and is dated on the source's earliest transaction, but
+/// always before the assertion. Omitted if that part is zero, or if a posting
+/// on the source account has no amount to add up.
 fn plan_opening(
     request: &ImportRequest<'_>,
     transactions: &[PlannedTxn],
@@ -540,27 +560,38 @@ fn plan_opening(
         return None;
     };
     let ImportRequest { source, ledger, .. } = *request;
-    let has_history = ledger
-        .transactions
+    let asserted_before = ledger
+        .balance_assertions
         .iter()
-        .any(|t| t.postings.iter().any(|p| p.account == source.account))
-        || ledger
-            .dismissed_ids
-            .iter()
-            .any(|id| id::is_import_id_of(&source.id, id));
-    if has_history {
+        .any(|b| b.account == source.account);
+    let exists = ledger.find(opening_id).is_some() || ledger.dismissed_ids.contains(opening_id);
+    if asserted_before || exists {
         return None;
     }
-    let explained = sum(transactions
+    let mut booked: Vec<(Date, Decimal)> = Vec::new();
+    for txn in &ledger.transactions {
+        for posting in txn.postings.iter().filter(|p| p.account == source.account) {
+            let (number, posting_currency) = posting.units.as_ref()?;
+            if posting_currency == currency {
+                booked.push((txn.date, *number));
+            }
+        }
+    }
+    booked.extend(transactions.iter().map(|t| (t.date, t.amount)));
+    let explained = sum(booked
         .iter()
-        .filter(|t| t.date < *assertion_date)
-        .map(|t| t.amount))?;
+        .filter(|(date, _)| date < assertion_date)
+        .map(|(_, number)| *number))?;
     let opening = amount.checked_sub(explained)?;
     if opening.is_zero() {
         return None;
     }
     let latest = assertion_date.yesterday().ok()?;
-    let date = transactions.first().map_or(latest, |t| t.date.min(latest));
+    let date = booked
+        .iter()
+        .map(|(date, _)| *date)
+        .min()
+        .map_or(latest, |d| d.min(latest));
     Some(PlannedTxn {
         id: opening_id.to_owned(),
         date,
@@ -738,9 +769,18 @@ mapping = "sources/card.toml"
         )
     }
 
-    /// A ledger with one older giro transaction of 101.00, so no opening
-    /// balance is planned and the balance before the tests' records is 101.00.
+    /// A ledger with one older giro transaction of 101.00 and an assertion
+    /// after it, so no opening balance is planned and the balance before the
+    /// tests' records is 101.00.
     fn history() -> String {
+        format!(
+            "{}2026-01-02 balance Assets:Bank:Giro  101.00 ~ 0.00 EUR\n",
+            unchecked_history()
+        )
+    }
+
+    /// The same transaction without an assertion, as an unchecked run leaves it.
+    fn unchecked_history() -> String {
         txn(
             "2026-01-01",
             '*',
@@ -971,7 +1011,7 @@ mapping = "sources/card.toml"
                 existing_id: "giro-aaaaaaaaaaaa".into(),
                 existing_desc: Some("CORNER GROCERY OLD WORDING".into()),
                 existing_file: EXISTING_FILE.into(),
-                existing_line: 7,
+                existing_line: 8,
             }]
         );
         assert!(!plan.run_file.unwrap().content.contains("NEW WORDING"));
@@ -1372,7 +1412,23 @@ mapping = "sources/card.toml"
     }
 
     #[test]
-    fn no_opening_when_zero_unchecked_or_with_history() {
+    fn a_second_run_within_one_second_takes_the_next_free_name() {
+        let mut f = Fixture::new("");
+        f.snapshot.insert(RUN_FILE, "; lentil import run\n");
+        f.ledger = ledger::load(&f.snapshot, "main.beancount");
+        let s = statement(vec![rec("2026-10-15", "-10.00", None, Some("A"))]);
+        let plan = f.plan(&s, "2026-10-20", UserBalance::Skipped);
+        let run = plan.run_file.unwrap();
+        assert_eq!(run.path, "imports/giro/2026/20261020T071503Z.beancount");
+        assert!(
+            run.content.contains("started: 2026-10-20T07:15:03Z"),
+            "{}",
+            run.content
+        );
+    }
+
+    #[test]
+    fn no_opening_when_zero_or_unchecked() {
         let records = vec![rec("2026-10-15", "-10.00", None, Some("A"))];
         let f = Fixture::new("");
         let zero = stated(statement(records.clone()), "-10.00", Some("2026-10-19"));
@@ -1381,33 +1437,59 @@ mapping = "sources/card.toml"
         assert_eq!(plan.opening, None);
         f.assert_loads(&plan);
 
-        let plan = f.plan(
-            &statement(records.clone()),
-            "2026-10-20",
-            UserBalance::Skipped,
-        );
+        let plan = f.plan(&statement(records), "2026-10-20", UserBalance::Skipped);
         assert_eq!(plan.opening, None);
+    }
 
-        let with_balance = stated(statement(records.clone()), "50.00", Some("2026-10-19"));
-        let active = Fixture::new(&history());
+    #[test]
+    fn first_checked_run_after_unchecked_runs_books_the_opening() {
+        // The first run skipped the balance; the opening covers its records too.
+        let f = Fixture::new(&unchecked_history());
+        let s = stated(
+            statement(vec![rec("2026-10-15", "-10.00", None, Some("A"))]),
+            "50.00",
+            Some("2026-10-19"),
+        );
+        let plan = f.plan(&s, "2026-10-20", UserBalance::NotAsked);
+        let opening = plan.opening.as_ref().unwrap();
         assert_eq!(
-            active
-                .plan(&with_balance, "2026-10-20", UserBalance::NotAsked)
-                .opening,
+            (opening.date, opening.amount),
+            (date("2026-01-01"), dec("-41.00"))
+        );
+        f.assert_loads(&plan);
+    }
+
+    #[test]
+    fn no_opening_after_an_earlier_assertion_or_an_existing_opening() {
+        let s = stated(
+            statement(vec![rec("2026-10-15", "-10.00", None, Some("A"))]),
+            "50.00",
+            Some("2026-10-19"),
+        );
+        let f = Fixture::new(&history());
+        assert_eq!(
+            f.plan(&s, "2026-10-20", UserBalance::NotAsked).opening,
             None
         );
-        let dismissed = history()
-            .lines()
-            .map(|l| format!("; {l}\n"))
-            .collect::<String>();
-        let dismissed = Fixture::new(&dismissed);
-        assert!(dismissed.ledger.transactions.is_empty());
-        assert_eq!(
-            dismissed
-                .plan(&with_balance, "2026-10-20", UserBalance::NotAsked)
-                .opening,
-            None
+
+        let first = Fixture::new("").plan(&s, "2026-10-20", UserBalance::NotAsked);
+        let opening = first.opening.as_ref().unwrap();
+        let block = txn(
+            "2026-10-15",
+            '*',
+            &opening.id,
+            OPENING_BALANCE_TEXT,
+            "60.00",
+            OPENING_BALANCE_ACCOUNT,
         );
+        let dismissed: String = block.lines().map(|l| format!("; {l}\n")).collect();
+        for existing in [block, dismissed] {
+            let f = Fixture::new(&existing);
+            assert_eq!(
+                f.plan(&s, "2026-10-20", UserBalance::NotAsked).opening,
+                None
+            );
+        }
     }
 
     #[test]
