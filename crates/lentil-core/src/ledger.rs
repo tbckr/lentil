@@ -304,6 +304,19 @@ pub fn load(snapshot: &Snapshot, main_file: &str) -> Ledger {
         });
     }
 
+    // The loader reads such files lossily; Lentil must not index them
+    // partially, or deduplication would miss their IDs.
+    for file in &ledger.files {
+        if snapshot.contains(file) && snapshot.text(file).is_none() {
+            ledger.errors.push(CoreError {
+                code: "LOAD".to_owned(),
+                message: "file is not valid UTF-8".to_owned(),
+                file: Some(file.clone()),
+                line: None,
+                is_error: true,
+            });
+        }
+    }
     for part in index_files(snapshot, &ledger.files) {
         ledger.merge(part);
     }
@@ -819,6 +832,18 @@ include "imports/*/*/*.beancount"
         assert!(codes.contains(&"E1001"), "{codes:?}");
         let e1001 = ledger.errors.iter().find(|e| e.code == "E1001").unwrap();
         assert_eq!(e1001.file.as_deref(), Some("accounts.beancount"));
+    }
+
+    #[test]
+    fn a_file_that_is_not_utf8_is_an_error() {
+        let mut s = snapshot();
+        let mut bytes = RUN.as_bytes().to_vec();
+        bytes.extend_from_slice(b"; caf\xe9\n");
+        s.insert(RUN_FILE, bytes);
+        let ledger = load(&s, "main.beancount");
+        let error = ledger.errors.iter().find(|e| e.code == "LOAD").unwrap();
+        assert_eq!(error.file.as_deref(), Some(RUN_FILE));
+        assert!(error.is_error);
     }
 
     #[test]

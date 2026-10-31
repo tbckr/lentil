@@ -419,7 +419,9 @@ impl<'a> Replay<'a> {
         if current == new {
             return self.already_applied(i, index);
         }
-        if self.config.is_source_account(current) {
+        if self.config.is_source_posting(&txn.file, &original.account)
+            || self.config.own_source_account(&txn.file) == Some(new)
+        {
             return conflict(ConflictCode::SourcePosting);
         }
         if current != old {
@@ -1006,21 +1008,32 @@ include "imports/*/*/*.beancount"
         // A transfer imported from both accounts: the counter posting moves to
         // the other source account, and that account's copy is dismissed.
         let to_card = set(TRANSFER, 1, "Expenses:Uncategorized", "Liabilities:Card");
-        let (after, outcomes) = replay_on(
+        let (_, outcomes) = replay_on(
             &snapshot(),
             &[
                 to_card.clone(),
                 set(TRANSFER, 1, "Liabilities:Card", "Expenses:Uncategorized"),
             ],
         );
-        assert_eq!(
-            outcomes,
-            vec![Applied, conflict(ConflictCode::SourcePosting)]
-        );
+        // Only the run file's own source posting is protected, so the
+        // counter posting can move back again.
+        assert_eq!(outcomes, vec![Applied, Applied]);
+        let (after, _) = replay_on(&snapshot(), std::slice::from_ref(&to_card));
         // Replaying the applied intent again is done, not a conflict.
         let (again, outcomes) = replay_on(&after, &[to_card]);
         assert_eq!(outcomes, vec![AlreadyApplied]);
         assert_eq!(again, after);
+        // The counter posting never moves onto the run file's own source account.
+        let (_, outcomes) = replay_on(
+            &snapshot(),
+            &[set(
+                TRANSFER,
+                1,
+                "Expenses:Uncategorized",
+                "Assets:Bank:Giro",
+            )],
+        );
+        assert_eq!(outcomes, vec![conflict(ConflictCode::SourcePosting)]);
     }
 
     #[test]

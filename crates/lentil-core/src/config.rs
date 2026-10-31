@@ -166,6 +166,27 @@ impl Config {
     pub fn is_source_account(&self, account: &str) -> bool {
         self.source_for_account(account).is_some()
     }
+
+    /// The account of the source whose run file `path` is
+    /// (`imports/<source-id>/…`), if any.
+    #[must_use]
+    pub fn own_source_account(&self, path: &str) -> Option<&str> {
+        let id = path.strip_prefix("imports/")?.split('/').next()?;
+        self.source(id).map(|s| s.account.as_str())
+    }
+
+    /// Whether a posting on `account` in a transaction of file `path` is the
+    /// source posting, which editors never change (spec section 7). In a run
+    /// file that is the posting on its own source's account, so a counter
+    /// posting may move to another source's account to record a transfer;
+    /// elsewhere every source account counts.
+    #[must_use]
+    pub fn is_source_posting(&self, path: &str, account: &str) -> bool {
+        match self.own_source_account(path) {
+            Some(own) => own == account,
+            None => self.is_source_account(account),
+        }
+    }
 }
 
 /// Whether `name` uses only `[a-z0-9-]` and is not empty (spec section 3).
@@ -209,6 +230,27 @@ currency = "EUR"
         assert_eq!(config.snapshots[0].account, "Assets:PaymentService");
         assert!(config.is_source_account("Assets:Bank:Giro"));
         assert!(!config.is_source_account("Assets:PaymentService"));
+    }
+
+    #[test]
+    fn source_posting_is_the_run_file_own_source() {
+        let mut config = Config::parse(EXAMPLE).unwrap();
+        config.sources.push(SourceConfig {
+            id: "card".into(),
+            account: "Liabilities:Card".into(),
+            currency: "EUR".into(),
+            importer: ImporterKind::Csv,
+            mapping: Some("sources/card.toml".into()),
+        });
+        let run = "imports/giro/2026/20261020T071502Z.beancount";
+        assert_eq!(config.own_source_account(run), Some("Assets:Bank:Giro"));
+        assert!(config.is_source_posting(run, "Assets:Bank:Giro"));
+        assert!(!config.is_source_posting(run, "Liabilities:Card"));
+        assert!(config.is_source_posting("manual/k7p2q9xd/2026-10.beancount", "Liabilities:Card"));
+        assert_eq!(
+            config.own_source_account("imports/keep/keep/keep.beancount"),
+            None
+        );
     }
 
     #[test]

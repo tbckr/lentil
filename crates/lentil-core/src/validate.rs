@@ -742,8 +742,9 @@ impl Areas<'_, '_> {
         );
     }
 
-    fn is_source_account(&self, account: &str) -> bool {
-        self.config.is_some_and(|c| c.is_source_account(account))
+    fn is_source_posting(&self, path: &str, account: &str) -> bool {
+        self.config
+            .is_some_and(|c| c.is_source_posting(path, account))
     }
 
     fn missing_zero_tolerance(&mut self, path: &str, line: u32, account: &str) {
@@ -949,7 +950,30 @@ impl Areas<'_, '_> {
             if let Some((new_txn, start)) = new_named.get(id) {
                 self.compare(path, id, old_txn, new_txn, line_of(new_text, *start));
             } else if new_dismissed.contains(*id) {
-                // Dismissed: commented out in place (spec section 10).
+                // Dismissed: commented out in place (spec section 10). The
+                // comment block must still hold the whole transaction, changed
+                // at most as an editor may change it.
+                let dismissed = dismissed_block(new_text, id);
+                let parsed = dismissed
+                    .as_ref()
+                    .map(|(block, _)| rustledger_parser::parse(block));
+                let txn = parsed.as_ref().and_then(|p| {
+                    p.directives.iter().find_map(|d| match &d.value {
+                        Directive::Transaction(t) if meta_str(&t.meta, META_ID) == Some(*id) => {
+                            Some(t)
+                        }
+                        _ => None,
+                    })
+                });
+                match (txn, &dismissed) {
+                    (Some(t), Some((_, line))) => self.compare(path, id, old_txn, t, *line),
+                    (_, dismissed) => self.protected_transaction(
+                        path,
+                        dismissed.as_ref().map(|(_, line)| *line),
+                        id,
+                        reason::REMOVED,
+                    ),
+                }
             } else if let Some(i) = new_unmatched
                 .iter()
                 .position(|(n, _)| same_entry(old_txn, n))
@@ -1019,8 +1043,9 @@ impl Areas<'_, '_> {
                 self.protected_transaction(path, Some(line), id, reason::UNITS);
             }
             if old_p.account != new_p.account
-                && (self.is_source_account(old_p.account.as_str())
-                    || self.is_source_account(new_p.account.as_str()))
+                && (self.is_source_posting(path, old_p.account.as_str())
+                    || self.config.and_then(|c| c.own_source_account(path))
+                        == Some(new_p.account.as_str()))
             {
                 self.protected_transaction(path, Some(line), id, reason::SOURCE_POSTING);
             }
@@ -1098,6 +1123,40 @@ static DISMISSED_ID: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// `lentil_id`s in comment lines: dismissed transactions (spec section 10).
+/// The transaction a `dismiss` commented out (spec section 10): the comment
+/// lines around the `lentil_id` line, from the header line `; <date> …` through
+/// the last indented line, with the `; ` prefix removed, and the header's line.
+fn dismissed_block(text: &str, id: &str) -> Option<(String, u32)> {
+    let lines: Vec<&str> = text.lines().collect();
+    let target = lines
+        .iter()
+        .position(|l| DISMISSED_ID.captures(l).is_some_and(|caps| &caps[1] == id))?;
+    let mut start = target;
+    loop {
+        let body = lines[start].strip_prefix("; ")?;
+        if body.starts_with(|c: char| c.is_ascii_digit()) {
+            break;
+        }
+        if !body.starts_with([' ', '\t']) {
+            return None;
+        }
+        start = start.checked_sub(1)?;
+    }
+    let mut end = target;
+    while lines.get(end + 1).is_some_and(|l| {
+        l.strip_prefix("; ")
+            .is_some_and(|b| b.starts_with([' ', '\t']) && !b.trim().is_empty())
+    }) {
+        end += 1;
+    }
+    let mut block = String::new();
+    for line in &lines[start..=end] {
+        block.push_str(line.get(2..).unwrap_or_default());
+        block.push('\n');
+    }
+    Some((block, u32::try_from(start + 1).unwrap_or(u32::MAX)))
+}
+
 fn dismissed_ids(parsed: &ParseResult) -> BTreeSet<String> {
     parsed
         .comments
@@ -2203,6 +2262,63 @@ txn-free comment lines are fine too
     }
 
     #[test]
+    fn editor_may_move_a_counter_posting_to_another_source_account() {
+        let after = with(
+            &base(),
+            GIRO_RUN,
+            "  Assets:Bank:Giro        -64.00 EUR\n  Expenses:Uncategorized",
+            "  Assets:Bank:Giro        -64.00 EUR\n  Liabilities:Card",
+        );
+        let v = editor(&after);
+        assert!(!v.is_blocking(), "{:#?}", v.findings);
+    }
+
+    #[test]
+    fn a_bare_id_comment_is_no_dismissal() {
+        let block = "2026-10-18 ! \"Corner Grocery\" \"Card payment\"
+  lentil_id: \"giro-3f9a1c2e7b4d\"
+  lentil_desc: \"CORNER GROCERY 4711 CARD PAYMENT\"
+  Assets:Bank:Giro        -42.17 EUR
+  Expenses:Uncategorized
+";
+        let commented: String = block.lines().map(|l| format!("; {l}\n")).collect();
+        let dismissed = with(&base(), GIRO_RUN, block, &commented);
+        assert!(
+            !editor(&dismissed).is_blocking(),
+            "{:#?}",
+            editor(&dismissed).findings
+        );
+
+        let truncated = with(
+            &base(),
+            GIRO_RUN,
+            block,
+            "; lentil_id: \"giro-3f9a1c2e7b4d\"\n",
+        );
+        let v = editor(&truncated);
+        assert!(
+            args(&v, FindingCode::ProtectedTransactionChanged, "reason")
+                .contains(&"removed".to_owned()),
+            "{:#?}",
+            v.findings
+        );
+
+        let changed = with(
+            &base(),
+            GIRO_RUN,
+            block,
+            &commented.replace("-42.17", "-4.17"),
+        );
+        let v = editor(&changed);
+        assert!(
+            args(&v, FindingCode::ProtectedTransactionChanged, "reason")
+                .contains(&"units".to_owned()),
+            "{:#?}",
+            v.findings
+        );
+    }
+
+    #[test]
     fn editor_never_changes_dates_amounts_or_source_postings() {
         let cases = [
             ("2026-10-18 !", "2026-10-17 !", "date"),
@@ -2219,7 +2335,7 @@ txn-free comment lines are fine too
             ),
             (
                 "  Expenses:Uncategorized\n",
-                "  Liabilities:Card\n",
+                "  Assets:Bank:Giro\n",
                 "source-posting",
             ),
             (
