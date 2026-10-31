@@ -304,10 +304,8 @@ pub fn load(snapshot: &Snapshot, main_file: &str) -> Ledger {
         });
     }
 
-    for file in &ledger.files.clone() {
-        if let Some(text) = snapshot.text(file) {
-            index_file(&mut ledger, file, text);
-        }
+    for part in index_files(snapshot, &ledger.files) {
+        ledger.merge(part);
     }
 
     for d in &loaded.balance_discrepancies {
@@ -335,6 +333,56 @@ static DISMISSED_ID: LazyLock<Regex> = LazyLock::new(|| {
     #[allow(clippy::unwrap_used)] // A constant pattern.
     Regex::new(r#"^;\s*lentil_id:\s*"([^"]+)""#).unwrap()
 });
+
+/// Indexes `files` in parallel, one contiguous chunk per thread, and returns
+/// the per-file results in file order.
+fn index_files(snapshot: &Snapshot, files: &[String]) -> Vec<Ledger> {
+    let threads = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+    let chunk = files.len().div_ceil(threads).max(1);
+    std::thread::scope(|scope| {
+        let workers: Vec<_> = files
+            .chunks(chunk)
+            .map(|chunk| {
+                scope.spawn(move || {
+                    chunk
+                        .iter()
+                        .filter_map(|file| {
+                            let text = snapshot.text(file)?;
+                            let mut part = Ledger::default();
+                            index_file(&mut part, file, text);
+                            Some(part)
+                        })
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            // A worker only panics if indexing panics, which is a bug; surface it.
+            .flat_map(|w| w.join().unwrap_or_else(|e| std::panic::resume_unwind(e)))
+            .collect()
+    })
+}
+
+impl Ledger {
+    /// Appends the index of the next file in load order.
+    fn merge(&mut self, part: Ledger) {
+        self.transactions.extend(part.transactions);
+        self.dismissed_ids.extend(part.dismissed_ids);
+        for (account, state) in part.accounts {
+            let entry = self.accounts.entry(account).or_default();
+            if let Some(opened) = state.opened {
+                entry.opened = Some(entry.opened.map_or(opened, |d| d.min(opened)));
+            }
+            if state.closed.is_some() {
+                entry.closed = state.closed;
+            }
+        }
+        self.balance_assertions.extend(part.balance_assertions);
+        self.pads.extend(part.pads);
+        self.constructs.extend(part.constructs);
+    }
+}
 
 fn index_file(ledger: &mut Ledger, file: &str, text: &str) {
     let parsed = rustledger_parser::parse_without_occurrences(text);
@@ -578,6 +626,11 @@ impl FileSystem for SnapshotFs {
 
     fn is_encrypted(&self, _path: &Path) -> bool {
         false
+    }
+
+    fn supports_parallel_read(&self) -> bool {
+        // An immutable map: safe to read from several threads.
+        true
     }
 
     fn normalize(&self, path: &Path) -> PathBuf {
