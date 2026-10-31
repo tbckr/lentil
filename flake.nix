@@ -94,8 +94,13 @@
                 androidSdk
                 jdk
                 pkgs.cargo-ndk
+                # Builds the vendored OpenSSL for Android.
+                pkgs.perl
                 # Only to regenerate the Gradle wrapper; builds run ./gradlew.
                 pkgs.gradle
+                # Kotlin formatting and static analysis.
+                pkgs.ktfmt
+                pkgs.detekt
               ];
 
               # uv only ever uses this Python and never downloads one. Python

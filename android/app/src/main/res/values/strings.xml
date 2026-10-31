@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- "Lentil" is a working title. -->
+    <string name="app_name">Lentil</string>
+
+    <!-- Connect (PRD: N4, FR-F7) -->
+    <string name="connect_title">Connect your ledger</string>
+    <string name="connect_intro">Lentil works on a copy of your ledger\'s Git repository. Enter its HTTPS address and an access token. The token stays in this device\'s keystore.</string>
+    <string name="connect_url">Repository URL (HTTPS)</string>
+    <string name="connect_username">User name</string>
+    <string name="connect_token">Access token</string>
+    <string name="connect_author_name">Your name, shown on your changes</string>
+    <string name="connect_author_email">Your e-mail, shown on your changes</string>
+    <string name="connect_button">Connect</string>
+    <string name="connect_not_https">Use an address that starts with https://.</string>
+    <string name="connecting">Connecting…</string>
+
+    <!-- Queue (PRD: FR-D1 to FR-D4) -->
+    <string name="queue_title">To review</string>
+    <string name="queue_empty">Nothing to review.</string>
+    <string name="queue_loading">Loading…</string>
+    <string name="action_sync">Sync</string>
+    <string name="action_confirm">Confirm</string>
+    <string name="action_more">More actions</string>
+    <string name="action_dismiss">Dismiss as duplicate</string>
+    <string name="dismiss_title">Dismiss as duplicate?</string>
+    <string name="dismiss_text">The transaction stays in its file as a comment and is never imported again.</string>
+    <string name="dismiss_confirm">Dismiss</string>
+    <string name="cancel">Cancel</string>
+    <string name="split_read_only">Split: edit it in a text editor</string>
+    <string name="no_id_read_only">Can\'t be edited in the app</string>
+
+    <!-- Sync status, without Git terms (PRD: FR-D6) -->
+    <string name="status_syncing">Syncing…</string>
+    <string name="status_up_to_date">Up to date</string>
+    <string name="status_offline">Can\'t reach the server</string>
+    <string name="status_sign_in_failed">Sign-in failed</string>
+    <string name="status_remote_missing">The repository wasn\'t found on the server</string>
+    <string name="status_busy">The server is busy. Try again later.</string>
+    <string name="status_blocked">Couldn\'t save: the ledger has problems</string>
+    <string name="status_read_only">The ledger has problems that only an admin can fix</string>
+    <string name="status_failed">Sync failed: %1$s</string>
+    <plurals name="pending_changes">
+        <item quantity="one">%d change saved on this device</item>
+        <item quantity="other">%d changes saved on this device</item>
+    </plurals>
+
+    <string name="read_only_title">The app can\'t change this ledger</string>
+    <string name="blocked_title">These problems stop saving</string>
+    <string name="warnings_title">Warnings</string>
+    <plurals name="conflicts_title">
+        <item quantity="one">%d change couldn\'t be applied</item>
+        <item quantity="other">%d changes couldn\'t be applied</item>
+    </plurals>
+    <string name="conflict_discard">Discard</string>
+
+    <!-- Account search (PRD: FR-D3) -->
+    <string name="account_search">Search accounts</string>
+    <string name="account_recent">Recently used</string>
+    <string name="account_all">All accounts</string>
+    <string name="account_open_new">Open new account “%1$s”</string>
+
+    <!-- Intents in the conflict list -->
+    <string name="intent_confirm">Confirm</string>
+    <string name="intent_set_account">Set account to %1$s</string>
+    <string name="intent_dismiss">Dismiss as duplicate</string>
+    <string name="intent_open_account">Open account %1$s</string>
+
+    <!-- Conflict codes of the core -->
+    <string name="conflict_transaction_not_found">The transaction no longer exists.</string>
+    <string name="conflict_transaction_dismissed">The transaction was dismissed on another device.</string>
+    <string name="conflict_account_changed">The account was changed to %1$s on another device.</string>
+    <string name="conflict_posting_not_found">The posting no longer exists.</string>
+    <string name="conflict_source_posting">The bank posting can\'t be changed.</string>
+    <string name="conflict_account_not_open">The account isn\'t open on the transaction\'s date.</string>
+    <string name="conflict_not_editable">The transaction is written in a form the app can\'t edit.</string>
+    <string name="conflict_file_exists">The file already exists.</string>
+    <string name="conflict_invalid_account">The account name isn\'t valid.</string>
+    <string name="conflict_unknown">Unknown conflict: %1$s</string>
+    <string name="unknown_value">unknown</string>
+
+    <!-- Finding codes of the core -->
+    <string name="finding_config_invalid">lentil.toml is missing or invalid: %1$s</string>
+    <string name="finding_spec_version_unsupported">The ledger follows convention version %1$s, but this app supports only up to version %2$s. Update the app.</string>
+    <string name="finding_parse_error">A file can\'t be read: %1$s</string>
+    <string name="finding_transaction_unbalanced">A transaction doesn\'t balance: %1$s</string>
+    <string name="finding_account_not_open">The account %1$s isn\'t open on that date.</string>
+    <string name="finding_duplicate_lentil_id">Two transactions share the ID %1$s.</string>
+    <string name="finding_outside_write_area">%1$s lies outside what the %2$s role may change.</string>
+    <string name="finding_outside_profile">The ledger uses %1$s, which Lentil doesn\'t support.</string>
+    <string name="finding_main_file_mismatch">main.beancount differs from the convention: %1$s</string>
+    <string name="finding_include_outside_repository">An include points outside the repository: %1$s</string>
+    <string name="finding_missing_zero_tolerance">A new balance assertion for %1$s lacks the zero tolerance.</string>
+    <string name="finding_manual_posting_on_source_account">The manual transaction %2$s posts to the imported account %1$s.</string>
+    <string name="finding_pad_on_source_account">A pad posts to the imported account %1$s.</string>
+    <string name="finding_protected_metadata_changed">%2$s of transaction %1$s was changed or removed.</string>
+    <string name="finding_protected_transaction_changed">Transaction %1$s was removed, or its date or bank posting changed.</string>
+    <string name="finding_stray_ledger_file">%1$s isn\'t included by main.beancount.</string>
+    <string name="finding_invalid_path">The path %1$s breaks the naming rules.</string>
+    <string name="finding_load_cache_committed">A load cache was committed: %1$s</string>
+    <string name="finding_core_error">Ledger error %1$s: %2$s</string>
+    <string name="finding_balance_assertion_failed">The balance of %1$s on %2$s is off by %3$s %4$s (expected %5$s %4$s).</string>
+    <string name="finding_unknown">Unknown problem: %1$s</string>
+    <string name="finding_location">%1$s (%2$s)</string>
+
+    <!-- Errors -->
+    <string name="error_network">Can\'t reach the server.</string>
+    <string name="error_auth">Sign-in failed. Check the user name and the token.</string>
+    <string name="error_not_found">The repository wasn\'t found on the server.</string>
+    <string name="error_local_changes">The copy on this device has unexpected changes.</string>
+    <string name="error_read_only">The ledger has problems that only an admin can fix.</string>
+    <string name="error_blocked">Couldn\'t save: the ledger has problems.</string>
+    <string name="error_too_many_attempts">The server is busy. Try again later.</string>
+    <string name="error_io">Couldn\'t use the device storage: %1$s</string>
+    <string name="error_other">Something went wrong: %1$s</string>
+</resources>

@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Lentil</string>
+
+    <string name="connect_title">Haushaltsbuch verbinden</string>
+    <string name="connect_intro">Lentil arbeitet mit einer Kopie des Git-Repositorys deines Haushaltsbuchs. Gib seine HTTPS-Adresse und ein Zugriffstoken ein. Das Token bleibt im Schlüsselspeicher dieses Geräts.</string>
+    <string name="connect_url">Repository-URL (HTTPS)</string>
+    <string name="connect_username">Benutzername</string>
+    <string name="connect_token">Zugriffstoken</string>
+    <string name="connect_author_name">Dein Name, steht an deinen Änderungen</string>
+    <string name="connect_author_email">Deine E-Mail-Adresse, steht an deinen Änderungen</string>
+    <string name="connect_button">Verbinden</string>
+    <string name="connect_not_https">Verwende eine Adresse, die mit https:// beginnt.</string>
+    <string name="connecting">Verbinde…</string>
+
+    <string name="queue_title">Zu prüfen</string>
+    <string name="queue_empty">Nichts zu prüfen.</string>
+    <string name="queue_loading">Lade…</string>
+    <string name="action_sync">Synchronisieren</string>
+    <string name="action_confirm">Bestätigen</string>
+    <string name="action_more">Weitere Aktionen</string>
+    <string name="action_dismiss">Als Duplikat verwerfen</string>
+    <string name="dismiss_title">Als Duplikat verwerfen?</string>
+    <string name="dismiss_text">Die Buchung bleibt als Kommentar in ihrer Datei und wird nie wieder importiert.</string>
+    <string name="dismiss_confirm">Verwerfen</string>
+    <string name="cancel">Abbrechen</string>
+    <string name="split_read_only">Aufgeteilt: im Texteditor bearbeiten</string>
+    <string name="no_id_read_only">In der App nicht bearbeitbar</string>
+
+    <string name="status_syncing">Synchronisiere…</string>
+    <string name="status_up_to_date">Auf dem neuesten Stand</string>
+    <string name="status_offline">Server nicht erreichbar</string>
+    <string name="status_sign_in_failed">Anmeldung fehlgeschlagen</string>
+    <string name="status_remote_missing">Das Repository wurde auf dem Server nicht gefunden</string>
+    <string name="status_busy">Der Server ist ausgelastet. Versuche es später noch einmal.</string>
+    <string name="status_blocked">Speichern nicht möglich: Das Haushaltsbuch hat Fehler</string>
+    <string name="status_read_only">Das Haushaltsbuch hat Fehler, die nur ein Admin beheben kann</string>
+    <string name="status_failed">Synchronisieren fehlgeschlagen: %1$s</string>
+    <plurals name="pending_changes">
+        <item quantity="one">%d Änderung auf diesem Gerät gespeichert</item>
+        <item quantity="other">%d Änderungen auf diesem Gerät gespeichert</item>
+    </plurals>
+
+    <string name="read_only_title">Die App kann dieses Haushaltsbuch nicht ändern</string>
+    <string name="blocked_title">Diese Fehler verhindern das Speichern</string>
+    <string name="warnings_title">Warnungen</string>
+    <plurals name="conflicts_title">
+        <item quantity="one">%d Änderung ließ sich nicht anwenden</item>
+        <item quantity="other">%d Änderungen ließen sich nicht anwenden</item>
+    </plurals>
+    <string name="conflict_discard">Verwerfen</string>
+
+    <string name="account_search">Konten durchsuchen</string>
+    <string name="account_recent">Zuletzt verwendet</string>
+    <string name="account_all">Alle Konten</string>
+    <string name="account_open_new">Neues Konto „%1$s“ eröffnen</string>
+
+    <string name="intent_confirm">Bestätigen</string>
+    <string name="intent_set_account">Konto auf %1$s setzen</string>
+    <string name="intent_dismiss">Als Duplikat verwerfen</string>
+    <string name="intent_open_account">Konto %1$s eröffnen</string>
+
+    <string name="conflict_transaction_not_found">Die Buchung gibt es nicht mehr.</string>
+    <string name="conflict_transaction_dismissed">Die Buchung wurde auf einem anderen Gerät verworfen.</string>
+    <string name="conflict_account_changed">Das Konto wurde auf einem anderen Gerät auf %1$s geändert.</string>
+    <string name="conflict_posting_not_found">Die Buchungszeile gibt es nicht mehr.</string>
+    <string name="conflict_source_posting">Die Bankbuchungszeile kann nicht geändert werden.</string>
+    <string name="conflict_account_not_open">Das Konto ist am Datum der Buchung nicht eröffnet.</string>
+    <string name="conflict_not_editable">Die Buchung ist in einer Form geschrieben, die die App nicht bearbeiten kann.</string>
+    <string name="conflict_file_exists">Die Datei existiert bereits.</string>
+    <string name="conflict_invalid_account">Der Kontoname ist ungültig.</string>
+    <string name="conflict_unknown">Unbekannter Konflikt: %1$s</string>
+    <string name="unknown_value">unbekannt</string>
+
+    <string name="finding_config_invalid">lentil.toml fehlt oder ist ungültig: %1$s</string>
+    <string name="finding_spec_version_unsupported">Das Haushaltsbuch folgt der Konventionsversion %1$s, diese App unterstützt nur bis Version %2$s. Aktualisiere die App.</string>
+    <string name="finding_parse_error">Eine Datei kann nicht gelesen werden: %1$s</string>
+    <string name="finding_transaction_unbalanced">Eine Buchung ist nicht ausgeglichen: %1$s</string>
+    <string name="finding_account_not_open">Das Konto %1$s ist an diesem Datum nicht eröffnet.</string>
+    <string name="finding_duplicate_lentil_id">Zwei Buchungen haben dieselbe ID %1$s.</string>
+    <string name="finding_outside_write_area">%1$s liegt außerhalb dessen, was die Rolle %2$s ändern darf.</string>
+    <string name="finding_outside_profile">Das Haushaltsbuch verwendet %1$s, was Lentil nicht unterstützt.</string>
+    <string name="finding_main_file_mismatch">main.beancount weicht von der Konvention ab: %1$s</string>
+    <string name="finding_include_outside_repository">Ein Include zeigt aus dem Repository hinaus: %1$s</string>
+    <string name="finding_missing_zero_tolerance">Einer neuen Saldoprüfung für %1$s fehlt die Nulltoleranz.</string>
+    <string name="finding_manual_posting_on_source_account">Die manuelle Buchung %2$s bucht auf das importierte Konto %1$s.</string>
+    <string name="finding_pad_on_source_account">Ein Pad bucht auf das importierte Konto %1$s.</string>
+    <string name="finding_protected_metadata_changed">%2$s der Buchung %1$s wurde geändert oder entfernt.</string>
+    <string name="finding_protected_transaction_changed">Die Buchung %1$s wurde entfernt, oder ihr Datum oder ihre Bankbuchungszeile wurde geändert.</string>
+    <string name="finding_stray_ledger_file">%1$s wird von main.beancount nicht eingebunden.</string>
+    <string name="finding_invalid_path">Der Pfad %1$s verletzt die Namensregeln.</string>
+    <string name="finding_load_cache_committed">Ein Lade-Cache wurde eingecheckt: %1$s</string>
+    <string name="finding_core_error">Fehler im Haushaltsbuch %1$s: %2$s</string>
+    <string name="finding_balance_assertion_failed">Der Saldo von %1$s am %2$s weicht um %3$s %4$s ab (erwartet %5$s %4$s).</string>
+    <string name="finding_unknown">Unbekanntes Problem: %1$s</string>
+    <string name="finding_location">%1$s (%2$s)</string>
+
+    <string name="error_network">Server nicht erreichbar.</string>
+    <string name="error_auth">Anmeldung fehlgeschlagen. Prüfe Benutzernamen und Token.</string>
+    <string name="error_not_found">Das Repository wurde auf dem Server nicht gefunden.</string>
+    <string name="error_local_changes">Die Kopie auf diesem Gerät hat unerwartete Änderungen.</string>
+    <string name="error_read_only">Das Haushaltsbuch hat Fehler, die nur ein Admin beheben kann.</string>
+    <string name="error_blocked">Speichern nicht möglich: Das Haushaltsbuch hat Fehler.</string>
+    <string name="error_too_many_attempts">Der Server ist ausgelastet. Versuche es später noch einmal.</string>
+    <string name="error_io">Gerätespeicher nicht nutzbar: %1$s</string>
+    <string name="error_other">Etwas ist schiefgegangen: %1$s</string>
+</resources>

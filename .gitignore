@@ -1,3 +1,11 @@
 /.direnv/
 /.venv/
 /target/
+# Android
+/android/.gradle/
+/android/.kotlin/
+/android/build/
+/android/*/build/
+/android/build-logic/.gradle/
+/android/build-logic/.kotlin/
+/android/local.properties

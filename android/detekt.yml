@@ -1,0 +1,23 @@
+# Additions to detekt's default configuration (run with --build-upon-default-config).
+# Every finding fails the run, as warnings are errors (CONTRIBUTING: Static analysis).
+
+naming:
+  FunctionNaming:
+    # Composables are named like types.
+    ignoreAnnotated: ['Composable']
+
+complexity:
+  LongMethod:
+    ignoreAnnotated: ['Composable']
+  LongParameterList:
+    ignoreAnnotated: ['Composable']
+    # Defaults such as a test seam for keys do not make a constructor harder to call.
+    ignoreDefaultParameters: true
+
+style:
+  MagicNumber:
+    # Sizes in dp are layout, not magic.
+    ignoreAnnotated: ['Composable']
+  ReturnCount:
+    # Early returns for preconditions read best at the top of a function.
+    excludeGuardClauses: true
