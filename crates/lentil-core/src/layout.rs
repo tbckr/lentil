@@ -40,6 +40,9 @@ pub const DEFAULT_FALLBACK_ACCOUNT: &str = "Expenses:Uncategorized";
 pub const DEFAULT_UNATTRIBUTED_ACCOUNT: &str = "Expenses:Unattributed";
 /// Counter account of the first balance snapshot of an account (spec section 9).
 pub const OPENING_BALANCES_ACCOUNT: &str = "Equity:Opening-Balances";
+/// Counter account of both sides of a transfer between source accounts
+/// (spec section 8).
+pub const TRANSFER_ACCOUNT: &str = "Assets:Transfer";
 
 /// Date of the directives `init` writes: early enough for any real entry.
 const INIT_DATE: &str = "2000-01-01";
@@ -166,6 +169,7 @@ fn accounts_file() -> String {
          ; directives at the end of this file.\n\
          \n\
          {INIT_DATE} open {OPENING_BALANCES_ACCOUNT}\n\
+         {INIT_DATE} open {TRANSFER_ACCOUNT}\n\
          {INIT_DATE} open {DEFAULT_FALLBACK_ACCOUNT}\n\
          {INIT_DATE} open {DEFAULT_UNATTRIBUTED_ACCOUNT}\n"
     )
@@ -188,6 +192,13 @@ const RULES: &str = r#"# Suggestion rules (Lentil Convention Spec, section 16). 
 # source = "giro"                        # optional: limit the rule to one source
 # desc = "(?i)corner grocery"            # regular expression on lentil_desc
 # account = "Expenses:Food:Groceries"
+#
+# A rule never books to a source account. Transfers between your own accounts
+# go to Assets:Transfer on both sides:
+#
+# [[rule]]
+# desc = "(?i)card statement"
+# account = "Assets:Transfer"
 "#;
 
 const GITIGNORE: &str = "# Load caches of rustledger and Python Beancount never belong in Git.\n\
@@ -290,7 +301,15 @@ A source is one bank account or card whose CSV exports you import.
    column = "Balance"
    ```
 
-4. Run `lentil import` with the source ID and the export file. Every new transaction arrives with flag `!` and a suggested counter account; transactions imported before are skipped. If the export holds no balance, `lentil import` asks for the balance shown in online banking, and `lentil status` reports the run as unchecked if you skip it.
+4. Run `lentil import` with the source ID and the export file. Every new transaction arrives with flag `!` and a suggested counter account; transactions imported before are skipped. If the export holds no balance, `lentil import` asks for the balance shown in online banking, and `lentil status` reports the run as unchecked if you skip it. The first run with a balance check also books the account's opening balance against `{OPENING_BALANCES_ACCOUNT}`, with flag `!` so you can check it.
+
+## Transfers between your own accounts
+
+A transfer between two imported accounts, such as paying the card bill from the giro account, arrives from both sides.
+
+- Keep both transactions and give each the counter account `{TRANSFER_ACCOUNT}`. Each side keeps its bank's date, so every balance check holds, and `{TRANSFER_ACCOUNT}` holds the money while it is on its way.
+- A balance that stays on `{TRANSFER_ACCOUNT}` points to a transfer whose other side is missing.
+- A rule in `rules.toml` can suggest `{TRANSFER_ACCOUNT}` for such bookings. An imported account is never a counter account.
 
 ## Viewing and checking
 
@@ -399,6 +418,7 @@ include "prices/*/*.beancount"
             "Expenses:Uncategorized",
             "Expenses:Unattributed",
             "Equity:Opening-Balances",
+            "Assets:Transfer",
         ] {
             assert!(ledger.accounts.contains_key(account), "{account}");
         }

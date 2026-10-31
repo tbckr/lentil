@@ -367,8 +367,8 @@ fn orphans<'l>(
         .collect()
 }
 
-/// Rules first, then a learned account that is open on the booking date,
-/// then `fallback_account`.
+/// Rules first, then a learned account that is open on the booking date and
+/// not a source account, then `fallback_account`.
 fn suggest(
     request: &ImportRequest<'_>,
     learned: &Learned,
@@ -383,10 +383,9 @@ fn suggest(
     {
         return (account.to_owned(), SuggestionKind::Rule);
     }
-    if let Some(account) = learned
-        .suggest(desc)
-        .filter(|a| request.ledger.is_open_on(a, record.booking_date))
-    {
+    if let Some(account) = learned.suggest(desc).filter(|a| {
+        request.ledger.is_open_on(a, record.booking_date) && !request.config.is_source_account(a)
+    }) {
         return (account.to_owned(), SuggestionKind::Learned);
     }
     (

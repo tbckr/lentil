@@ -645,7 +645,8 @@ pub mod reason {
     /// editor changed the number of postings.
     pub const POSTING_COUNT: &str = "posting-count";
     /// An imported transaction has no single source posting with an amount,
-    /// or an editor changed the account of a source posting.
+    /// or an editor changed the account of a source posting or moved a
+    /// posting onto a source account.
     pub const SOURCE_POSTING: &str = "source-posting";
     /// An importer's balance assertion is not on the source account, or there is more than one.
     pub const BALANCE: &str = "balance";
@@ -742,9 +743,8 @@ impl Areas<'_, '_> {
         );
     }
 
-    fn is_source_posting(&self, path: &str, account: &str) -> bool {
-        self.config
-            .is_some_and(|c| c.is_source_posting(path, account))
+    fn is_source_account(&self, account: &str) -> bool {
+        self.config.is_some_and(|c| c.is_source_account(account))
     }
 
     fn missing_zero_tolerance(&mut self, path: &str, line: u32, account: &str) {
@@ -1043,9 +1043,8 @@ impl Areas<'_, '_> {
                 self.protected_transaction(path, Some(line), id, reason::UNITS);
             }
             if old_p.account != new_p.account
-                && (self.is_source_posting(path, old_p.account.as_str())
-                    || self.config.and_then(|c| c.own_source_account(path))
-                        == Some(new_p.account.as_str()))
+                && (self.is_source_account(old_p.account.as_str())
+                    || self.is_source_account(new_p.account.as_str()))
             {
                 self.protected_transaction(path, Some(line), id, reason::SOURCE_POSTING);
             }
@@ -2262,18 +2261,6 @@ txn-free comment lines are fine too
     }
 
     #[test]
-    fn editor_may_move_a_counter_posting_to_another_source_account() {
-        let after = with(
-            &base(),
-            GIRO_RUN,
-            "  Assets:Bank:Giro        -64.00 EUR\n  Expenses:Uncategorized",
-            "  Assets:Bank:Giro        -64.00 EUR\n  Liabilities:Card",
-        );
-        let v = editor(&after);
-        assert!(!v.is_blocking(), "{:#?}", v.findings);
-    }
-
-    #[test]
     fn a_bare_id_comment_is_no_dismissal() {
         let block = "2026-10-18 ! \"Corner Grocery\" \"Card payment\"
   lentil_id: \"giro-3f9a1c2e7b4d\"
@@ -2336,6 +2323,11 @@ txn-free comment lines are fine too
             (
                 "  Expenses:Uncategorized\n",
                 "  Assets:Bank:Giro\n",
+                "source-posting",
+            ),
+            (
+                "  Expenses:Uncategorized\n",
+                "  Liabilities:Card\n",
                 "source-posting",
             ),
             (

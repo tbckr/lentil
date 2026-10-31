@@ -409,8 +409,12 @@ pub fn conflict(lang: Lang, code: ConflictCode) -> &'static str {
         (AccountChanged, De) => "das Konto wurde anderswo geändert",
         (PostingNotFound, En) => "the posting no longer exists",
         (PostingNotFound, De) => "die Teilbuchung existiert nicht mehr",
-        (SourcePosting, En) => "the bank posting cannot be changed",
-        (SourcePosting, De) => "die Bankbuchung lässt sich nicht ändern",
+        (SourcePosting, En) => {
+            "a bank posting cannot be changed, and no posting can move onto a bank account"
+        }
+        (SourcePosting, De) => {
+            "eine Bankbuchung lässt sich nicht ändern, und keine Buchung kann auf ein Bankkonto wechseln"
+        }
         (AccountNotOpen, En) => "the account is not open",
         (AccountNotOpen, De) => "das Konto ist nicht eröffnet",
         (NotEditable, En) => "the transaction cannot be edited",

@@ -72,7 +72,7 @@
     <string name="conflict_transaction_dismissed">The transaction was dismissed on another device.</string>
     <string name="conflict_account_changed">The account was changed to %1$s on another device.</string>
     <string name="conflict_posting_not_found">The posting no longer exists.</string>
-    <string name="conflict_source_posting">The bank posting can\'t be changed.</string>
+    <string name="conflict_source_posting">A bank posting can\'t be changed, and no posting can move to a bank account.</string>
     <string name="conflict_account_not_open">The account isn\'t open on the transaction\'s date.</string>
     <string name="conflict_not_editable">The transaction is written in a form the app can\'t edit.</string>
     <string name="conflict_file_exists">The file already exists.</string>

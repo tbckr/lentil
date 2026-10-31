@@ -237,13 +237,15 @@ impl Inputs {
                 &[("path", &mapping_path), ("detail", &e.to_string())],
             ))
         })?;
-        let rules = Rules::parse(snapshot.text(RULES_FILE).unwrap_or_default()).map_err(|e| {
-            CliError(i18n::msg(
-                lang,
-                Msg::RulesInvalid,
-                &[("detail", &e.to_string())],
-            ))
-        })?;
+        let rules = Rules::parse(snapshot.text(RULES_FILE).unwrap_or_default())
+            .and_then(|rules| rules.check_accounts(&config).map(|()| rules))
+            .map_err(|e| {
+                CliError(i18n::msg(
+                    lang,
+                    Msg::RulesInvalid,
+                    &[("detail", &e.to_string())],
+                ))
+            })?;
         let statement = read_statement(export, &mapping, &source.currency).map_err(|e| {
             CliError(i18n::msg(
                 lang,

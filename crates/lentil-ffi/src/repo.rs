@@ -83,13 +83,15 @@ impl LentilRepo {
         Ok(queue_items(&view.config, &view.ledger))
     }
 
-    /// Accounts that are open and not closed, with `pending` applied, sorted.
+    /// Accounts a counter posting may move to, with `pending` applied, sorted:
+    /// open, not closed and not a source account.
     ///
     /// # Errors
     ///
     /// As [`Self::queue`].
     pub fn accounts(&self, pending: Vec<FfiPendingIntent>) -> Result<Vec<String>, LentilError> {
-        Ok(open_accounts(&self.view(pending)?.ledger))
+        let view = self.view(pending)?;
+        Ok(open_accounts(&view.config, &view.ledger))
     }
 
     /// The opening date for accounts the user opens during triage: the date
@@ -243,14 +245,20 @@ fn queue_items(config: &Config, ledger: &Ledger) -> Vec<QueueItem> {
 
 fn queue_item(config: &Config, txn: &Txn) -> QueueItem {
     let source = source_posting(config, txn);
-    // Only an unambiguous counter posting is offered for editing; splits stay
-    // read-only in the app (PRD: FR-D10).
+    // Only an unambiguous counter posting is offered for editing; splits and
+    // postings on another source account stay read-only in the app (PRD:
+    // FR-D10, spec section 7).
     let counter = source.and_then(|source| {
         let mut others = (0..txn.postings.len()).filter(|&i| i != source);
         match (others.next(), others.next()) {
             (Some(only), None) => Some(only),
             _ => None,
         }
+    });
+    let counter = counter.filter(|&i| {
+        txn.postings
+            .get(i)
+            .is_some_and(|p| !config.is_source_account(&p.account))
     });
     let source = source.and_then(|i| txn.postings.get(i));
     let counter = counter.and_then(|i| Some((i, txn.postings.get(i)?)));
@@ -271,18 +279,27 @@ fn queue_item(config: &Config, txn: &Txn) -> QueueItem {
     }
 }
 
-/// The index of the source posting (`Config::is_source_posting`).
+/// The index of the source posting shown in the queue: in a run file, the
+/// posting on that file's own source account; elsewhere the first posting on
+/// any source account.
 fn source_posting(config: &Config, txn: &Txn) -> Option<usize> {
-    txn.postings
-        .iter()
-        .position(|p| config.is_source_posting(&txn.file, &p.account))
+    match config.own_source_account(&txn.file) {
+        Some(own) => txn.postings.iter().position(|p| p.account == own),
+        None => txn
+            .postings
+            .iter()
+            .position(|p| config.is_source_account(&p.account)),
+    }
 }
 
-fn open_accounts(ledger: &Ledger) -> Vec<String> {
+/// The accounts a counter posting may move to: open, not closed and not a
+/// source account (spec section 7).
+fn open_accounts(config: &Config, ledger: &Ledger) -> Vec<String> {
     ledger
         .accounts
         .iter()
         .filter(|(_, state)| state.opened.is_some() && state.closed.is_none())
+        .filter(|(account, _)| !config.is_source_account(account))
         .map(|(account, _)| account.clone())
         .collect()
 }
@@ -427,7 +444,8 @@ include "imports/*/*/*.beancount"
         let items = queue_items(&config, &ledger);
 
         // Imported from the card: the card posting is the source posting,
-        // although the giro posting comes first.
+        // although the giro posting comes first. The giro posting is a source
+        // posting too, so the app offers no counter posting to edit.
         let settlement = items
             .iter()
             .find(|item| item.id.as_deref() == Some("card-222222222222"))
@@ -437,11 +455,8 @@ include "imports/*/*/*.beancount"
             Some("Liabilities:Card")
         );
         assert_eq!(settlement.amount.as_deref(), Some("100.00"));
-        assert_eq!(
-            settlement.counter_account.as_deref(),
-            Some("Assets:Bank:Giro")
-        );
-        assert_eq!(settlement.counter_posting, Some(0));
+        assert_eq!(settlement.counter_account, None);
+        assert_eq!(settlement.counter_posting, None);
     }
 
     #[test]
@@ -459,17 +474,12 @@ include "imports/*/*/*.beancount"
     }
 
     #[test]
-    fn accounts_are_open_and_not_closed() {
-        let (_, ledger) = sample();
+    fn accounts_are_open_and_not_source_accounts() {
+        let (config, ledger) = sample();
 
         assert_eq!(
-            open_accounts(&ledger),
-            vec![
-                "Assets:Bank:Giro",
-                "Expenses:Groceries",
-                "Expenses:Uncategorized",
-                "Liabilities:Card",
-            ]
+            open_accounts(&config, &ledger),
+            vec!["Expenses:Groceries", "Expenses:Uncategorized"]
         );
     }
 

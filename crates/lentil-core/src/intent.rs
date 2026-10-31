@@ -123,7 +123,8 @@ pub enum ConflictCode {
     AccountChanged,
     /// The posting index does not exist.
     PostingNotFound,
-    /// The posting is the source posting, which editors must not change.
+    /// The posting is on a source account, or the new account is one: editors
+    /// never change a source posting or move a posting onto a source account.
     SourcePosting,
     /// The new account is not open on the transaction date.
     AccountNotOpen,
@@ -419,9 +420,9 @@ impl<'a> Replay<'a> {
         if current == new {
             return self.already_applied(i, index);
         }
-        if self.config.is_source_posting(&txn.file, &original.account)
-            || self.config.own_source_account(&txn.file) == Some(new)
-        {
+        // Every posting on a source account is a source posting, and no
+        // posting moves onto one (spec section 7).
+        if self.config.is_source_account(current) || self.config.is_source_account(new) {
             return conflict(ConflictCode::SourcePosting);
         }
         if current != old {
@@ -725,6 +726,7 @@ include "imports/*/*/*.beancount"
 
     const ACCOUNTS: &str = "2020-01-01 open Assets:Bank:Giro EUR
 2020-01-01 open Liabilities:Card EUR
+2020-01-01 open Assets:Transfer
 2020-01-01 open Expenses:Uncategorized
 2020-01-01 open Expenses:Food:Groceries
 2020-01-01 open Expenses:Old
@@ -1004,36 +1006,17 @@ include "imports/*/*/*.beancount"
     }
 
     #[test]
-    fn set_account_books_a_transfer_to_another_source_account() {
-        // A transfer imported from both accounts: the counter posting moves to
-        // the other source account, and that account's copy is dismissed.
-        let to_card = set(TRANSFER, 1, "Expenses:Uncategorized", "Liabilities:Card");
-        let (_, outcomes) = replay_on(
-            &snapshot(),
-            &[
-                to_card.clone(),
-                set(TRANSFER, 1, "Liabilities:Card", "Expenses:Uncategorized"),
-            ],
-        );
-        // Only the run file's own source posting is protected, so the
-        // counter posting can move back again.
-        assert_eq!(outcomes, vec![Applied, Applied]);
-        let (after, _) = replay_on(&snapshot(), std::slice::from_ref(&to_card));
-        // Replaying the applied intent again is done, not a conflict.
-        let (again, outcomes) = replay_on(&after, &[to_card]);
-        assert_eq!(outcomes, vec![AlreadyApplied]);
-        assert_eq!(again, after);
-        // The counter posting never moves onto the run file's own source account.
-        let (_, outcomes) = replay_on(
-            &snapshot(),
-            &[set(
-                TRANSFER,
-                1,
-                "Expenses:Uncategorized",
-                "Assets:Bank:Giro",
-            )],
-        );
-        assert_eq!(outcomes, vec![conflict(ConflictCode::SourcePosting)]);
+    fn set_account_never_moves_a_posting_onto_a_source_account() {
+        // A transfer goes through the transfer account on both sides, so each
+        // side keeps its bank's date (spec section 8).
+        for account in ["Liabilities:Card", "Assets:Bank:Giro"] {
+            let (after, outcomes) = replay_on(
+                &snapshot(),
+                &[set(TRANSFER, 1, "Expenses:Uncategorized", account)],
+            );
+            assert_eq!(outcomes, vec![conflict(ConflictCode::SourcePosting)]);
+            assert_eq!(after, snapshot());
+        }
     }
 
     #[test]
@@ -1210,7 +1193,7 @@ include "imports/*/*/*.beancount"
         let (after, outcomes) = replay_on(
             &before,
             &[
-                set(TRANSFER, 1, "Expenses:Uncategorized", "Liabilities:Card"),
+                set(TRANSFER, 1, "Expenses:Uncategorized", "Assets:Transfer"),
                 confirm(CAFE),
                 confirm(TRANSFER),
                 set(CAFE, 1, "Expenses:Uncategorized", "Expenses:Food:Groceries"),
@@ -1236,7 +1219,7 @@ include "imports/*/*/*.beancount"
         let run = changed(
             &run,
             "  Expenses:Uncategorized\n\n2026-10-21",
-            "  Liabilities:Card\n\n2026-10-21",
+            "  Assets:Transfer\n\n2026-10-21",
         );
         assert_eq!(after.text(RUN_FILE).unwrap(), run);
         let card = CARD_RUN

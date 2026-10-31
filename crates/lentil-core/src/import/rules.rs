@@ -7,6 +7,7 @@ use regex::Regex;
 use serde::Deserialize;
 use thiserror::Error;
 
+use crate::config::Config;
 use crate::ledger::Ledger;
 
 /// Path of the rules file, relative to the repository root.
@@ -44,6 +45,10 @@ pub enum RulesError {
     /// A rule's `account` is not a valid Beancount account name.
     #[error("invalid account {0:?}")]
     InvalidAccount(String),
+    /// A rule books to a source account, which only its own source posts to
+    /// (spec section 16).
+    #[error("rule account {0:?} is a source account")]
+    SourceAccount(String),
 }
 
 #[derive(Deserialize)]
@@ -116,6 +121,22 @@ impl Rules {
             })
             .collect::<Result<_, _>>()?;
         Ok(Self { rules })
+    }
+
+    /// Checks that no rule books to a source account (spec section 16).
+    ///
+    /// # Errors
+    ///
+    /// [`RulesError::SourceAccount`] for the first rule that does.
+    pub fn check_accounts(&self, config: &Config) -> Result<(), RulesError> {
+        match self
+            .rules
+            .iter()
+            .find(|r| config.is_source_account(&r.account))
+        {
+            Some(rule) => Err(RulesError::SourceAccount(rule.account.clone())),
+            None => Ok(()),
+        }
     }
 
     /// Number of rules.
@@ -333,6 +354,34 @@ account = "Expenses:Food:Other"
     fn rejects_rules_without_condition() {
         let text = "[[rule]]\ndesc = \"x\"\naccount = \"Expenses:A\"\n\n[[rule]]\nsource = \"giro\"\naccount = \"Expenses:B\"\n";
         assert_eq!(Rules::parse(text).unwrap_err(), RulesError::NoCondition(2));
+    }
+
+    #[test]
+    fn rejects_rules_that_book_to_a_source_account() {
+        let config = Config::parse(
+            r#"spec_version = 0
+main_file = "main.beancount"
+fallback_account = "Expenses:Uncategorized"
+unattributed_account = "Expenses:Unattributed"
+
+[[source]]
+id = "card"
+account = "Liabilities:Card"
+currency = "EUR"
+importer = "csv"
+mapping = "sources/card.toml"
+"#,
+        )
+        .unwrap();
+        let rules = Rules::parse(RULES).unwrap();
+        assert_eq!(rules.check_accounts(&config), Ok(()));
+        let to_card =
+            Rules::parse("[[rule]]\ndesc = \"CARD STATEMENT\"\naccount = \"Liabilities:Card\"\n")
+                .unwrap();
+        assert_eq!(
+            to_card.check_accounts(&config),
+            Err(RulesError::SourceAccount("Liabilities:Card".into()))
+        );
     }
 
     #[test]
