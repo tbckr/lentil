@@ -15,17 +15,32 @@ Lentil has a first, unreleased draft of v0.1: the `lentil` CLI (`init`, `import`
 The flake packages the `lentil` CLI for Linux (x86_64 and arm64) and macOS (arm64).
 
 - Install it with `nix profile install github:tbckr/lentil`, or run it without installing with `nix run github:tbckr/lentil -- <command>`.
-- On NixOS, add the flake as an input of the system configuration and the package to the system:
+- On NixOS, add the flake as an input of the system configuration and its package to the system:
 
   ```nix
-  # flake.nix of the system configuration
-  inputs.lentil.url = "github:tbckr/lentil";
+  {
+    inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    inputs.lentil.url = "github:tbckr/lentil";
 
-  # in a NixOS module
-  environment.systemPackages = [ inputs.lentil.packages.${pkgs.stdenv.hostPlatform.system}.default ];
+    outputs =
+      { nixpkgs, lentil, ... }:
+      {
+        nixosConfigurations.example = nixpkgs.lib.nixosSystem {
+          modules = [
+            ./configuration.nix
+            (
+              { pkgs, ... }:
+              {
+                environment.systemPackages = [ lentil.packages.${pkgs.stdenv.hostPlatform.system}.default ];
+              }
+            )
+          ];
+        };
+      };
+  }
   ```
 
-- Or apply its overlay with `nixpkgs.overlays = [ inputs.lentil.overlays.default ];` and use `pkgs.lentil`.
+- With the overlay, the module sets `nixpkgs.overlays = [ lentil.overlays.default ];` and adds `pkgs.lentil` instead.
 
 ## Non-goals
 
