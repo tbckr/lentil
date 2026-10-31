@@ -62,6 +62,7 @@ include "prices/*/*.beancount"
 
 - Include paths are relative to the file that contains them. Glob patterns use at most one `*` per path segment, with no `**` and no character classes. Python Beancount 3.2.3, rustledger and go-beancount resolve these patterns identically.
 - Every `.beancount` file matched by these patterns is part of the ledger. Clients MUST NOT create `.beancount` files elsewhere.
+- Python Beancount 3.2.3 and rustledger reject an include pattern that matches no file. `init` therefore writes three placeholders that hold only comments: `imports/keep/keep/keep.beancount`, `manual/keep/keep.beancount` and `prices/keep/keep.beancount`. They stay in place, and `keep` is reserved (section 4).
 - `fava.beancount` contains only `custom "fava-option"` and `custom "fava-sidebar-link"` directives, for example links to the open transactions and to `Expenses:Uncategorized`. Other tools ignore them.
 - `init` creates a `.gitignore` containing `.*.cache` and `.*.picklecache`. rustledger and Python Beancount write load caches next to `main.beancount` by default; caches MUST NOT be committed.
 
@@ -89,7 +90,7 @@ currency = "EUR"
 ```
 
 - `spec_version`, `main_file`, `fallback_account` and `unattributed_account` are required.
-- Each `[[source]]` describes one bank account or card that is imported. `id` MUST be unique and MUST NOT change once transactions exist, because it is part of every imported ID.
+- Each `[[source]]` describes one bank account or card that is imported. `id` MUST be unique, MUST NOT be `keep` (section 3) and MUST NOT change once transactions exist, because it is part of every imported ID.
 - Each `[[snapshot]]` describes one balance-tracked account (section 9). An account MUST NOT be both a source account and a snapshot account.
 - `fallback_account` is the counter account when no suggestion exists; `unattributed_account` receives differences between balance snapshots. Both MUST be opened in `accounts.beancount`.
 - `price_currencies` lists the currencies for which lentil prices fetches ECB reference rates (v1).
@@ -108,9 +109,9 @@ Every transaction Lentil writes carries a stable `lentil_id`; all edits, dedupli
 
 **Imported transactions.** The ID is deterministic, so a repeated import of the same data produces the same ID:
 
-- If the source provides a stable unique reference, `lentil_id` = `<source-id>-` + the first 12 hex characters of SHA-256 over `<source-id>|<reference>`.
+- If the source provides a stable unique reference, `lentil_id` = `<source-id>-` + the first 12 hex characters of SHA-256 over `<source-id>|<reference>`. A reference that repeats within one export is not unique, so the importer MUST stop the run without writing anything.
 - Otherwise the hash input is `<source-id>|<booking date>|<amount>|<currency>|<counterparty>|<purpose>|<n>`. `n` is the 0-based occurrence index among transactions with identical other fields in the same export, in the order the bank lists them.
-- Fields are normalized before hashing: dates as `YYYY-MM-DD`, amounts as plain decimals with a dot, text trimmed with inner whitespace collapsed.
+- Fields are normalized before hashing: dates as `YYYY-MM-DD`, amounts as plain decimals with a dot and without trailing zeros (`-64.00` as `-64`, `-64.10` as `-64.1`), so a change in the bank's number format keeps the IDs, and text trimmed with inner whitespace collapsed.
 
 **Manual transactions.** `lentil_id` = `<device-id>-` + a lowercase ULID.
 
@@ -141,9 +142,10 @@ Every client acts in one of three roles, and each role may only touch its own ar
 | Role | Used by | May create | May change | MUST NOT |
 | --- | --- | --- | --- | --- |
 | Importer | CLI import; later a bot | New run files under `imports/<source-id>/`; price files under `prices/` (v1); `status/<bot-id>.json` | Nothing that already exists | Change, move or remove existing transactions |
-| Editor | Android; a local web UI if built | Files under `manual/<device-id>/`, including balance snapshots (section 9); `open` directives in `accounts.beancount` | Flag, payee, narration, tags, links, metadata other than `lentil_id`, `lentil_ref` and `lentil_desc`, and the account of postings that are not on the source account | Change dates, the source posting, `lentil_id`, `lentil_ref` or `lentil_desc`; delete transactions; write manual transactions or pads that post to a source account |
+| Editor | Android; a local web UI if built | Files under `manual/<device-id>/`, including balance snapshots (section 9); `open` directives in `accounts.beancount` | Flag, payee, narration, tags, links, metadata other than `lentil_id`, `lentil_ref` and `lentil_desc`, and the account of postings that are not on a source account | Change dates, a source posting, `lentil_id`, `lentil_ref` or `lentil_desc`; move a posting onto a source account; delete transactions; write manual transactions or pads that post to a source account |
 | Admin | CLI (`init`, `adopt`, config commands) | Anything | Anything | Break any rule of this spec in the resulting state |
 
+- Every posting on a source account is a source posting. Editors never move a posting onto a source account, and suggestions never name one (section 16), so each side of a transfer between two source accounts stays a transaction of its own (section 8).
 - A client declares its role in every commit (section 12). Validation checks the commit's changes against that role (section 13).
 - At most one importer per source may run at a time. Two importers running on the same source is a configuration error.
 - An editor that needs a new account adds its `open` directive through the `open-account` operation (section 10).
@@ -172,12 +174,13 @@ Each import run reads one bank export through an adapter (section 15), writes ex
 2026-10-20 balance Assets:Bank:Giro  1234.56 ~ 0.00 EUR
 ```
 
-**File.** The run file is `imports/<source-id>/<YYYY>/<YYYYMMDDTHHMMSSZ>.beancount`, named after the run's start time in UTC. The include pattern of section 3 picks it up; no other file changes. A run with nothing new writes no file and no commit.
+**File.** The run file is `imports/<source-id>/<YYYY>/<YYYYMMDDTHHMMSSZ>.beancount`, named after the run's start time in UTC. If a file of that name exists, the run takes the next free second. The include pattern of section 3 picks it up; no other file changes. A run with nothing new writes no file and no commit.
 
 **Transactions.**
 
 - Importers MUST import only booked transactions, never pending ones.
-- Each transaction has exactly two postings: the source posting with the amount as reported by the bank, and a counter posting with elided amount on the suggested account, or on `fallback_account` if there is no suggestion.
+- Importers MUST import only transactions booked before the run date; later ones follow with a later run. An export can end in the middle of the run date, and a later export would then number identical same-day transactions differently (section 5).
+- Each transaction has exactly two postings: the source posting with the amount as reported by the bank, and a counter posting with elided amount on the suggested account, or on `fallback_account` if there is no suggestion. The opening transaction (below) has the same shape.
 - Each transaction carries `lentil_id` and `lentil_desc` (section 5), and `lentil_ref` if the bank provides one.
 - Transactions are ordered by booking date, then in the order the bank lists them.
 - Before writing, the importer collects every `lentil_id` in the ledger, including those of commented-out transactions, and skips transactions whose ID already exists.
@@ -191,6 +194,20 @@ Each import run reads one bank export through an adapter (section 15), writes ex
 - A balance that refers to the run date may include run-date transactions. The importer subtracts the run-date transactions contained in the same export and dates the assertion on the run date. If it cannot do this reliably, it writes no assertion.
 - If an assertion for the same account and date already exists, the importer writes none and reports a difference, if any.
 - A failing assertion means an import gap or an error. It is reported, never hidden and never auto-corrected.
+
+**Opening balance.** The run that writes the first balance assertion for a source account also writes the account's opening transaction, unless the ledger already holds it, active or dismissed.
+
+- Its source posting books the part of the asserted balance that the source's transactions before the assertion, in the ledger and in the run, do not explain. Its counter posting is on `Equity:Opening-Balances`, which `init` opens.
+- It carries flag `!`, `lentil_id` = `<source-id>-` + the first 12 hex characters of SHA-256 over `<source-id>|opening`, and `Opening balance` as narration and `lentil_desc`.
+- It is dated on the source's earliest transaction, but before the assertion.
+- If that part is zero, or a posting on the source account has no amount, the importer writes no opening transaction.
+- If earlier runs skipped the balance, an import gap among them ends up in the opening balance. The flag `!` puts it in front of the user.
+
+**Transfers.** A transfer between two source accounts, for example paying the card bill from the giro account, is imported from both sides.
+
+- Both transactions stay active, with their own dates and IDs. Both counter postings go to a transfer account, `Assets:Transfer` in repositories created by `init`.
+- The transfer account holds the money in transit. A balance that remains on it points to a transfer whose other side is missing.
+- Beancount has no dates per posting. A single transaction with postings on both source accounts would carry one date, so a balance assertion of the other account between the two booking dates would fail.
 
 **Exchange rates (v1).** lentil prices fetches the ECB reference rates for the currencies in `price_currencies` at most once per business day, run by hand or from a timer. It writes them as `price` directives into a new file `prices/<YYYY>/<YYYYMMDD>.beancount`; a day without new rates writes no file. Prices entered by hand go into the same layout under the admin role.
 
@@ -224,7 +241,7 @@ Clients never ship text diffs; they record intents that name a transaction by ID
 | Operation | Arguments | Precondition | Effect | Role | Release |
 | --- | --- | --- | --- | --- | --- |
 | `confirm` | id | Transaction is active | Flag becomes `*` | Editor | v0.1 |
-| `set-account` | id, posting index, old, new | Posting has account `old` and is not the source posting; `new` is open | Account becomes `new` | Editor | v0.1 |
+| `set-account` | id, posting index, old, new | Posting has account `old` and is not a source posting; `new` is open and not a source account | Account becomes `new` | Editor | v0.1 |
 | `dismiss` | id | Transaction is active | Transaction is commented out in place | Editor | v0.1 |
 | `open-account` | account, date | Account is not open | `<date> open <account>` appended to `accounts.beancount` | Editor, Admin | v0.1 |
 | `add-import-run` | source, file, content | File does not exist | New run file written | Importer | v0.1 |
@@ -243,7 +260,7 @@ Clients never ship text diffs; they record intents that name a transaction by ID
 **Rules.**
 
 - Applying an intent changes only the bytes of the affected element: the flag character, the account name or the string. Everything else in the file stays byte-identical (PRD: principle 7).
-- `dismiss` prepends ` ;  ` to every line of the transaction. It is used for duplicates, for example a transfer imported from both accounts. Commented-out IDs still count for deduplication (section 8), so a dismissed transaction is never imported again.
+- `dismiss` prepends ` ;  ` to every line of the transaction. It is used for duplicates, for example a transaction imported again after the bank changed its wording (section 8). Commented-out IDs still count for deduplication (section 8), so a dismissed transaction is never imported again.
 - `add-snapshot` decides whether a pad is needed when it is applied, not when it is created, so a replay on a newer state never writes an unused pad.
 - Intents are stored on the device, outside the repository, until they are pushed. A client MUST NOT drop an intent silently; conflicts are shown to the user, who re-applies or discards them.
 - Splitting is not an intent. Rare complex corrections are made in a text editor and validated with `lentil check` (PRD: FR-E6).
@@ -298,6 +315,7 @@ A client validates the complete ledger after applying its intents and before com
 | The core reports any other error, for example an unused pad | Blocking |
 | A balance assertion fails | Warning |
 
+- A dismissed transaction counts as unchanged only if its comment block holds the whole transaction, every line prefixed as in section 10. Removing a transaction, or keeping only its `lentil_id` line, is a change outside the editor's write area.
 - If the state fetched from the remote already has blocking findings or lies outside the profile, editors and importers MUST NOT write. The client shows the findings; only the admin role can repair the repository.
 - Validation uses the client's core. The CLI additionally offers a check against the reference implementation, `bean-check` (PRD: FR-B4).
 
@@ -399,10 +417,10 @@ desc = "(?i)corner grocery"            # regular expression on lentil_desc
 account = "Expenses:Food:Groceries"
 ```
 
-- A rule matches on `desc` (the bank's original description in `lentil_desc`), `payee` and/or `narration`, optionally limited to one `source`. `account` is required. `desc` is preferred, because it never changes.
+- A rule matches on `desc` (the bank's original description in `lentil_desc`), `payee` and/or `narration`, optionally limited to one `source`. `account` is required and MUST NOT be a source account; transfers go to the transfer account (section 8). `desc` is preferred, because it never changes.
 - Regular expressions use RE2 syntax without lookaround, so implementations in different languages behave the same.
 - Rules are evaluated in file order; the first match wins. Only if no rule matches does the importer use a learned suggestion, and only then `fallback_account`.
-- Learned suggestions are computed from reviewed (`*`) transactions. Their input is `lentil_desc` and the source account, never payee or narration, which users may edit (PRD: FR-C8). They need no file of their own, so any client can recompute them.
+- Learned suggestions are computed from reviewed (`*`) transactions. Their input is `lentil_desc` and the source account, never payee or narration, which users may edit (PRD: FR-C8). They never suggest a source account, and they need no file of their own, so any client can recompute them.
 - In v0.1 only the admin role edits `rules.toml`. In v1 editors add rules through an `add-rule` operation (PRD: FR-C11).
 
 ## 17. Bot status file (later)
@@ -432,18 +450,18 @@ Deferred until automatic bank access exists. A bot then reports its health throu
 
 ## 18. Open questions
 
-Two questions are settled; six remain, each with the current proposal where there is one.
+Seven questions are settled; one remains open.
 
 **Settled**
 
 - [x] **Includes:** glob patterns replace index files (section 3). Python Beancount, rustledger and go-beancount resolve them identically, also on a 10-year ledger.
 - [x] **Dismissing:** keep commenting out. All three parsers ignore commented-out transactions, so balances stay correct without plugins. Deduplication scans comment lines for `lentil_id`; rustledger's parse result exposes standalone comments with their source spans.
+- [x] **Partial days:** importers import only days before the run date (section 8). Same-day transactions arrive one day later, and in return the occurrence index stays deterministic.
+- [x] **Metadata keys:** `lentil_id`, `lentil_ref` and `lentil_desc` stay. They are long but avoid collisions with other tools.
+- [x] **Shared accounts file:** editors keep appending `open` directives to `accounts.beancount` through `open-account`, which is conflict-free.
+- [x] **Transfers:** both sides stay transactions of their own, with their own dates and IDs, and book against a transfer account (section 8). A merged transaction would carry one date and break balance assertions between the two booking dates.
+- [x] **Commit size:** one commit per sync (section 12).
 
 **Open**
 
-- [ ] **Partial days:** if a bank export cuts a day in half, identical same-day transactions can get different occurrence indexes across runs (section 5). Option A: import only days before the run date, which is deterministic but delays same-day transactions by one day. Option B: accept the rare duplicate and rely on `dismiss`. Proposal: A.
-- [ ] **Metadata keys:** `lentil_id`, `lentil_ref` and `lentil_desc` are long but avoid collisions with other tools. Proposal: keep.
-- [ ] **Shared accounts file:** editors append `open` directives to `accounts.beancount`. This is conflict-free through `open-account`, but it is the only shared file editors write. Alternative: one accounts file per device. Proposal: keep the shared file.
-- [ ] **Transfers (v1):** how a merged transfer keeps the IDs of both sides, so neither side is imported again.
-- [ ] **Commit size:** one commit per sync (proposal) or one per intent.
 - [ ] **Matching manual and imported entries (after v1):** match a manual entry to a later import by account, amount and a date within a few days, as beancount-import does with up to 5 days. Until then, section 9 forbids manual postings on source accounts.

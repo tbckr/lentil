@@ -86,6 +86,7 @@ Each one is spelled out in the spec section given in brackets.
 - Include globs use at most one `*` per path segment, with no `**` and no character classes (§3).
 - Never commit load caches (`.*.cache`, `.*.picklecache`) (§3).
 - Report a failing balance assertion. Never hide it or correct it automatically.
+- Every posting on a source account is a source posting, and nothing moves a counter posting onto a source account. Transfers between source accounts stay two transactions against `Assets:Transfer`, because a merged transaction has one date and breaks balance assertions between the two booking dates (§7, §8).
 
 ## Engineering standards
 

@@ -148,7 +148,7 @@ Every requirement has an ID and a target release; how it is implemented is defin
 | FR-C7 | If the export no longer reproduces the ID of an already imported transaction in its date range, for example after a mapping change, a new transaction with the same date, amount and currency is reported as a possible duplicate and imported only after confirmation. | v0.1 |
 | FR-C8 | Imported transactions keep the bank's original description in protected metadata. Suggestions learn from it, not from a payee or narration the user has edited. | v0.1 |
 | FR-C9 | `lentil source add` drafts a mapping from a sample export (encoding, delimiter, header, date and number formats, columns) and shows the first parsed rows for confirmation. | v1 |
-| FR-C10 | Transfers between own accounts are detected and merged into one transaction. | v1 |
+| FR-C10 | Transfers between own accounts are detected, and both sides are booked against the transfer account. | v1 |
 | FR-C11 | Corrections made during triage improve future suggestions; rules live in the repository. | v1 |
 | FR-C12 | `lentil prices` fetches ECB reference rates for the currencies in use and writes them as price directives; it can run manually or from a timer. | v1 |
 | FR-C13 | FinTS fetching runs in a thin Python adapter that hands transactions over as CSV or JSON; import logic stays in the core. | Later |
@@ -164,7 +164,7 @@ Every requirement has an ID and a target release; how it is implemented is defin
 | FR-D1 | A queue shows all open transactions, newest first. | v0.1 |
 | FR-D2 | Confirming with one gesture sets the flag to `*`. | v0.1 |
 | FR-D3 | The counter account can be changed via search and recently used accounts; a missing account can be opened directly. | v0.1 |
-| FR-D4 | A duplicate, such as a transfer imported from both accounts, can be dismissed; it stays in its file as a comment and is never imported again. | v0.1 |
+| FR-D4 | A duplicate, such as a transaction imported again after the bank changed its wording, can be dismissed; it stays in its file as a comment and is never imported again. | v0.1 |
 | FR-D5 | Triage works offline; changes are transferred on the next sync. | v0.1 |
 | FR-D6 | The UI syncs without using Git terminology. | v0.1 |
 | FR-D7 | Payee and narration can be corrected; the bank's original description stays unchanged (FR-C8). | v1 |
