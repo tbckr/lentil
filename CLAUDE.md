@@ -14,6 +14,7 @@ Lentil has a first, unreleased draft of v0.1 next to its design documents:
 - `crates/lentil-core`: all logic, on rustledger. Everything works on a `Snapshot` (repository files in memory): `ledger` indexes a snapshot with exact byte spans, `intent` replays edit intents, `validate` checks a state and a role's changes, `import` plans CSV import runs, `sync` runs the fetch–replay–validate–commit–push loop on libgit2.
 - `crates/lentil-cli`: the `lentil` binary (`init`, `import`, `status`, `check`); its messages come from a catalog in `i18n.rs`, English and German.
 - `crates/lentil-ffi`: UniFFI bindings of the core for the Android app.
+- `android/`: the Kotlin and Compose triage app. It holds no finance logic: pending intents live in a JSON file in app storage and the core replays them. `build-logic` runs cargo-ndk and uniffi-bindgen through AGP's Variant API; versions, including the NDK, live in `gradle/libs.versions.toml`, which the flake reads.
 - `testdata/`: synthetic bank exports and their mappings.
 
 ## Commands
@@ -26,6 +27,9 @@ Run every command inside the development shell.
 - `cargo llvm-cov nextest -p lentil-core` measures coverage, and `cargo mutants -p lentil-core --test-tool nextest` runs the mutation tests.
 - The differential tests in `crates/lentil-core/tests/differential.rs` compare rustledger with Python Beancount through `uv`; `LENTIL_SKIP_DIFFERENTIAL=1` skips them where uv is missing. `cargo test -p lentil-core --release --test differential -- --ignored --nocapture` measures the load time of a synthetic 50,000-transaction ledger.
 - `cargo run -p lentil-cli -- <command>` runs the CLI.
+- In `android/`, `./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lint` builds the app with the core for `arm64-v8a` and `x86_64`, runs its unit tests and Android Lint. Gradle verifies every dependency against `gradle/verification-metadata.xml` and locks the app's configurations in `app/gradle.lockfile`; after a dependency change, rewrite both with `--write-verification-metadata sha256 --write-locks`.
+- `detekt --build-upon-default-config --config android/detekt.yml --input android/app/src,android/build-logic/src` and `ktfmt --kotlinlang-style` check the Kotlin code.
+- `nix develop .#emulator` adds an emulator and an x86_64 system image for manual tests.
 
 ## Development shell
 

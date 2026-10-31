@@ -63,7 +63,11 @@ jobs:
       - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
       - name: Build, lint and unit-test the app
         working-directory: android
-        run: nix develop .. --command ./gradlew --no-daemon :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
+        run: nix develop .. --command ./gradlew --no-daemon :app:assembleDebug :app:testDebugUnitTest :app:lint
+      - name: detekt and ktfmt
+        run: |
+          nix develop --command detekt --build-upon-default-config --config android/detekt.yml --input android/app/src,android/build-logic/src
+          nix develop --command bash -c 'ktfmt --kotlinlang-style --dry-run --set-exit-if-changed $(find android -name "*.kt" -not -path "*/build/*")'
 
   nix:
     runs-on: ubuntu-latest
