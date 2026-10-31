@@ -1,6 +1,7 @@
 # Every job runs inside the flake's development shell, so CI uses exactly the
 # local toolchain. Mutation testing runs in mutation.yml, static analysis in
-# codeql.yml and the vulnerability scans in scan.yml and scan-release.yml.
+# codeql.yml, the vulnerability scans in scan.yml and scan-release.yml, and the
+# weekly run against the newest dependencies in latest-deps.yml.
 #
 # install-nix-action gets the job's read-only token, so Nix's fetches from
 # GitHub stay clear of the rate limit for anonymous API requests.

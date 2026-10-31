@@ -1,5 +1,6 @@
 # Dependabot only keeps the SHA-pinned GitHub Actions current (CONTRIBUTING:
-# Vulnerability scanning). Every other dependency is upgraded by hand.
+# Vulnerability scanning). Every other dependency is upgraded with
+# scripts/deps.sh (CONTRIBUTING: Updating dependencies).
 version: 2
 updates:
   - package-ecosystem: github-actions

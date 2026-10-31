@@ -1,0 +1,133 @@
+# Early warning without updating (CONTRIBUTING: Updating dependencies): once a
+# week, CI runs against the newest versions of the direct dependencies,
+# upgraded exactly like scripts/deps.sh does. Nothing is committed; a failure
+# means the next upgrade needs work.
+#   - rust: every direct crate within its requirement.
+#   - android: the Gradle catalog within each major, with verification
+#     metadata and lockfiles rewritten while the app builds, tests and lints.
+#   - pins: rustledger, UniFFI and Beancount at their newest release, which
+#     are upgraded deliberately. The differential tests guard rustledger and
+#     Beancount, the app build UniFFI's generated bindings.
+#
+# Fresh dependency code runs only inside a gVisor sandbox
+# (geomys/sandboxed-step) without access to the job's token, and its changes
+# to the workspace do not persist. The sandbox sees neither /nix nor nix
+# itself, only the workspace and the runner's tool cache, read-only. So the
+# host fetches the development shell, binds the Nix store into the tool cache
+# and writes the shell's environment there as a script; the sandbox links /nix
+# to it and sources the script.
+#
+# install-nix-action gets the job's read-only token, as in ci.yml; it stays on
+# the host.
+#
+# Actions are pinned by commit SHA with a "# vX.Y.Z" comment (CONTRIBUTING: CI
+# and hosting); Dependabot (.github/dependabot.yml) bumps them monthly.
+name: Latest dependencies
+
+on:
+  schedule:
+    - cron: "23 5 * * 1" # weekly, Monday 05:23 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SHELL_DIR: lentil-shell
+
+jobs:
+  rust:
+    name: Rust (latest direct crates within their requirements)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Development shell for the sandbox
+        run: |
+          dir="$RUNNER_TOOL_CACHE/$SHELL_DIR"
+          mkdir -p "$dir/nix/store"
+          nix print-dev-env > "$dir/env.sh"
+          sudo mount --bind /nix/store "$dir/nix/store"
+      - uses: geomys/sandboxed-step@a6bfc174e532cea4f378e3427bcde8b714c2e810 # v1.2.2
+        with:
+          env: |
+            SHELL_DIR=${{ env.SHELL_DIR }}
+          run: |
+            sudo ln -s "$RUNNER_TOOL_CACHE/$SHELL_DIR/nix" /nix
+            # The shell's temporary directory on disk, not on the sandbox's
+            # tmpfs in memory.
+            export TMPDIR="$HOME/tmp"
+            mkdir -p "$TMPDIR"
+            source "$RUNNER_TOOL_CACHE/$SHELL_DIR/env.sh"
+            scripts/deps.sh upgrade rust
+            cargo clippy --workspace --all-targets -- -D warnings
+            cargo nextest run --workspace
+            cargo test --workspace --doc
+
+  android:
+    name: Android (latest catalog versions within their majors)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Development shell for the sandbox
+        run: |
+          dir="$RUNNER_TOOL_CACHE/$SHELL_DIR"
+          mkdir -p "$dir/nix/store"
+          nix print-dev-env > "$dir/env.sh"
+          sudo mount --bind /nix/store "$dir/nix/store"
+      - uses: geomys/sandboxed-step@a6bfc174e532cea4f378e3427bcde8b714c2e810 # v1.2.2
+        with:
+          env: |
+            SHELL_DIR=${{ env.SHELL_DIR }}
+          run: |
+            sudo ln -s "$RUNNER_TOOL_CACHE/$SHELL_DIR/nix" /nix
+            export TMPDIR="$HOME/tmp"
+            mkdir -p "$TMPDIR"
+            source "$RUNNER_TOOL_CACHE/$SHELL_DIR/env.sh"
+            # Prints each version it raises, then builds, unit-tests and lints
+            # the app and checks its licenses.
+            scripts/deps.sh upgrade android
+
+  pins:
+    name: rustledger, UniFFI and Beancount (latest releases)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Development shell for the sandbox
+        run: |
+          dir="$RUNNER_TOOL_CACHE/$SHELL_DIR"
+          mkdir -p "$dir/nix/store"
+          nix print-dev-env > "$dir/env.sh"
+          sudo mount --bind /nix/store "$dir/nix/store"
+      - uses: geomys/sandboxed-step@a6bfc174e532cea4f378e3427bcde8b714c2e810 # v1.2.2
+        with:
+          env: |
+            SHELL_DIR=${{ env.SHELL_DIR }}
+          run: |
+            sudo ln -s "$RUNNER_TOOL_CACHE/$SHELL_DIR/nix" /nix
+            export TMPDIR="$HOME/tmp"
+            mkdir -p "$TMPDIR"
+            source "$RUNNER_TOOL_CACHE/$SHELL_DIR/env.sh"
+            scripts/deps.sh upgrade pins
+            cargo clippy --workspace --all-targets -- -D warnings
+            # Includes the differential tests against Python Beancount.
+            cargo nextest run --workspace
+            cargo test --workspace --doc
+            (cd android && ./gradlew --no-daemon :app:assembleDebug :app:testDebugUnitTest)

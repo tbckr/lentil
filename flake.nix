@@ -96,8 +96,11 @@
                   pkgs.cargo-deny
                   pkgs.cargo-machete
                   pkgs.osv-scanner
-                  # Reads osv-scanner's report in scripts/scan.sh.
+                  # Reads osv-scanner's report in scripts/scan.sh and cargo's
+                  # metadata in scripts/deps.sh.
                   pkgs.jq
+                  # Fetches the Maven metadata in scripts/deps.sh.
+                  pkgs.curl
                   pkgs.nixfmt
                   # Checks the GitHub workflows.
                   pkgs.actionlint
