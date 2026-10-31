@@ -271,25 +271,11 @@ fn queue_item(config: &Config, txn: &Txn) -> QueueItem {
     }
 }
 
-/// The index of the source posting: in a run file under
-/// `imports/<source-id>/`, the posting on that source's account; elsewhere
-/// the first posting on any source account.
+/// The index of the source posting (`Config::is_source_posting`).
 fn source_posting(config: &Config, txn: &Txn) -> Option<usize> {
-    let run_source = txn
-        .file
-        .strip_prefix("imports/")
-        .and_then(|rest| rest.split('/').next())
-        .and_then(|id| config.source(id));
-    match run_source {
-        Some(source) => txn
-            .postings
-            .iter()
-            .position(|p| p.account == source.account),
-        None => txn
-            .postings
-            .iter()
-            .position(|p| config.is_source_account(&p.account)),
-    }
+    txn.postings
+        .iter()
+        .position(|p| config.is_source_posting(&txn.file, &p.account))
 }
 
 fn open_accounts(ledger: &Ledger) -> Vec<String> {
