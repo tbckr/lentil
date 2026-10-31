@@ -971,6 +971,7 @@ dependencies = [
  "git2",
  "jiff",
  "lentil-core",
+ "tempfile",
  "thiserror",
  "uniffi",
 ]
