@@ -212,6 +212,12 @@
         }
       );
 
+      # Adds pkgs.lentil for NixOS configurations. It hands out the package
+      # above, built against this flake's nixpkgs from flake.lock.
+      overlays.default = final: _prev: {
+        lentil = self.packages.${final.stdenv.hostPlatform.system}.default;
+      };
+
       # CI's `nix flake check` builds the package through this.
       checks = forAllSystems (pkgs: {
         inherit (self.packages.${pkgs.stdenv.hostPlatform.system}) lentil;
