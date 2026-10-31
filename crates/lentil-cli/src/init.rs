@@ -5,7 +5,6 @@ use std::process::ExitCode;
 
 use lentil_core::config::CONFIG_FILE;
 use lentil_core::layout::{self, InitOptions};
-use lentil_core::snapshot::Snapshot;
 use lentil_core::sync::git::Git2Backend;
 use lentil_core::sync::{Credentials, ThreadSleeper, Work, run_sync};
 use lentil_core::validate::Role;
@@ -14,8 +13,8 @@ use crate::context;
 use crate::i18n::{self, Lang, Msg};
 use crate::{CliError, CliResult};
 
-/// Creates the repository files in `dir`, commits them as admin and, with a
-/// remote, uploads them.
+/// Commits the files of a new repository as admin, checks them out into `dir`
+/// and, with a remote, uploads them.
 pub fn run(lang: Lang, dir: &Path, title: &str, currency: &str, remote: Option<&str>) -> CliResult {
     let shown = dir.display().to_string();
     if dir.join(CONFIG_FILE).exists() {
@@ -30,8 +29,6 @@ pub fn run(lang: Lang, dir: &Path, title: &str, currency: &str, remote: Option<&
         title: title.to_owned(),
         currency: currency.to_owned(),
     });
-    write_files(dir, &files)?;
-
     let mut git = if dir.join(".git").exists() {
         Git2Backend::open(dir, Credentials::Default)
     } else {
@@ -62,15 +59,4 @@ pub fn run(lang: Lang, dir: &Path, title: &str, currency: &str, remote: Option<&
         println!("{}", i18n::msg(lang, Msg::InitPushed, &[("remote", url)]));
     }
     Ok(ExitCode::SUCCESS)
-}
-
-fn write_files(dir: &Path, files: &Snapshot) -> Result<(), CliError> {
-    for (path, content) in files.files() {
-        let target = dir.join(path);
-        if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| CliError(e.to_string()))?;
-        }
-        std::fs::write(&target, content).map_err(|e| CliError(e.to_string()))?;
-    }
-    Ok(())
 }

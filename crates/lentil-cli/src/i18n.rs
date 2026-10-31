@@ -361,6 +361,19 @@ pub fn import_error(lang: Lang, error: &ImportError) -> String {
             "Zeile {line}: fehlerhaftes CSV",
             vec![("line", line.to_string())],
         ),
+        DuplicateReference {
+            line,
+            first_line,
+            reference,
+        } => (
+            "line {line}: reference {reference} appears already in line {first}",
+            "Zeile {line}: Referenz {reference} steht bereits in Zeile {first}",
+            vec![
+                ("line", line.to_string()),
+                ("first", first_line.to_string()),
+                ("reference", reference.clone()),
+            ],
+        ),
         BalanceNotFound => (
             "the balance text was not found",
             "der Saldotext wurde nicht gefunden",
