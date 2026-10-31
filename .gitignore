@@ -1,6 +1,9 @@
 /.direnv/
 /.venv/
 /target/
+# Links that nix build creates
+/result
+/result-*
 # Android
 /android/.gradle/
 /android/.kotlin/
