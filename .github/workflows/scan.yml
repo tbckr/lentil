@@ -2,9 +2,10 @@
 # and whenever a lockfile changes. Only precise signals fail the run; the
 # checks are in scripts/scan.sh:
 #   - rust: cargo-deny's advisories check of the crates that ship, without
-#     dev-dependencies, with the ignores in deny.toml. ci.yml runs it on every
-#     change, so only the daily and manual runs run it here: they catch
-#     advisories published while main stays put.
+#     dev-dependencies, with the ignores in deny.toml; an ignore that no
+#     longer matches fails too. ci.yml runs it on every change, so only the
+#     daily and manual runs run it here: they catch advisories published
+#     while main stays put.
 #   - gradle: osv-scanner on the packages that ship in the APK
 #     (releaseRuntimeClasspath). A vulnerability needs attacker input, and
 #     build, lint and test tools only process our own code. The dependency

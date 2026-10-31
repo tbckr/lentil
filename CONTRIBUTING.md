@@ -21,8 +21,8 @@ Direct dependencies are upgraded on the project's own schedule with [`scripts/de
 - `scripts/deps.sh upgrade` raises every direct crate to the newest version its requirement allows, and every version in the Gradle catalog except the Android toolchain to the newest stable release of its major. It then rewrites the Gradle verification metadata and lockfiles from an empty Gradle user home, which builds, tests and lints the app. Run the other checks of CI afterwards.
 - Only direct dependencies are upgraded. A transitive dependency changes only where an upgraded direct dependency requires it, or to fix a vulnerability (see below). The script updates conservatively with `cargo update -p <crate>` and `uv lock --upgrade-package <package>`; `cargo update` or `uv lock --upgrade` without a package would rewrite every transitive version.
 - The exact pins are upgraded deliberately: `scripts/deps.sh upgrade pins` raises rustledger, UniFFI and Beancount to their newest release. The differential tests guard rustledger and Beancount, and the app build guards UniFFI's generated bindings.
-- Major versions, the Gradle wrapper, the Android SDK and NDK, the Rust toolchain, Python and the flake inputs stay manual steps.
-- `latest-deps.yml` runs all three upgrades every week in a gVisor sandbox without the job's token and tests the result. It commits nothing, so a failure means that the next upgrade needs work.
+- Major versions, the Gradle wrapper, the Android SDK and NDK, the Rust toolchain, the JDK, Python and the flake inputs stay manual steps. `scripts/deps.sh outdated` lists them for review, together with every direct dependency that has a newer release and the notes in code and configuration that wait for an event. Such a note says "Revisit" or "Drop this once", so that the list finds it.
+- `latest-deps.yml` runs all three upgrades every week in a gVisor sandbox without the job's token and tests the result. It commits nothing, so a failure means that the next upgrade needs work. It also puts the list of `scripts/deps.sh outdated` into its summary, which never fails.
 
 ## When a vulnerability scan fails
 
@@ -31,7 +31,7 @@ Handle a finding like a reported vulnerability: assess it, fix it through the di
 1. Assess the impact. A finding in `scan-release.yml` concerns what users run; if `scan.yml` no longer reports it, the fix is already on `main` and only needs a release.
 2. Fix it by upgrading the direct dependency. If the vulnerable package is transitive and no fixed version of the direct dependency exists yet, raise only that package, to the fixed version and not to the latest (`cargo update -p <crate> --precise <version>`, or a dependency constraint in the app's Gradle build), and report it upstream. Drop the constraint once the direct dependency ships the fix.
 3. If users are affected, cut a patch release and publish a GitHub Security Advisory.
-4. Only if the finding does not apply to Lentil, ignore it with its reason: in `[advisories]` of `deny.toml` for a crate, as an `[[IgnoredVulns]]` entry in `osv-scanner.toml` for a Gradle package.
+4. Only if the finding does not apply to Lentil, ignore it with its reason: in `[advisories]` of `deny.toml` for a crate, as an `[[IgnoredVulns]]` entry in `osv-scanner.toml` for a Gradle package. An ignore in `deny.toml` that no longer matches fails the check, so it goes once it is obsolete.
 
 ## When the malware check fails
 

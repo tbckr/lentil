@@ -5,8 +5,10 @@ all-features = true
 
 # Checked without dev-dependencies (scripts/scan.sh rust), on every change in
 # ci.yml and daily on main and the latest release: only the crates that ship
-# count (CONTRIBUTING: Vulnerability scanning). The scan of the latest release
-# applies the ignores below from main as well.
+# count (CONTRIBUTING: Vulnerability scanning). An ignore below that no longer
+# matches fails the check. The scan of the latest release applies these
+# ignores from main as well, but lets unmatched ones pass, since an older
+# release lacks the crates that later ignores are about.
 [advisories]
 version = 2
 yanked = "deny"

@@ -90,8 +90,8 @@
                   pkgs.cargo-mutants
                   # Its test suite runs against nixpkgs' rustc, whose
                   # coverage-instrumented binaries crash on exit. The shell uses the
-                  # upstream toolchain above, where coverage works. Drop this once
-                  # cache.nixos.org serves cargo-llvm-cov again.
+                  # upstream toolchain above, where coverage works.
+                  # Drop this once cache.nixos.org serves cargo-llvm-cov again.
                   (pkgs.cargo-llvm-cov.overrideAttrs { doCheck = false; })
                   pkgs.cargo-deny
                   pkgs.cargo-machete

@@ -20,7 +20,7 @@
 # developer machines and in CI too, so malware looks at every package.
 set -euo pipefail
 
-root="$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)"
+root="$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd -P)"
 check="${1:-all}"
 dir="$(realpath -- "${2:-$root}")"
 cd -- "$root"
@@ -35,9 +35,16 @@ if [[ -f osv-scanner.toml ]]; then
 fi
 
 rust() {
+  local lints=()
+  # An ignore in deny.toml that no longer matches fails, so it gets removed
+  # instead of hiding the next advisory of that ID. Not for another checkout:
+  # an older release lacks the crates that later ignores are about.
+  if [[ "$dir" == "$root" ]]; then
+    lints=(-D advisory-not-detected)
+  fi
   # --locked scans the versions in Cargo.lock instead of resolving anew.
   cargo deny --manifest-path "$dir/Cargo.toml" --config deny.toml --exclude-dev --locked \
-    check advisories
+    check "${lints[@]}" advisories
 }
 
 gradle() {
