@@ -155,8 +155,8 @@ fn id_on(plan: &ImportPlan, day: Date) -> String {
 }
 
 /// The review: confirm what a rule suggested, move two grocery payments to a
-/// new account and confirm them, leave the rest open. Changing an account and
-/// confirming are separate intents, as in the app.
+/// new account, leave the rest open. As in the app, each account change is
+/// followed by a separate `confirm`, because any edit reviews the transaction.
 fn intents(plan: &ImportPlan) -> Vec<PendingIntent> {
     let grocery = |day| Intent::SetAccount {
         id: id_on(plan, day),

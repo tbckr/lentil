@@ -93,13 +93,14 @@ class QueueViewModelTest {
         }
 
     @Test
-    fun `changing the account uses the counter posting and remembers the account`() =
+    fun `changing the account uses the counter posting, confirms and remembers the account`() =
         runTest(main.dispatcher) {
             ledger.syncError = LedgerError.Network
             val vm = viewModel()
             advanceUntilIdle()
 
             vm.changeAccount(grocery, "Expenses:Groceries")
+            assertEquals(listOf(older), vm.state.value.items)
             advanceUntilIdle()
 
             assertEquals(
@@ -109,10 +110,13 @@ class QueueViewModelTest {
                         posting = 1,
                         old = "Expenses:Uncategorized",
                         new = "Expenses:Groceries",
-                    )
+                    ),
+                    Intent.Confirm(grocery.id!!),
                 ),
                 store.state.pending.map { it.intent },
             )
+            assertEquals(listOf(older), vm.state.value.items)
+            assertEquals(2, vm.state.value.pendingCount)
             assertEquals(listOf("Expenses:Groceries"), vm.state.value.recentAccounts)
         }
 
@@ -123,28 +127,32 @@ class QueueViewModelTest {
             advanceUntilIdle()
 
             vm.changeAccount(grocery, "Expenses:Uncategorized")
+            assertEquals(listOf(grocery, older), vm.state.value.items)
             advanceUntilIdle()
 
             assertEquals(emptyList<StoredIntent>(), store.state.pending)
         }
 
     @Test
-    fun `a new account opens on the default date before it is set`() =
+    fun `a new account opens on the default date before it is set and confirmed`() =
         runTest(main.dispatcher) {
             ledger.syncError = LedgerError.Network
             val vm = viewModel()
             advanceUntilIdle()
 
             vm.openAccount(grocery, "Expenses:Garden")
+            assertEquals(listOf(older), vm.state.value.items)
             advanceUntilIdle()
 
             assertEquals(
                 listOf(
                     Intent.OpenAccount("Expenses:Garden", "2026-10-18"),
                     Intent.SetAccount(grocery.id!!, 1, "Expenses:Uncategorized", "Expenses:Garden"),
+                    Intent.Confirm(grocery.id!!),
                 ),
                 store.state.pending.map { it.intent },
             )
+            assertEquals(listOf(older), vm.state.value.items)
         }
 
     @Test

@@ -164,7 +164,7 @@ Every requirement has an ID and a target release; how it is implemented is defin
 | --- | --- | --- |
 | FR-D1 | A queue shows all open transactions, newest first. | v0.1 |
 | FR-D2 | Confirming with one gesture sets the flag to `*`. | v0.1 |
-| FR-D3 | The counter account can be changed via search and recently used accounts; a missing account can be opened directly. | v0.1 |
+| FR-D3 | The counter account can be changed via search and recently used accounts; a missing account can be opened directly. Changing the account confirms the transaction. | v0.1 |
 | FR-D4 | A duplicate, such as a transaction imported again after the bank changed its wording, can be dismissed; it stays in its file as a comment and is never imported again. | v0.1 |
 | FR-D5 | Triage works offline; changes are transferred on the next sync. | v0.1 |
 | FR-D6 | The UI syncs without using Git terminology. | v0.1 |

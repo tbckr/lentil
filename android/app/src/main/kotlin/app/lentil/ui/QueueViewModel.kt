@@ -118,21 +118,24 @@ class QueueViewModel(
         record(entry, Intent.Dismiss(id))
     }
 
-    /** Sets the counter account of [entry] to the existing [account]. */
+    /**
+     * Sets the counter account of [entry] to the existing [account] and confirms it, because any
+     * edit by the user reviews the transaction (spec section 6).
+     */
     fun changeAccount(entry: QueueEntry, account: String) {
         val change = accountChange(entry, account) ?: return
-        record(entry, change)
+        record(entry, change, Intent.Confirm(change.id))
     }
 
     /**
-     * Opens [account], dated like the oldest transaction so it covers every open one, and sets it
-     * as the counter account of [entry].
+     * Opens [account], dated like the oldest transaction so it covers every open one, sets it as
+     * the counter account of [entry] and confirms it.
      */
     fun openAccount(entry: QueueEntry, account: String) {
         val change = accountChange(entry, account) ?: return
         val date = mutableState.value.defaultOpenDate ?: LocalDate.now(clock).toString()
         mutableState.update { state -> state.copy(accounts = (state.accounts + account).sorted()) }
-        record(entry, Intent.OpenAccount(account, date), change)
+        record(entry, Intent.OpenAccount(account, date), change, Intent.Confirm(change.id))
     }
 
     fun discardConflict(key: String) {
@@ -194,11 +197,7 @@ class QueueViewModel(
         if (posting == null || old == null || account == old) return null
         settings.rememberAccount(account)
         mutableState.update { state ->
-            state.copy(
-                items =
-                    state.items.map { if (it == entry) it.copy(counterAccount = account) else it },
-                recentAccounts = settings.recentAccounts(),
-            )
+            state.copy(items = state.items - entry, recentAccounts = settings.recentAccounts())
         }
         return Intent.SetAccount(id = id, posting = posting, old = old, new = account)
     }

@@ -197,7 +197,7 @@ After a change in a text editor, `lentil check` validates the repository, and `l
 
 The app is the triage client: it shows a queue of open transactions, newest first, and one tap confirms one.
 
-- It changes a counter account through search and recently used accounts, and opens a missing account directly.
+- It changes a counter account through search and recently used accounts, and opens a missing account directly. Changing the account confirms the transaction.
 - It dismisses a duplicate, for example a transaction imported again after the bank changed its wording. The transaction stays in its file as a comment and is never imported again.
 - It works offline, keeps your changes on the device and syncs them later, without Git terms in its UI.
 - It needs Android 13 or newer on an arm64 device, and a remote it can reach over HTTPS with a user name and an access token. The token stays in the device's keystore.
