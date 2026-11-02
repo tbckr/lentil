@@ -283,6 +283,15 @@ impl Rules {
         Ok(())
     }
 
+    /// The 1-based position and the account of each rule that sets one, in
+    /// file order.
+    pub fn accounts(&self) -> impl Iterator<Item = (usize, &str)> {
+        self.rules
+            .iter()
+            .enumerate()
+            .filter_map(|(i, r)| Some((i + 1, r.account.as_deref()?)))
+    }
+
     /// Number of rules.
     #[must_use]
     pub fn len(&self) -> usize {

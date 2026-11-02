@@ -4,7 +4,7 @@
 //! messages into text. Templates use `{name}` placeholders.
 
 use lentil_core::finding::{Finding, FindingCode, Severity};
-use lentil_core::import::{ImportError, MappingError, RulesError};
+use lentil_core::import::{ImportError, InputProblem, MappingError, RulesError};
 use lentil_core::intent::ConflictCode;
 use lentil_core::sync::GitError;
 
@@ -51,6 +51,7 @@ pub enum Msg {
     MappingMissing,
     MappingInvalid,
     RulesInvalid,
+    RuleAccountNotOpen,
     ExportUnreadable,
     ReadOnly,
     Blocked,
@@ -137,6 +138,12 @@ pub fn text(lang: Lang, msg: Msg) -> &'static str {
         (MappingInvalid, De) => "Mapping-Datei {path} ist ungültig: {detail}",
         (RulesInvalid, En) => "rules.toml is invalid: {detail}",
         (RulesInvalid, De) => "rules.toml ist ungültig: {detail}",
+        (RuleAccountNotOpen, En) => {
+            "rules.toml: rule {rule} books to {account}, which is not open today."
+        }
+        (RuleAccountNotOpen, De) => {
+            "rules.toml: Regel {rule} bucht auf {account}, das heute nicht eröffnet ist."
+        }
         (ExportUnreadable, En) => "Cannot read the export: {detail}",
         (ExportUnreadable, De) => "Der Export lässt sich nicht lesen: {detail}",
         (ReadOnly, En) => "The repository is read-only for this command:",
@@ -593,6 +600,28 @@ pub fn mapping_error(lang: Lang, error: &MappingError) -> String {
     };
     let args: Vec<(&str, &str)> = args.iter().map(|(k, v)| (*k, v.as_str())).collect();
     fill(template, &args)
+}
+
+/// A problem with `rules.toml` or a mapping file, naming the file.
+pub fn input_problem(lang: Lang, problem: &InputProblem) -> String {
+    match problem {
+        InputProblem::Rules(error) => msg(
+            lang,
+            Msg::RulesInvalid,
+            &[("detail", &rules_error(lang, error))],
+        ),
+        InputProblem::RuleAccountNotOpen { rule, account } => msg(
+            lang,
+            Msg::RuleAccountNotOpen,
+            &[("rule", &rule.to_string()), ("account", account)],
+        ),
+        InputProblem::MappingMissing(path) => msg(lang, Msg::MappingMissing, &[("path", path)]),
+        InputProblem::Mapping { path, error } => msg(
+            lang,
+            Msg::MappingInvalid,
+            &[("path", path), ("detail", &mapping_error(lang, error))],
+        ),
+    }
 }
 
 /// A conflict code as text.

@@ -83,7 +83,7 @@ enum Command {
         #[arg(long)]
         all: bool,
     },
-    /// Validate the working tree, optionally against Python Beancount.
+    /// Validate the working tree, rules.toml and the mappings, optionally against Python Beancount.
     Check {
         /// Also run the reference implementation and compare.
         #[arg(long)]

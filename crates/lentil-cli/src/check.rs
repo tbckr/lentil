@@ -1,12 +1,15 @@
-//! `lentil check` (PRD FR-A5, FR-B3, FR-B4): validates the working tree and
-//! optionally compares the result with Python Beancount's `bean-check`.
+//! `lentil check` (PRD FR-A5, FR-B3, FR-B4): validates the working tree,
+//! checks `rules.toml` and the mappings, and optionally compares the result
+//! with Python Beancount's `bean-check`.
 
 use std::collections::BTreeSet;
 use std::path::Path;
 use std::process::{Command, ExitCode};
 
+use jiff::Zoned;
 use lentil_core::config::{CONFIG_FILE, Config};
 use lentil_core::finding::{Finding, FindingCode, Severity};
+use lentil_core::import::check_inputs;
 use lentil_core::snapshot::Snapshot;
 use lentil_core::validate::{self, Context, Role};
 
@@ -25,14 +28,26 @@ pub fn run(lang: Lang, repo: Option<&Path>, reference: Option<&str>) -> CliResul
             before: None,
         },
     );
-    let blocking = validation
+    // Problems that would stop an import or `rules apply`; without a valid
+    // configuration, validation has reported that already.
+    let problems = match (&validation.config, &validation.ledger) {
+        (Some(config), Some(ledger)) => {
+            check_inputs(&snapshot, config, ledger, Zoned::now().date())
+        }
+        _ => Vec::new(),
+    };
+    let blocking_findings = validation
         .findings
         .iter()
         .filter(|f| f.is_blocking())
         .count();
-    let warnings = validation.findings.len() - blocking;
+    let warnings = validation.findings.len() - blocking_findings;
+    let blocking = blocking_findings + problems.len();
     context::print_findings(lang, &validation.findings);
-    if validation.findings.is_empty() {
+    for problem in &problems {
+        eprintln!("{}", i18n::input_problem(lang, problem));
+    }
+    if validation.findings.is_empty() && problems.is_empty() {
         println!("{}", i18n::text(lang, Msg::CheckOk));
     } else {
         println!(

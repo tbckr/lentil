@@ -5,6 +5,7 @@
 //! suggestions, the balance assertion and the run file.
 
 pub mod csv;
+pub mod inputs;
 pub mod mapping;
 pub mod plan;
 pub mod render;
@@ -14,6 +15,7 @@ use jiff::civil::Date;
 use rust_decimal::Decimal;
 
 pub use csv::read_statement;
+pub use inputs::{InputProblem, check_inputs};
 pub use mapping::{Mapping, MappingError};
 pub use plan::{
     BalanceOutcome, ImportPlan, ImportRequest, PlannedTxn, PossibleDuplicate, RunFile,

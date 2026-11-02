@@ -448,6 +448,59 @@ fn import_rejects_a_mapping_that_is_not_utf8() {
 }
 
 #[test]
+fn check_reports_broken_rules_and_mappings() {
+    let env = Env::new();
+    let repo = env.repo.to_str().unwrap();
+    ok(&env.lentil(&["init", repo, "--remote", env.remote.to_str().unwrap()]));
+    env.add_giro_source();
+    // Fails with `error` in stderr and without the all-clear in stdout.
+    let fails = |error: &str| {
+        let out = env.lentil(&["-C", repo, "check"]);
+        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "{error}");
+        assert!(stderr.contains(error), "{error}: {stderr}");
+        assert!(!stdout.contains("The ledger is valid."), "{stdout}");
+        stdout
+    };
+
+    env.append(
+        "rules.toml",
+        "\n[[rule]]\nmatch = { purpose = \"(?i)garden\" }\naccount = \"Expenses:Garden\"\n",
+    );
+    let stdout = fails("rules.toml: rule 2 books to Expenses:Garden, which is not open today.");
+    assert!(stdout.contains("1 errors, 0 warnings."), "{stdout}");
+
+    std::fs::write(
+        env.repo.join("rules.toml"),
+        "[[rule]]\nmatch = { source = \"girro\", purpose = \"x\" }\npayee = \"X\"\n",
+    )
+    .unwrap();
+    fails("rules.toml is invalid: rule 1 names the source \"girro\"");
+
+    std::fs::write(
+        env.repo.join("rules.toml"),
+        b"# Regel f\xfcr die B\xe4ckerei\n",
+    )
+    .unwrap();
+    fails("rules.toml is invalid: the file is not UTF-8 text");
+
+    std::fs::write(env.repo.join("rules.toml"), "").unwrap();
+    std::fs::write(
+        env.repo.join("sources/giro.toml"),
+        MAPPING.replace("decimal = \",\"", "decimal = \"1\""),
+    )
+    .unwrap();
+    fails("Mapping file sources/giro.toml is invalid: decimal must not be a digit or sign");
+
+    std::fs::remove_file(env.repo.join("sources/giro.toml")).unwrap();
+    fails("Mapping file sources/giro.toml not found.");
+
+    std::fs::write(env.repo.join("sources/giro.toml"), MAPPING).unwrap();
+    assert!(ok(&env.lentil(&["-C", repo, "check"])).contains("The ledger is valid."));
+}
+
+#[test]
 fn check_agrees_with_bean_check() {
     let env = Env::new();
     let repo = env.repo.to_str().unwrap();

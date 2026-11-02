@@ -141,6 +141,13 @@ This walkthrough creates a ledger, adds one bank account and imports its CSV exp
    account = "Income:Salary"
    ```
 
+   Check the changes before you commit them. `lentil check` validates the ledger, `rules.toml` and the mapping, and names the file and the problem if one of them is broken:
+
+   ```console
+   $ lentil check
+   The ledger is valid.
+   ```
+
    Commit the changes and push them; leave out the push without a remote. `lentil import` only runs when the local copy has nothing left to upload.
 
    ```sh
