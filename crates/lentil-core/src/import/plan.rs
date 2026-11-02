@@ -12,10 +12,8 @@ use super::render::{render_run, run_path};
 use super::{Learned, Record, Rules, Statement};
 use crate::config::{Config, SourceConfig};
 use crate::id;
+use crate::layout::OPENING_BALANCES_ACCOUNT;
 use crate::ledger::{Ledger, Txn};
-
-/// Counter account of the opening balance transaction of a source's first run.
-pub const OPENING_BALANCE_ACCOUNT: &str = "Equity:OpeningBalances";
 
 /// Everything an import run needs.
 #[derive(Clone, Copy, Debug)]
@@ -601,7 +599,7 @@ fn plan_opening(
         reference: None,
         amount: opening,
         currency: currency.clone(),
-        counter_account: OPENING_BALANCE_ACCOUNT.to_owned(),
+        counter_account: OPENING_BALANCES_ACCOUNT.to_owned(),
         suggestion: SuggestionKind::Opening,
     })
 }
@@ -1336,7 +1334,7 @@ mapping = "sources/card.toml"
                 reference: None,
                 amount: dec("115.00"),
                 currency: "EUR".into(),
-                counter_account: OPENING_BALANCE_ACCOUNT.into(),
+                counter_account: OPENING_BALANCES_ACCOUNT.into(),
                 suggestion: SuggestionKind::Opening,
             })
         );
@@ -1480,7 +1478,7 @@ mapping = "sources/card.toml"
             &opening.id,
             OPENING_BALANCE_TEXT,
             "60.00",
-            OPENING_BALANCE_ACCOUNT,
+            OPENING_BALANCES_ACCOUNT,
         );
         let dismissed: String = block.lines().map(|l| format!("; {l}\n")).collect();
         for existing in [block, dismissed] {

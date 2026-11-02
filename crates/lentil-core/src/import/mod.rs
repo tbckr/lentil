@@ -16,8 +16,8 @@ use rust_decimal::Decimal;
 pub use csv::read_statement;
 pub use mapping::{Mapping, MappingError};
 pub use plan::{
-    BalanceOutcome, ImportPlan, ImportRequest, OPENING_BALANCE_ACCOUNT, PlannedTxn,
-    PossibleDuplicate, RunFile, SuggestionKind, UserBalance, opening_id, plan_import,
+    BalanceOutcome, ImportPlan, ImportRequest, PlannedTxn, PossibleDuplicate, RunFile,
+    SuggestionKind, UserBalance, opening_id, plan_import,
 };
 pub use rules::{Learned, Rules, RulesError};
 
