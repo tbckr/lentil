@@ -11,10 +11,11 @@ use jiff::civil::Date;
 use lentil_core::config::Config;
 use lentil_core::id;
 use lentil_core::import::{
-    BalanceOutcome, ImportPlan, ImportRequest, Mapping, Record, Rules, StatedBalance, Statement,
-    SuggestionKind, UserBalance, plan_import, read_statement,
+    BalanceOutcome, ImportPlan, ImportRequest, Mapping, Original, Record, Rules, StatedBalance,
+    Statement, SuggestionKind, UserBalance, plan_import, read_statement,
 };
 use lentil_core::ledger::{self, Ledger};
+use lentil_core::reapply::{self, ReapplyFields, ReapplyOptions};
 use lentil_core::snapshot::Snapshot;
 use rust_decimal::Decimal;
 
@@ -131,8 +132,10 @@ impl Repo {
         })
     }
 
-    /// Adds the run file and checks that the ledger loads without errors and
-    /// that every balance assertion holds.
+    /// Adds the run file and checks that the ledger loads without errors,
+    /// that every balance assertion holds, and that re-applying the rules
+    /// changes nothing, because they match the written run as they matched
+    /// the export.
     fn assert_loads(&self, plan: &ImportPlan) {
         let run = plan.run_file.as_ref().unwrap();
         let mut snapshot = self.snapshot.clone();
@@ -144,6 +147,26 @@ impl Repo {
             ledger.balance_failures.is_empty(),
             "{:?}",
             ledger.balance_failures
+        );
+        let source = &self.config.run_source(&run.path).unwrap().id;
+        for planned in &plan.transactions {
+            let written = ledger.find(&planned.id).unwrap();
+            let found = self.rules.suggest(source, &Original::from(written));
+            assert_eq!(
+                found.payee.or(planned.counterparty.as_deref()),
+                planned.payee.as_deref()
+            );
+            if planned.suggestion == SuggestionKind::Rule {
+                assert_eq!(found.account, Some(planned.counter_account.as_str()));
+            }
+        }
+        let all = ReapplyOptions {
+            reviewed: true,
+            fields: ReapplyFields::Both,
+        };
+        assert_eq!(
+            reapply::plan(&ledger, &self.config, &self.rules, &all),
+            Vec::new()
         );
     }
 }

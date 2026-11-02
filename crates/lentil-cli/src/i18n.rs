@@ -78,6 +78,19 @@ pub enum Msg {
     DuplicateExisting,
     PromptImportAnyway,
     DuplicateSkipped,
+    RulesChanged,
+    RulesWouldChange,
+    RulesTransaction,
+    RulesChange,
+    RulesSkipped,
+    RulesWouldSkip,
+    RulesConflict,
+    RulesNothing,
+    RulesWouldBlock,
+    RulesDryRun,
+    FieldPayee,
+    FieldAccount,
+    NoPayee,
     StatusOpen,
     StatusOpenMore,
     StatusFailed,
@@ -198,6 +211,33 @@ pub fn text(lang: Lang, msg: Msg) -> &'static str {
         (PromptImportAnyway, De) => "Die neue trotzdem importieren? [j/N] ",
         (DuplicateSkipped, En) => "{count} possible duplicates not imported.",
         (DuplicateSkipped, De) => "{count} mögliche Duplikate nicht importiert.",
+        (RulesChanged, En) => "The rules changed these transactions ({counts}):",
+        (RulesChanged, De) => "Die Regeln haben diese Buchungen geändert ({counts}):",
+        (RulesWouldChange, En) => "The rules would change these transactions ({counts}):",
+        (RulesWouldChange, De) => "Die Regeln würden diese Buchungen ändern ({counts}):",
+        (RulesTransaction, En | De) => "  {date} {text}  ({file}:{line})",
+        (RulesChange, En | De) => "    {field}: {old} → {new}",
+        (RulesSkipped, En) => "These changes were skipped ({count}):",
+        (RulesSkipped, De) => "Diese Änderungen wurden übersprungen ({count}):",
+        (RulesWouldSkip, En) => "These changes would be skipped ({count}):",
+        (RulesWouldSkip, De) => "Diese Änderungen würden übersprungen ({count}):",
+        (RulesConflict, En | De) => "    {field}: {old} → {new}: {reason}",
+        (RulesNothing, En) => "The rules change nothing.",
+        (RulesNothing, De) => "Die Regeln ändern nichts.",
+        (RulesWouldBlock, En) => {
+            "A real run would save nothing, because the result would be invalid:"
+        }
+        (RulesWouldBlock, De) => {
+            "Ein echter Lauf würde nichts speichern, weil das Ergebnis ungültig wäre:"
+        }
+        (RulesDryRun, En) => "Dry run on the local files: nothing was saved.",
+        (RulesDryRun, De) => "Probelauf mit den lokalen Dateien: Nichts wurde gespeichert.",
+        (FieldPayee, En) => "payee",
+        (FieldPayee, De) => "Empfänger",
+        (FieldAccount, En) => "account",
+        (FieldAccount, De) => "Konto",
+        (NoPayee, En) => "(none)",
+        (NoPayee, De) => "(keiner)",
         (StatusOpen, En) => "Open transactions: {count}",
         (StatusOpen, De) => "Offene Buchungen: {count}",
         (StatusOpenMore, En) => "  … and {count} more",
@@ -441,7 +481,6 @@ pub fn rules_error(lang: Lang, error: &RulesError) -> String {
 }
 
 /// A conflict code as text.
-#[allow(dead_code)] // The CLI imports but does not replay editor intents yet.
 pub fn conflict(lang: Lang, code: ConflictCode) -> &'static str {
     use ConflictCode::*;
     use Lang::{De, En};

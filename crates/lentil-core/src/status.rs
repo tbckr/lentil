@@ -108,7 +108,7 @@ pub fn status(config: &Config, ledger: &Ledger, snapshot: &Snapshot) -> Status {
 }
 
 /// Payee and narration as `payee | narration`, or whichever is not empty.
-fn display_text(payee: Option<&str>, narration: &str) -> String {
+pub(crate) fn display_text(payee: Option<&str>, narration: &str) -> String {
     match payee.map(str::trim).filter(|p| !p.is_empty()) {
         Some(payee) if !narration.trim().is_empty() => format!("{payee} | {narration}"),
         Some(payee) => payee.to_owned(),

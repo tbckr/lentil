@@ -3,7 +3,6 @@
 use std::path::Path;
 use std::process::ExitCode;
 
-use lentil_core::config::{CONFIG_FILE, Config};
 use lentil_core::finding::Finding;
 use lentil_core::finding::FindingCode;
 use lentil_core::ledger;
@@ -20,13 +19,7 @@ const SHOWN: usize = 20;
 pub fn run(lang: Lang, repo: Option<&Path>, all: bool) -> CliResult {
     let root = context::find_root(lang, repo)?;
     let snapshot = Snapshot::from_dir(&root).map_err(|e| CliError(e.to_string()))?;
-    let config = Config::parse(snapshot.text(CONFIG_FILE).unwrap_or_default()).map_err(|e| {
-        CliError(i18n::msg(
-            lang,
-            Msg::ConfigMissing,
-            &[("detail", &e.to_string())],
-        ))
-    })?;
+    let config = context::config(lang, &snapshot)?;
     let ledger = ledger::load(&snapshot, &config.main_file);
     let report = status::status(&config, &ledger, &snapshot);
 

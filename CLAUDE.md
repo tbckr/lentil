@@ -11,8 +11,8 @@ Lentil has a first, unreleased draft of v0.1 next to its design documents:
 - `CONTRIBUTING.md`: engineering standards for testing, linting, dependencies, CI and releases.
 - `README.md`: short overview with links to the documents above and the non-goals. When a non-goal changes in the PRD, change the README too.
 - `flake.nix`: the Nix development shell, the only source of development tools, and the `lentil` package of the CLI, built with crane. Rust is pinned in `rust-toolchain.toml`, Python Beancount in `pyproject.toml` and `uv.lock`.
-- `crates/lentil-core`: all logic, on rustledger. Everything works on a `Snapshot` (repository files in memory): `ledger` indexes a snapshot with exact byte spans, `intent` replays edit intents, `validate` checks a state and a role's changes, `import` plans CSV import runs, `sync` runs the fetch–replay–validate–commit–push loop on libgit2.
-- `crates/lentil-cli`: the `lentil` binary (`init`, `import`, `status`, `check`); its messages come from a catalog in `i18n.rs`, English and German.
+- `crates/lentil-core`: all logic, on rustledger. Everything works on a `Snapshot` (repository files in memory): `ledger` indexes a snapshot with exact byte spans, `intent` replays edit intents, `validate` checks a state and a role's changes, `import` plans CSV import runs, `reapply` re-applies the rules to imported transactions as editor intents, `sync` runs the fetch–replay–validate–commit–push loop on libgit2.
+- `crates/lentil-cli`: the `lentil` binary (`init`, `import`, `rules apply`, `status`, `check`); its messages come from a catalog in `i18n.rs`, English and German.
 - `crates/lentil-ffi`: UniFFI bindings of the core for the Android app.
 - `android/`: the Kotlin and Compose triage app. It holds no finance logic: pending intents live in a JSON file in app storage and the core replays them. `build-logic` runs cargo-ndk and uniffi-bindgen through AGP's Variant API; versions, including the NDK, live in `gradle/libs.versions.toml`, which the flake reads.
 - `testdata/`: synthetic bank exports and their mappings.
@@ -62,7 +62,7 @@ Every development tool comes from the flake's development shell, Python packages
 
 There is no server. A Git repository of standard Beancount files is the single source of truth, and every client works on its own clone.
 
-- **Clients:** the CLI handles `init`, CSV import, `status`, `check`, `prices`, `export tax` and `adopt`. The Android app handles triage and manual capture. Fava or rustfava is the read-only desktop view. An own web UI (`lentil serve`) and a Tauri app wait until Fava plus the CLI demonstrably fall short.
+- **Clients:** the CLI handles `init`, CSV import, re-applying rules (`rules apply`), `status`, `check`, `prices`, `export tax` and `adopt`. The Android app handles triage and manual capture. Fava or rustfava is the read-only desktop view. An own web UI (`lentil serve`) and a Tauri app wait until Fava plus the CLI demonstrably fall short.
 - **One core:** all clients compute with the same core, which is rustledger pinned to an exact version (GPL-3.0-only). The spec itself does not depend on any core library. If a ledger uses anything outside the supported profile (SPEC §14), the client treats the repository as read-only instead of computing it approximately. Git runs inside the core too, so the CLI and the Android app share one sync implementation. The Android app holds no finance logic; it keeps its pending intents in its own storage and hands them to the core for replay. UniFFI generates the Kotlin bindings to the core.
 - **Roles and write areas (§7):**
   - Importers only create new files (`imports/<source-id>/`, later `prices/`).

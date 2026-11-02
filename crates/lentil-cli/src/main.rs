@@ -1,4 +1,5 @@
-//! The `lentil` command line client: `init`, `import`, `status` and `check`.
+//! The `lentil` command line client: `init`, `import`, `rules apply`, `status`
+//! and `check`.
 
 mod check;
 mod context;
@@ -6,13 +7,15 @@ mod i18n;
 mod import;
 mod init;
 mod prompt;
+mod rules;
 mod status;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use jiff::civil::Date;
+use lentil_core::reapply::{ReapplyFields, ReapplyOptions};
 
 use crate::i18n::Lang;
 
@@ -69,6 +72,11 @@ enum Command {
         #[arg(long, hide = true)]
         run_date: Option<Date>,
     },
+    /// Work with the rules in rules.toml.
+    Rules {
+        #[command(subcommand)]
+        action: RulesAction,
+    },
     /// List open transactions, failed balance checks and unchecked imports.
     Status {
         /// List every open transaction.
@@ -84,6 +92,35 @@ enum Command {
         #[arg(long, default_value = "bean-check")]
         bean_check: String,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum RulesAction {
+    /// Set the payee and the counter account of imported transactions from
+    /// the rules again; commits as editor and never confirms.
+    ///
+    /// A change that cannot be made, such as one to an account that is not
+    /// open on the transaction's date, is listed and skipped. The other
+    /// changes are saved, and the command exits with status 1.
+    Apply {
+        /// Also change reviewed transactions, not only open ones.
+        #[arg(long)]
+        reviewed: bool,
+        /// Change only this field.
+        #[arg(long, value_enum, value_name = "FIELD")]
+        only: Option<OnlyField>,
+        /// List the changes the rules would make to the local files,
+        /// without saving anything; needs no Git.
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
+/// The field of `rules apply --only`.
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum OnlyField {
+    Payee,
+    Account,
 }
 
 fn main() -> ExitCode {
@@ -120,6 +157,26 @@ fn main() -> ExitCode {
                 yes,
                 run_date,
             },
+        ),
+        Command::Rules {
+            action:
+                RulesAction::Apply {
+                    reviewed,
+                    only,
+                    dry_run,
+                },
+        } => rules::apply(
+            lang,
+            cli.repo.as_deref(),
+            ReapplyOptions {
+                reviewed,
+                fields: match only {
+                    None => ReapplyFields::Both,
+                    Some(OnlyField::Payee) => ReapplyFields::PayeeOnly,
+                    Some(OnlyField::Account) => ReapplyFields::AccountOnly,
+                },
+            },
+            dry_run,
         ),
         Command::Status { all } => status::run(lang, cli.repo.as_deref(), all),
         Command::Check {

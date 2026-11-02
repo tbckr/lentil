@@ -131,7 +131,7 @@ Review state lives only in the standard transaction flag, so any Beancount tool 
 | Flag | Meaning | Set by |
 | --- | --- | --- |
 | `!` | Open: needs review | Importers, on every transaction they write |
-| `*` | Reviewed | Editors, through `confirm` or any other edit by the user; manual entries start as `*` |
+| `*` | Reviewed | Editors, through `confirm` or any other edit by the user; re-applied rules leave the flag as it is (section 16); manual entries start as `*` |
 
 - Importers MUST write `!`. Editors MUST NOT set `!` back once a transaction is `*`, except through an explicit user action.
 - The review queue is the set of active transactions with flag `!`, across all files.
@@ -145,7 +145,7 @@ Every client acts in one of three roles, and each role may only touch its own ar
 | Role | Used by | May create | May change | MUST NOT |
 | --- | --- | --- | --- | --- |
 | Importer | CLI import; later a bot | New run files under `imports/<source-id>/`; price files under `prices/` (v1); `status/<bot-id>.json` | Nothing that already exists | Change, move or remove existing transactions |
-| Editor | Android; a local web UI if built | Files under `manual/<device-id>/`, including balance snapshots (section 9); `open` directives in `accounts.beancount` | Flag, payee, narration, tags, links, metadata other than `lentil_id`, `lentil_ref` and the original fields (section 5), and the account of postings that are not on a source account | Change dates, a source posting, `lentil_id`, `lentil_ref` or an original field; move a posting onto a source account; delete transactions; write manual transactions or pads that post to a source account |
+| Editor | Android; CLI `rules apply`; a local web UI if built | Files under `manual/<device-id>/`, including balance snapshots (section 9); `open` directives in `accounts.beancount` | Flag, payee, narration, tags, links, metadata other than `lentil_id`, `lentil_ref` and the original fields (section 5), and the account of postings that are not on a source account | Change dates, a source posting, `lentil_id`, `lentil_ref` or an original field; move a posting onto a source account; delete transactions; write manual transactions or pads that post to a source account |
 | Admin | CLI (`init`, `adopt`, config commands) | Anything | Anything | Break any rule of this spec in the resulting state |
 
 - Every posting on a source account is a source posting. Editors never move a posting onto a source account, and suggestions never name one (section 16), so each side of a transfer between two source accounts stays a transaction of its own (section 8).
@@ -440,6 +440,8 @@ payee = "City Utilities"
 - Regular expressions use RE2 syntax without lookaround, so implementations in different languages behave the same.
 - Rules are evaluated in file order. For each field, the first matching rule that sets it wins, so a payee rule and a later account rule can both apply to one transaction (PRD: FR-C18).
 - The importer takes the payee from a rule, otherwise from the counterparty. It takes the account from a rule, otherwise from a learned suggestion, and only then uses `fallback_account`.
+- A client MAY re-apply the rules to transactions already imported (PRD: FR-C19). It acts as editor (section 7) and writes only `set-payee` and `set-account` operations (section 10), so the flag stays as it is. It considers open (`!`) and reviewed (`*`) active transactions with a `lentil_id` in the run files of configured sources, except a source's opening transaction (section 8), and matches `source` against the run file's source. It SHOULD change reviewed transactions only when the user asks for it.
+- When re-applying, a field changes only if a rule sets it to a different value, and the account only if exactly one posting of the transaction is not on a source account. A change whose operation conflicts is shown to the user and left out; the others are committed.
 - Learned suggestions are computed from reviewed (`*`) transactions. Their input is the original text (section 5) and the source account, never payee or narration, which users may edit (PRD: FR-C8). They never suggest a source account, and they need no file of their own, so any client can recompute them.
 - In v0.1 only the admin role edits `rules.toml`. In v1 editors add rules through an `add-rule` operation (PRD: FR-C11).
 

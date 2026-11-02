@@ -44,7 +44,7 @@ The v0.1 draft covers the core loop of import and mobile triage; the features fo
 
 | Release | Content |
 | --- | --- |
-| v0.1 (draft) | `lentil init`, `import`, `status` and `check`; the Android app confirms transactions, changes the counter account, opens a missing account and dismisses duplicates; Fava as the read-only view |
+| v0.1 (draft) | `lentil init`, `import`, `rules apply`, `status` and `check`; the Android app confirms transactions, changes the counter account, opens a missing account and dismisses duplicates; Fava as the read-only view |
 | v1 | Cash and one-off entries on Android, a balance overview, month-end close, tax export, foreign currencies, conflict resolution in the app, adopting an existing ledger, drafting a CSV mapping from a sample export |
 | Later | Automatic bank access via FinTS, an own web UI, a desktop app |
 
@@ -182,6 +182,8 @@ This walkthrough creates a ledger, adds one bank account and imports its CSV exp
 
 4. Review the open transactions in the Android app, or in a text editor by setting their flag to `*`. `lentil status` lists what is still open: unreviewed transactions, failing balance assertions and imports without a balance check. `fava main.beancount` shows the ledger, with sidebar links to the open transactions and the uncategorized expenses.
 
+   A rule you add later also applies to transactions already imported. `lentil rules apply` sets the payee and the account of the open ones and commits that; it never confirms a transaction. `--reviewed` includes the reviewed ones, and `--only payee` or `--only account` limits it to one field. `--dry-run` lists the changes on the local files without saving anything, so you can try a rule before you commit it. A change that cannot be made, such as one to an account that is not open yet, is listed and skipped, and the command exits with status 1.
+
 After a change in a text editor, `lentil check` validates the repository, and `lentil check --reference` also compares it with Python Beancount's `bean-check`. The README that `lentil init` writes into the repository explains its layout and roles and how to add further sources.
 
 ## Example
@@ -191,7 +193,7 @@ After a change in a text editor, `lentil check` validates the repository, and `l
 - [`imports/checking/2026/20261101T080000Z.beancount`](examples/ledger/imports/checking/2026/20261101T080000Z.beancount) is the import run: the opening balance, reviewed transactions with `*`, open ones with `!` and the balance assertion.
 - The review left an account change behind, and the `open` directive it needed at the end of `accounts.beancount`.
 - [`examples/checking.csv`](examples/checking.csv) is the bank export it came from, and `sources/checking.toml` its mapping.
-- `fava examples/ledger/main.beancount` shows it in Fava, as does `just fava` in the development shell. `lentil status` and `lentil check` work in the directory too. `lentil import` does not, because the ledger is not a Git repository of its own.
+- `fava examples/ledger/main.beancount` shows it in Fava, as does `just fava` in the development shell. `lentil status`, `lentil check` and `lentil rules apply --dry-run` work in the directory too. `lentil import` and `lentil rules apply` without `--dry-run` do not, because the ledger is not a Git repository of its own.
 
 ## Android app
 

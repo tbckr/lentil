@@ -4,7 +4,8 @@
 //! [`Git2Backend`] directly; the multi-writer tests let several clients with
 //! pending intents push to one remote, interleaved so that pushes are
 //! rejected and retried, and fail on lost intents, duplicate transactions or
-//! non-linear history (CONTRIBUTING: Testing).
+//! non-linear history (CONTRIBUTING: Testing). `lentil rules apply` syncs
+//! through the same loop.
 
 // clippy.toml allows unwrap only inside `#[test]` functions; the helpers here
 // are test code too.
@@ -16,13 +17,15 @@ use std::time::Duration;
 
 use git2::Repository;
 use lentil_core::finding::{FindingCode, Severity};
+use lentil_core::import::RulesError;
 use lentil_core::intent::{Conflict, ConflictCode, Intent, Outcome, PendingIntent};
 use lentil_core::ledger::{self, Ledger};
+use lentil_core::reapply::{self, Field, ReapplyError, ReapplyOptions, RuleChange};
 use lentil_core::snapshot::Snapshot;
 use lentil_core::sync::git::Git2Backend;
 use lentil_core::sync::{
     Author, CommitId, Credentials, EditorSync, GitBackend, GitError, Identity, MAX_ATTEMPTS,
-    PushOutcome, Sleeper, SyncError, Work, run_sync, sync_intents,
+    PushOutcome, Sleeper, SyncError, SyncOutcome, Work, run_sync, sync_intents,
 };
 use lentil_core::validate::Role;
 use tempfile::TempDir;
@@ -1443,4 +1446,129 @@ fn a_local_repository_syncs_without_a_remote() {
         head.message().unwrap(),
         message("editor", "confirm 1", "aaaaaaaa")
     );
+}
+
+// ---------------------------------------------------------------------------
+// Re-applying rules (spec section 16)
+// ---------------------------------------------------------------------------
+
+const RULES: &str = r#"
+[[rule]]
+match = { counterparty = "^CORNER GROCERY$" }
+payee = "Grocer"
+account = "Expenses:Food:Groceries"
+
+[[rule]]
+match = { counterparty = "^BAKERY$" }
+account = "Expenses:Household"
+"#;
+
+fn with_rules(rules: &str) -> Snapshot {
+    let mut files = fixture();
+    files.insert("rules.toml", rules);
+    files
+}
+
+fn reapply(
+    client: &mut Client,
+    git: &mut dyn GitBackend,
+) -> Result<SyncOutcome<Vec<(RuleChange, Outcome)>>, ReapplyError> {
+    reapply::sync(
+        git,
+        &mut client.sleeper,
+        &client.identity,
+        &client.author,
+        &ReapplyOptions::default(),
+    )
+}
+
+#[test]
+fn rules_apply_plans_again_on_the_state_it_pushes_to() {
+    let remote = Remote::with(&with_rules(RULES));
+    let mut a = Client::new("aaaaaaaa", "Alice");
+    let mut b = Client::new("bbbbbbbb", "Bob");
+    // Meanwhile, B's app moves the bakery elsewhere and confirms it.
+    let intents_b = [
+        set_account("b1", 3, "Expenses:Food:Groceries"),
+        confirm("b2", 3),
+    ];
+
+    let mut git_b = b.clone_from(&remote);
+    let mut result_b = None;
+    let result_a = {
+        let mut git_a = Interleaved::new(
+            a.clone_from(&remote),
+            vec![Box::new(|| result_b = Some(b.sync(&mut git_b, &intents_b)))],
+        );
+        reapply(&mut a, &mut git_a).unwrap()
+    };
+    assert!(result_b.unwrap().unwrap().commit.is_some());
+
+    // The second attempt no longer plans the reviewed bakery, so nothing
+    // conflicts with B's decision.
+    let changes: Vec<(&str, Field, &Outcome)> = result_a
+        .result
+        .iter()
+        .map(|(c, outcome)| (c.id.as_str(), c.field, outcome))
+        .collect();
+    assert_eq!(
+        changes,
+        vec![
+            (id(1), Field::Payee, &Outcome::Applied),
+            (id(1), Field::Account, &Outcome::Applied),
+        ]
+    );
+    assert_eq!(result_a.attempts, 2);
+    assert_eq!(a.sleeper.0, secs(&[1]));
+
+    let history = remote.history();
+    assert_eq!(history.len(), 3);
+    assert_eq!(
+        history[2].message,
+        message("editor", "set-account 1, set-payee 1", "aaaaaaaa")
+    );
+    assert_eq!(Some(history[2].id.clone()), result_a.commit);
+    let ledger = load(&remote.snapshot());
+    let grocery = ledger.find(id(1)).unwrap();
+    assert_eq!(grocery.payee.as_deref(), Some("Grocer"));
+    assert_eq!(counter_account(&ledger, 1), "Expenses:Food:Groceries");
+    assert_eq!(flag(&ledger, 1), '!');
+    assert_eq!(counter_account(&ledger, 3), "Expenses:Food:Groceries");
+    assert_eq!(flag(&ledger, 3), '*');
+
+    // Everything is applied now: a second run commits nothing.
+    let mut git_a = Git2Backend::open(&a.path(), Credentials::Default).unwrap();
+    let again = reapply(&mut a, &mut git_a).unwrap();
+    assert_eq!((again.result, again.commit), (Vec::new(), None));
+    assert_eq!(remote.history().len(), 3);
+}
+
+#[test]
+fn rules_apply_stops_on_invalid_rules() {
+    let remote = Remote::with(&with_rules(
+        "[[rule]]\nmatch = { counterparty = \"^BAKERY$\" }\naccount = \"Assets:Bank:Giro\"\n",
+    ));
+    let mut a = Client::new("aaaaaaaa", "Alice");
+    let mut git_a = a.clone_from(&remote);
+    let result = reapply(&mut a, &mut git_a);
+    assert!(
+        matches!(
+            result,
+            Err(ReapplyError::Rules(RulesError::SourceAccount(ref account)))
+                if account == "Assets:Bank:Giro"
+        ),
+        "{result:?}"
+    );
+
+    assert_eq!(remote.history().len(), 1);
+
+    let remote = Remote::with(&with_rules("[[rule]]\ndesc = \"x\"\n"));
+    let mut b = Client::new("bbbbbbbb", "Bob");
+    let mut git_b = b.clone_from(&remote);
+    let result = reapply(&mut b, &mut git_b);
+    assert!(
+        matches!(result, Err(ReapplyError::Rules(RulesError::Syntax(_)))),
+        "{result:?}"
+    );
+    assert_eq!(remote.history().len(), 1);
 }

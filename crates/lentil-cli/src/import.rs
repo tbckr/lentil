@@ -14,7 +14,6 @@ use lentil_core::config::{Config, SourceConfig};
 use lentil_core::finding::FindingCode;
 use lentil_core::import::csv::read_statement;
 use lentil_core::import::plan::{BalanceOutcome, ImportPlan, ImportRequest, UserBalance};
-use lentil_core::import::rules::RULES_FILE;
 use lentil_core::import::{Mapping, Rules, Statement, plan_import};
 use lentil_core::ledger;
 use lentil_core::snapshot::Snapshot;
@@ -205,16 +204,7 @@ impl Inputs {
         source_id: &str,
         export: &[u8],
     ) -> Result<Self, CliError> {
-        let config_text = snapshot
-            .text(lentil_core::config::CONFIG_FILE)
-            .unwrap_or_default();
-        let config = Config::parse(config_text).map_err(|e| {
-            CliError(i18n::msg(
-                lang,
-                Msg::ConfigMissing,
-                &[("detail", &e.to_string())],
-            ))
-        })?;
+        let config = context::config(lang, snapshot)?;
         let source = config.source(source_id).cloned().ok_or_else(|| {
             CliError(i18n::msg(
                 lang,
@@ -237,15 +227,7 @@ impl Inputs {
                 &[("path", &mapping_path), ("detail", &e.to_string())],
             ))
         })?;
-        let rules = Rules::parse(snapshot.text(RULES_FILE).unwrap_or_default())
-            .and_then(|rules| rules.check_accounts(&config).map(|()| rules))
-            .map_err(|e| {
-                CliError(i18n::msg(
-                    lang,
-                    Msg::RulesInvalid,
-                    &[("detail", &i18n::rules_error(lang, &e))],
-                ))
-            })?;
+        let rules = context::rules(lang, snapshot, &config)?;
         let statement = read_statement(export, &mapping, &source.currency).map_err(|e| {
             CliError(i18n::msg(
                 lang,

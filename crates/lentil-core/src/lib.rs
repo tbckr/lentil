@@ -13,6 +13,7 @@ pub mod import;
 pub mod intent;
 pub mod layout;
 pub mod ledger;
+pub mod reapply;
 pub mod snapshot;
 pub mod status;
 pub mod sync;

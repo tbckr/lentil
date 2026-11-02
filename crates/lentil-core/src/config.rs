@@ -167,12 +167,18 @@ impl Config {
         self.source_for_account(account).is_some()
     }
 
+    /// The source whose run file `path` is (`imports/<source-id>/…`), if any.
+    #[must_use]
+    pub fn run_source(&self, path: &str) -> Option<&SourceConfig> {
+        let id = path.strip_prefix("imports/")?.split('/').next()?;
+        self.source(id)
+    }
+
     /// The account of the source whose run file `path` is
     /// (`imports/<source-id>/…`), if any.
     #[must_use]
     pub fn own_source_account(&self, path: &str) -> Option<&str> {
-        let id = path.strip_prefix("imports/")?.split('/').next()?;
-        self.source(id).map(|s| s.account.as_str())
+        self.run_source(path).map(|s| s.account.as_str())
     }
 }
 
@@ -231,6 +237,16 @@ currency = "EUR"
         });
         let run = "imports/giro/2026/20261020T071502Z.beancount";
         assert_eq!(config.own_source_account(run), Some("Assets:Bank:Giro"));
+        assert_eq!(
+            config
+                .run_source("imports/card/2026/20261020T071502Z.beancount")
+                .map(|s| s.id.as_str()),
+            Some("card")
+        );
+        assert_eq!(
+            config.run_source("imports/cash/2026/20261020T071502Z.beancount"),
+            None
+        );
         assert_eq!(
             config.own_source_account("manual/k7p2q9xd/2026-10.beancount"),
             None

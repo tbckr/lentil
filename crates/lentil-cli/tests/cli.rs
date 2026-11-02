@@ -121,6 +121,58 @@ impl Env {
         export
     }
 
+    /// Imports `export` into `giro` with a balance, so the run is checked.
+    fn import_giro(&self, export: &Path) {
+        ok(&self.lentil(&[
+            "-C",
+            self.repo.to_str().unwrap(),
+            "import",
+            "giro",
+            export.to_str().unwrap(),
+            "--run-date",
+            "2026-10-20",
+            "--balance",
+            "2393,83",
+            "--balance-date",
+            "2026-10-19",
+        ]));
+    }
+
+    /// The path and content of the only run file of `giro`.
+    fn giro_run(&self) -> (PathBuf, String) {
+        let runs: Vec<PathBuf> = std::fs::read_dir(self.repo.join("imports/giro/2026"))
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        let [run] = runs.as_slice() else {
+            panic!("{runs:?}")
+        };
+        let content = std::fs::read_to_string(run).unwrap();
+        (run.clone(), content)
+    }
+
+    /// Appends `text` to the repository file `path`.
+    fn append(&self, path: &str, text: &str) {
+        let old = std::fs::read_to_string(self.repo.join(path)).unwrap();
+        std::fs::write(self.repo.join(path), format!("{old}{text}")).unwrap();
+    }
+
+    /// Commits every change as the admin, by hand, and pushes it.
+    fn admin_push(&self, message: &str) {
+        self.git(&self.repo, &["commit", "-q", "-am", message]);
+        self.git(&self.repo, &["push", "-q", "origin", "main"]);
+    }
+
+    /// The commit `main` of the remote points to.
+    fn remote_head(&self) -> String {
+        self.git(&self.remote, &["rev-parse", "main"])
+    }
+
+    /// Subject and body of the remote's last commit.
+    fn last_commit(&self) -> String {
+        self.git(&self.remote, &["log", "-1", "--format=%s%n%b", "main"])
+    }
+
     fn git(&self, cwd: &Path, args: &[&str]) -> String {
         let out = Command::new("git")
             .args(args)
@@ -363,4 +415,213 @@ fn init_refuses_a_remote_with_commits() {
     ]);
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("has commits already"));
+}
+
+/// Header of the imported grocery transaction, open.
+const GROCERY: &str = "2026-10-02 ! \"Corner Grocery\" \"Card payment 4711\"\n";
+/// Header of the imported utilities transaction, open.
+const UTILITIES: &str = "2026-10-07 ! \"City Utilities\" \"Electricity 10/2026\"\n";
+
+#[test]
+fn rules_apply_sets_payees_and_accounts_as_editor() {
+    let env = Env::new();
+    let repo = env.repo.to_str().unwrap();
+    ok(&env.lentil(&["init", repo, "--remote", env.remote.to_str().unwrap()]));
+    let export = env.add_giro_source();
+    env.import_giro(&export);
+
+    // New rules after the import, and the utilities transaction reviewed.
+    env.append(
+        "rules.toml",
+        r#"
+[[rule]]
+match = { counterparty = "^Corner Grocery$" }
+payee = "Grocer"
+account = "Expenses:Food"
+
+[[rule]]
+match = { counterparty = "^City Utilities$" }
+payee = "City Power"
+"#,
+    );
+    env.append("accounts.beancount", "2000-01-01 open Expenses:Food\n");
+    let (run, content) = env.giro_run();
+    let reviewed = UTILITIES.replacen(" ! ", " * ", 1);
+    std::fs::write(&run, content.replace(UTILITIES, &reviewed)).unwrap();
+    let run = run.strip_prefix(&env.repo).unwrap().display().to_string();
+    let (_, content) = env.giro_run();
+    let line = |header: &str| {
+        content
+            .lines()
+            .position(|l| l == header.trim_end())
+            .unwrap()
+            + 1
+    };
+    let apply = |extra: &[&str]| {
+        let mut args = vec!["-C", repo, "rules", "apply"];
+        args.extend(extra);
+        env.lentil(&args)
+    };
+
+    // A dry run previews the uncommitted rules on the local files, only for
+    // open transactions, and saves nothing.
+    let before = env.remote_head();
+    let out = ok(&apply(&["--dry-run"]));
+    let grocery = format!(
+        "  2026-10-02 Corner Grocery | Card payment 4711  ({run}:{})\n",
+        line(GROCERY)
+    );
+    assert_eq!(
+        out,
+        format!(
+            "The rules would change these transactions (payee: 1, account: 1):\n{grocery}    payee: \"Corner Grocery\" → \"Grocer\"\n    account: Expenses:Uncategorized → Expenses:Food\nDry run on the local files: nothing was saved.\n"
+        )
+    );
+    assert_eq!(before, env.remote_head());
+    assert_eq!(env.giro_run().1, content);
+
+    env.admin_push("admin: new rules");
+
+    // Only the payee, as an editor commit that leaves the flag alone.
+    let out = ok(&apply(&["--only", "payee"]));
+    assert!(
+        out.starts_with("The rules changed these transactions (payee: 1):\n"),
+        "{out}"
+    );
+    let log = env.last_commit();
+    assert!(log.starts_with("editor: set-payee 1\n"), "{log}");
+    assert!(log.contains("Lentil-Role: editor\n"), "{log}");
+    assert!(log.contains("Lentil-Device: "), "{log}");
+    let (_, content) = env.giro_run();
+    assert!(
+        content.contains("2026-10-02 ! \"Grocer\" \"Card payment 4711\"\n"),
+        "{content}"
+    );
+    assert_eq!(content.matches("  Expenses:Uncategorized\n").count(), 2);
+
+    // Then the account.
+    let out = ok(&apply(&[]));
+    assert!(
+        out.starts_with("The rules changed these transactions (account: 1):\n  2026-10-02 Grocer | Card payment 4711  ("),
+        "{out}"
+    );
+    assert!(env.last_commit().starts_with("editor: set-account 1\n"));
+    let (_, content) = env.giro_run();
+    assert!(content.contains("  Expenses:Food\n"), "{content}");
+    assert_eq!(content.matches("  Expenses:Uncategorized\n").count(), 1);
+    assert!(content.contains("2026-10-02 ! \"Grocer\""), "{content}");
+
+    // A second run finds nothing and commits nothing.
+    let before = env.remote_head();
+    let out = ok(&apply(&[]));
+    assert_eq!(out, "The rules change nothing.\n");
+    assert_eq!(before, env.remote_head());
+
+    // Reviewed transactions change only with --reviewed, and stay reviewed.
+    let out = ok(&apply(&["--reviewed"]));
+    assert!(
+        out.contains("    payee: \"City Utilities\" → \"City Power\"\n"),
+        "{out}"
+    );
+    let (_, content) = env.giro_run();
+    assert!(
+        content.contains("2026-10-07 * \"City Power\" \"Electricity 10/2026\"\n"),
+        "{content}"
+    );
+
+    assert!(ok(&env.lentil(&["-C", repo, "check"])).contains("valid"));
+    let parents = env.git(&env.remote, &["log", "--format=%p", "main"]);
+    assert!(parents.lines().all(|p| !p.contains(' ')), "{parents}");
+}
+
+#[test]
+fn rules_apply_skips_conflicting_changes_and_commits_the_rest() {
+    let env = Env::new();
+    let repo = env.repo.to_str().unwrap();
+    ok(&env.lentil(&["init", repo, "--remote", env.remote.to_str().unwrap()]));
+    let export = env.add_giro_source();
+    env.import_giro(&export);
+    // `Expenses:Home` is never opened.
+    env.append(
+        "rules.toml",
+        r#"
+[[rule]]
+match = { counterparty = "^Corner Grocery$" }
+account = "Expenses:Food"
+
+[[rule]]
+match = { counterparty = "^City Utilities$" }
+account = "Expenses:Home"
+"#,
+    );
+    env.append("accounts.beancount", "2000-01-01 open Expenses:Food\n");
+    env.admin_push("admin: new rules");
+    let (run, content) = env.giro_run();
+    let run = run.strip_prefix(&env.repo).unwrap().display().to_string();
+    let line = content
+        .lines()
+        .position(|l| l == UTILITIES.trim_end())
+        .unwrap()
+        + 1;
+    let skipped = format!(
+        "  2026-10-07 City Utilities | Electricity 10/2026  ({run}:{line})\n    account: Expenses:Uncategorized → Expenses:Home: the account is not open\n"
+    );
+    let apply = |extra: &[&str]| {
+        let mut args = vec!["-C", repo, "rules", "apply"];
+        args.extend(extra);
+        let out = env.lentil(&args);
+        let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        (out.status.success(), stdout, stderr)
+    };
+
+    // The dry run already tells.
+    let (success, stdout, stderr) = apply(&["--dry-run"]);
+    assert!(!success);
+    assert!(
+        stdout.starts_with("The rules would change these transactions (account: 1):\n"),
+        "{stdout}"
+    );
+    assert_eq!(
+        stderr,
+        format!("These changes would be skipped (1):\n{skipped}")
+    );
+
+    let before = env.remote_head();
+    let (success, stdout, stderr) = apply(&[]);
+    assert!(!success);
+    assert!(
+        stdout.starts_with("The rules changed these transactions (account: 1):\n"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("    account: Expenses:Uncategorized → Expenses:Food\n"),
+        "{stdout}"
+    );
+    assert_eq!(
+        stderr,
+        format!("These changes were skipped (1):\n{skipped}")
+    );
+    assert!(env.last_commit().starts_with("editor: set-account 1\n"));
+    let count = env.git(
+        &env.remote,
+        &["rev-list", "--count", &format!("{}..main", before.trim())],
+    );
+    assert_eq!(count.trim(), "1");
+    // The account changed, the header and the flag did not.
+    let (_, content) = env.giro_run();
+    assert!(content.contains(GROCERY), "{content}");
+    assert!(content.contains(UTILITIES), "{content}");
+    assert!(content.contains("  Expenses:Food\n"), "{content}");
+
+    // Only the conflicting change is left: no commit, and still a failure.
+    let before = env.remote_head();
+    let (success, stdout, stderr) = apply(&[]);
+    assert!(!success);
+    assert_eq!(stdout, "");
+    assert_eq!(
+        stderr,
+        format!("These changes were skipped (1):\n{skipped}")
+    );
+    assert_eq!(before, env.remote_head());
 }

@@ -915,13 +915,15 @@ mapping = "sources/card.toml"
         // Quotes, backslashes and runs of whitespace pass through the run
         // file, so the written transaction learns under the record's key.
         let (counterparty, purpose) = (Some(" Café \"Zum  Eck\" "), Some("C:\\Karte\t4711"));
-        let record = rec("2026-10-18", "-4.20", counterparty, purpose);
+        let mut record = rec("2026-10-18", "-4.20", counterparty, purpose);
+        record.booking_type = Some(" Karten\\zahlung  \"girocard\" ".into());
         let first = Fixture::new(&history());
         let plan = first.plan(
             &statement(vec![record.clone()]),
             "2026-10-20",
             UserBalance::Skipped,
         );
+        let planned = plan.transactions[0].clone();
         let reviewed = plan
             .run_file
             .unwrap()
@@ -936,6 +938,19 @@ mapping = "sources/card.toml"
             .find(|t| t.date == date("2026-10-18"))
             .unwrap();
         assert_eq!(written.original_text(), Some(id::description(&record)));
+        // Rules see the written transaction as the importer saw the record.
+        assert_eq!(
+            Original::from(written),
+            Original::new(
+                planned.counterparty.as_deref(),
+                planned.purpose.as_deref(),
+                planned.booking_type.as_deref(),
+            )
+        );
+        assert_eq!(
+            Original::from(written).booking_type,
+            "Karten\\zahlung \"girocard\""
+        );
 
         let again = rec("2026-10-19", "-5.10", counterparty, purpose);
         let plan = second.plan(&statement(vec![again]), "2026-10-20", UserBalance::Skipped);

@@ -3,7 +3,8 @@
 # Rules are evaluated in file order; for each field, the first matching rule
 # that sets it wins. Without a payee from a rule, the payee is the bank's
 # counterparty. Without an account from a rule, the importer learns from
-# reviewed transactions, and only then uses fallback_account.
+# reviewed transactions, and only then uses fallback_account. `lentil rules
+# apply` applies changed rules to the open transactions already imported.
 #
 # [[rule]]
 # match = { source = "giro", counterparty = "(?i)^corner grocery" }

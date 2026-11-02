@@ -9,7 +9,7 @@ use thiserror::Error;
 
 use crate::config::Config;
 use crate::id;
-use crate::ledger::Ledger;
+use crate::ledger::{Ledger, Txn};
 
 /// Path of the rules file, relative to the repository root.
 pub const RULES_FILE: &str = "rules.toml";
@@ -71,6 +71,18 @@ impl<'a> Original<'a> {
             purpose: purpose.unwrap_or_default(),
             booking_type: booking_type.unwrap_or_default(),
         }
+    }
+}
+
+impl<'a> From<&'a Txn> for Original<'a> {
+    /// The original fields of an indexed transaction, through the same
+    /// constructor the importer uses, so rules match it as they did at import.
+    fn from(txn: &'a Txn) -> Self {
+        Self::new(
+            txn.counterparty.as_deref(),
+            txn.purpose.as_deref(),
+            txn.booking_type.as_deref(),
+        )
     }
 }
 

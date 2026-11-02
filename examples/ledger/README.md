@@ -12,7 +12,7 @@ Every file has exactly one kind of writer, and fixed include patterns in `main.b
 | `main.beancount` | Entry point: two options and five includes; never change the includes | Admin |
 | `fava.beancount` | Fava options and sidebar links | Admin |
 | `accounts.beancount` | `open`, `close` and `commodity` directives | Admin; editors append `open` directives |
-| `rules.toml` | Suggestion rules for imports | Admin |
+| `rules.toml` | Suggestion rules for imports and `lentil rules apply` | Admin |
 | `sources/<source-id>.toml` | CSV mapping of one source | Admin |
 | `imports/<source-id>/<YYYY>/<YYYYMMDDTHHMMSSZ>.beancount` | One import run | Importer |
 | `manual/<device-id>/<YYYY-MM>.beancount` | Manual entries of one device | Editor |
@@ -36,7 +36,7 @@ Review state lives only in the transaction flag.
 Every change belongs to one role, and validation rejects changes outside that role's area.
 
 - **Importer** (`lentil import`): only creates new run files under `imports/<source-id>/` and never changes existing files.
-- **Editor** (the Android app): changes the flag, payee, narration, tags, links, metadata and the counter account of existing transactions, comments out duplicates, appends `open` directives to `accounts.beancount` and writes only its own `manual/<device-id>/` files.
+- **Editor** (the Android app, `lentil rules apply`): changes the flag, payee, narration, tags, links, metadata and the counter account of existing transactions, comments out duplicates, appends `open` directives to `accounts.beancount` and writes only its own `manual/<device-id>/` files.
 - **Admin** (`lentil init`, a text editor followed by `lentil check`): may change anything, as long as the result still follows the convention.
 
 ## Protected metadata

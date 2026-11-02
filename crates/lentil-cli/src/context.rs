@@ -1,12 +1,15 @@
-//! What every command needs: the repository root, the device ID, the author,
-//! and printing findings and sync errors.
+//! What every command needs: the repository root, its configuration and
+//! rules, the device ID, the author, and printing findings and sync errors.
 
 use std::path::{Path, PathBuf};
 
-use lentil_core::config::CONFIG_FILE;
+use lentil_core::config::{CONFIG_FILE, Config, ConfigError};
 use lentil_core::env::OsRandom;
 use lentil_core::finding::Finding;
 use lentil_core::id;
+use lentil_core::import::rules::RULES_FILE;
+use lentil_core::import::{Rules, RulesError};
+use lentil_core::snapshot::Snapshot;
 use lentil_core::sync::git::Git2Backend;
 use lentil_core::sync::{Author, Identity, SyncError};
 use lentil_core::validate::Role;
@@ -62,6 +65,37 @@ fn config_dir() -> Option<PathBuf> {
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
         .map(|d| d.join("lentil"))
+}
+
+/// The `lentil.toml` of a repository state.
+pub fn config(lang: Lang, snapshot: &Snapshot) -> Result<Config, CliError> {
+    Config::parse(snapshot.text(CONFIG_FILE).unwrap_or_default())
+        .map_err(|e| config_error(lang, &e))
+}
+
+/// The `rules.toml` of a repository state, checked against its `config`.
+pub fn rules(lang: Lang, snapshot: &Snapshot, config: &Config) -> Result<Rules, CliError> {
+    Rules::parse(snapshot.text(RULES_FILE).unwrap_or_default())
+        .and_then(|rules| rules.check_accounts(config).map(|()| rules))
+        .map_err(|e| rules_error(lang, &e))
+}
+
+/// An unusable `lentil.toml` as an error.
+pub fn config_error(lang: Lang, error: &ConfigError) -> CliError {
+    CliError(i18n::msg(
+        lang,
+        Msg::ConfigMissing,
+        &[("detail", &error.to_string())],
+    ))
+}
+
+/// An unusable `rules.toml` as an error.
+pub fn rules_error(lang: Lang, error: &RulesError) -> CliError {
+    CliError(i18n::msg(
+        lang,
+        Msg::RulesInvalid,
+        &[("detail", &i18n::rules_error(lang, error))],
+    ))
 }
 
 /// The `Lentil-*` trailer values for a role.
