@@ -109,8 +109,11 @@
                   # Reads osv-scanner's report in scripts/scan.sh and cargo's
                   # metadata in scripts/deps.sh.
                   pkgs.jq
-                  # Fetches the Maven metadata in scripts/deps.sh.
-                  pkgs.curl
+                  # Fetches the Maven metadata in scripts/deps.sh. Only the
+                  # binary: the package would also hand the headers and
+                  # libraries of zlib, OpenSSL and libssh2 to the C compilers of
+                  # the crates' build scripts.
+                  (lib.getBin pkgs.curl)
                   pkgs.nixfmt
                   # Checks the GitHub workflows.
                   pkgs.actionlint
@@ -135,6 +138,11 @@
                 # uv's virtual environment.
                 UV_PYTHON = "${python}/bin/python3";
                 UV_PYTHON_DOWNLOADS = "never";
+                # libz-sys builds its own zlib, as git2 builds libgit2 and
+                # OpenSSL. Otherwise it may take the host's zlib through the
+                # host's pkg-config, whose include path then puts the host's
+                # OpenSSL headers in front of the vendored ones.
+                LIBZ_SYS_STATIC = "1";
               }
               // lib.optionalAttrs withAndroid {
                 ANDROID_HOME = sdkRoot;
