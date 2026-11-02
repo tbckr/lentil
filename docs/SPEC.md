@@ -250,10 +250,11 @@ Clients never ship text diffs; they record intents that name a transaction by ID
 | --- | --- | --- | --- | --- | --- |
 | `confirm` | id | Transaction is active | Flag becomes `*` | Editor | v0.1 |
 | `set-account` | id, posting index, old, new | Posting has account `old` and is not a source posting; `new` is open and not a source account | Account becomes `new` | Editor | v0.1 |
+| `set-payee` | id, old, new | Payee equals `old`; `old` is absent if the transaction has no payee | Payee becomes `new`; without a payee, `"<new>" ` is inserted before the narration | Editor | v0.1 |
 | `dismiss` | id | Transaction is active | Transaction is commented out in place | Editor | v0.1 |
 | `open-account` | account, date | Account is not open | `<date> open <account>` appended to `accounts.beancount` | Editor, Admin | v0.1 |
 | `add-import-run` | source, file, content | File does not exist | New run file written | Importer | v0.1 |
-| `set-payee`, `set-narration` | id, old, new | Field equals `old` | Field becomes `new` | Editor | v1 |
+| `set-narration` | id, old, new | Narration equals `old` | Narration becomes `new` | Editor | v1 |
 | `set-meta` | id, key, old, new | Key is not `lentil_id`, `lentil_ref` or an original field (section 5); value equals `old` | Value becomes `new` | Editor | v1 |
 | `add-entry` | device file, entry | File belongs to this device | Entry appended | Editor | v1 |
 | `add-snapshot` | account, date, amount | Account is a snapshot account; no balance assertion for it on that date | Balance assertion and, only if needed, a pad appended to the device's month file (section 9) | Editor | v1 |

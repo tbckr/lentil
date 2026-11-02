@@ -452,6 +452,8 @@ pub fn conflict(lang: Lang, code: ConflictCode) -> &'static str {
         (TransactionDismissed, De) => "die Buchung wurde verworfen",
         (AccountChanged, En) => "the account was changed elsewhere",
         (AccountChanged, De) => "das Konto wurde anderswo geändert",
+        (PayeeChanged, En) => "the payee was changed elsewhere",
+        (PayeeChanged, De) => "der Empfänger wurde anderswo geändert",
         (PostingNotFound, En) => "the posting no longer exists",
         (PostingNotFound, De) => "die Teilbuchung existiert nicht mehr",
         (SourcePosting, En) => {

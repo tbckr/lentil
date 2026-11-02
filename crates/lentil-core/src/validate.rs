@@ -2215,6 +2215,49 @@ txn-free comment lines are fine too
     }
 
     #[test]
+    fn editor_may_set_payees_through_replay() {
+        use crate::intent::{Intent, Outcome, PendingIntent, replay};
+        let before = with(
+            &base(),
+            GIRO_RUN,
+            "\"City Utilities\" \"Electricity",
+            "\"Electricity",
+        );
+        let set_payee = |id: &str, old: Option<&str>, new: &str| PendingIntent {
+            key: id.to_owned(),
+            intent: Intent::SetPayee {
+                id: id.to_owned(),
+                old: old.map(ToOwned::to_owned),
+                new: new.to_owned(),
+            },
+        };
+        let intents = [
+            set_payee(
+                "giro-3f9a1c2e7b4d",
+                Some("Corner Grocery"),
+                "Corner \"Shop\"",
+            ),
+            set_payee("giro-8c01d4e9a2f7", None, "City Utilities"),
+        ];
+        let config = Config::parse(CONFIG).unwrap();
+        let result = replay(&before, &config, &intents);
+        assert!(
+            result.outcomes.iter().all(|(_, o)| *o == Outcome::Applied),
+            "{:?}",
+            result.outcomes
+        );
+        let v = as_role(Role::Editor, &before, &result.snapshot);
+        assert_clean(&v);
+        let ledger = v.ledger.unwrap();
+        let grocery = ledger.find("giro-3f9a1c2e7b4d").unwrap();
+        assert_eq!(grocery.payee.as_deref(), Some("Corner \"Shop\""));
+        assert_eq!(grocery.flag, '!');
+        let utilities = ledger.find("giro-8c01d4e9a2f7").unwrap();
+        assert_eq!(utilities.payee.as_deref(), Some("City Utilities"));
+        assert_eq!(utilities.flag, '!');
+    }
+
+    #[test]
     fn editor_may_dismiss_transactions() {
         let files = dismissed(&base(), GIRO_RUN, "2026-10-18 ! \"Corner Grocery\"");
         let v = editor(&files);

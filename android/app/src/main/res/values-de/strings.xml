@@ -64,6 +64,7 @@
     <string name="conflict_transaction_not_found">Die Buchung gibt es nicht mehr.</string>
     <string name="conflict_transaction_dismissed">Die Buchung wurde auf einem anderen Gerät verworfen.</string>
     <string name="conflict_account_changed">Das Konto wurde auf einem anderen Gerät auf %1$s geändert.</string>
+    <string name="conflict_payee_changed">Der Empfänger wurde auf einem anderen Gerät geändert.</string>
     <string name="conflict_posting_not_found">Die Buchungszeile gibt es nicht mehr.</string>
     <string name="conflict_source_posting">Eine Bankbuchungszeile kann nicht geändert werden, und keine Buchungszeile kann auf ein Bankkonto wechseln.</string>
     <string name="conflict_account_not_open">Das Konto ist am Datum der Buchung nicht eröffnet.</string>

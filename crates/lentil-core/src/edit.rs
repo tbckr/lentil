@@ -7,6 +7,8 @@ use std::ops::Range;
 
 use thiserror::Error;
 
+use crate::import::render::escape;
+
 /// Why an edit cannot be made at the given position.
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum EditError {
@@ -46,6 +48,42 @@ pub fn set_account(
     new: &str,
 ) -> Result<String, EditError> {
     replace(text, span, old, new)
+}
+
+/// Sets the payee to `new`: replaces the payee string at `payee_span`
+/// (expected to read `old`), or, if there is no payee (`old` is `None`),
+/// inserts `"<new>" ` before the narration string at `narration_span`.
+/// Strings are escaped as the importer escapes them.
+///
+/// # Errors
+///
+/// [`EditError::Mismatch`] if the payee string is not `old`, if `payee_span`
+/// and `old` disagree on whether there is a payee, or if `narration_span`
+/// does not hold a string.
+pub fn set_payee(
+    text: &str,
+    payee_span: Option<Range<usize>>,
+    narration_span: Range<usize>,
+    old: Option<&str>,
+    new: &str,
+) -> Result<String, EditError> {
+    match (payee_span, old) {
+        (Some(span), Some(old)) => replace(text, span, &quote(old), &quote(new)),
+        (None, None)
+            if text
+                .get(narration_span.clone())
+                .is_some_and(|s| s.starts_with('"') && s.ends_with('"')) =>
+        {
+            let at = narration_span.start;
+            replace(text, at..at, "", &format!("{} ", quote(new)))
+        }
+        (span, _) => Err(EditError::Mismatch(span.unwrap_or(narration_span))),
+    }
+}
+
+/// `text` as a string literal, escaped as the importer writes it.
+pub(crate) fn quote(text: &str) -> String {
+    format!("\"{}\"", escape(text))
 }
 
 /// Comments out the lines of `span` by prepending `; ` to each (spec section 10, `dismiss`).
@@ -197,6 +235,75 @@ mod tests {
         #[allow(clippy::reversed_empty_ranges)]
         let reversed = start..start - 1;
         assert!(set_account(TXN, reversed, "", "y").is_err());
+    }
+
+    fn span(text: &str, needle: &str) -> Range<usize> {
+        let start = offset(text, needle);
+        start..start + needle.len()
+    }
+
+    #[test]
+    fn set_payee_replaces_only_the_payee_string() {
+        let payee = span(TXN, "\"Shop\"");
+        let narration = span(TXN, "\"x\"");
+        let out = set_payee(TXN, Some(payee), narration, Some("Shop"), "Corner Grocery").unwrap();
+        assert_eq!(out, TXN.replacen("\"Shop\"", "\"Corner Grocery\"", 1));
+    }
+
+    #[test]
+    fn set_payee_escapes_quotes_and_backslashes() {
+        let text = TXN.replacen("\"Shop\"", r#""Say \"hi\" \\""#, 1);
+        let payee = span(&text, r#""Say \"hi\" \\""#);
+        let narration = span(&text, "\"x\"");
+        let out = set_payee(
+            &text,
+            Some(payee),
+            narration,
+            Some(r#"Say "hi" \"#),
+            r#"A\"B"#,
+        )
+        .unwrap();
+        assert_eq!(out, TXN.replacen("\"Shop\"", r#""A\\\"B""#, 1));
+    }
+
+    #[test]
+    fn set_payee_inserts_a_payee_before_the_narration() {
+        let text = TXN.replacen("\"Shop\" ", "", 1);
+        let narration = span(&text, "\"x\"");
+        let out = set_payee(&text, None, narration, None, "Sh\"op").unwrap();
+        assert_eq!(out, TXN.replacen("\"Shop\"", r#""Sh\"op""#, 1));
+    }
+
+    #[test]
+    fn set_payee_checks_the_old_payee() {
+        let payee = span(TXN, "\"Shop\"");
+        let narration = span(TXN, "\"x\"");
+        for old in [Some("Shops"), Some("Sho"), None] {
+            assert_eq!(
+                set_payee(TXN, Some(payee.clone()), narration.clone(), old, "New"),
+                Err(EditError::Mismatch(payee.clone())),
+                "{old:?}"
+            );
+        }
+        assert_eq!(
+            set_payee(TXN, None, narration.clone(), Some("Shop"), "New"),
+            Err(EditError::Mismatch(narration.clone()))
+        );
+    }
+
+    #[test]
+    fn set_payee_inserts_only_before_a_string() {
+        let narration = span(TXN, "\"x\"");
+        for partial in [
+            narration.start + 1..narration.end,
+            narration.start..narration.end - 1,
+        ] {
+            assert_eq!(
+                set_payee(TXN, None, partial.clone(), None, "New"),
+                Err(EditError::Mismatch(partial))
+            );
+        }
+        assert!(set_payee(TXN, None, TXN.len()..TXN.len() + 1, None, "New").is_err());
     }
 
     #[test]

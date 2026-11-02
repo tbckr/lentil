@@ -36,6 +36,16 @@ pub enum Intent {
         /// The account the user chose; must be open on the transaction date.
         new: String,
     },
+    /// Set the payee of an active transaction, inserting one before the
+    /// narration if it has none.
+    SetPayee {
+        /// `lentil_id` of the transaction.
+        id: String,
+        /// The payee the user saw, `None` if the transaction had none.
+        old: Option<String>,
+        /// The new payee.
+        new: String,
+    },
     /// Comment out an active transaction in place.
     Dismiss {
         /// `lentil_id` of the transaction.
@@ -66,6 +76,7 @@ impl Intent {
         match self {
             Self::Confirm { .. } => "confirm",
             Self::SetAccount { .. } => "set-account",
+            Self::SetPayee { .. } => "set-payee",
             Self::Dismiss { .. } => "dismiss",
             Self::OpenAccount { .. } => "open-account",
             Self::AddImportRun { .. } => "add-import-run",
@@ -76,7 +87,10 @@ impl Intent {
     #[must_use]
     pub fn transaction_id(&self) -> Option<&str> {
         match self {
-            Self::Confirm { id } | Self::SetAccount { id, .. } | Self::Dismiss { id } => Some(id),
+            Self::Confirm { id }
+            | Self::SetAccount { id, .. }
+            | Self::SetPayee { id, .. }
+            | Self::Dismiss { id } => Some(id),
             Self::OpenAccount { .. } | Self::AddImportRun { .. } => None,
         }
     }
@@ -121,6 +135,8 @@ pub enum ConflictCode {
     TransactionDismissed,
     /// The posting's account is neither the old nor the new value.
     AccountChanged,
+    /// The payee is neither the old nor the new value.
+    PayeeChanged,
     /// The posting index does not exist.
     PostingNotFound,
     /// The posting is on a source account, or the new account is one: editors
@@ -153,11 +169,11 @@ pub struct ReplayResult {
 /// rest of each file stays byte-identical.
 ///
 /// The ledger is loaded once. Later intents see the effect of earlier ones
-/// (a confirmed flag, a changed account, a dismissed transaction, an opened
-/// account), and the edits are written into the files at the end. Transactions
-/// in run files added by the same replay cannot be addressed; a commit holds
-/// the changes of one role only (spec section 12), so importer and editor
-/// intents never share a replay.
+/// (a confirmed flag, a changed account or payee, a dismissed transaction, an
+/// opened account), and the edits are written into the files at the end.
+/// Transactions in run files added by the same replay cannot be addressed; a
+/// commit holds the changes of one role only (spec section 12), so importer
+/// and editor intents never share a replay.
 #[must_use]
 pub fn replay(snapshot: &Snapshot, config: &Config, intents: &[PendingIntent]) -> ReplayResult {
     let ledger = ledger::load(snapshot, &config.main_file);
@@ -201,7 +217,7 @@ pub fn summary(intents: &[PendingIntent], outcomes: &[(String, Outcome)]) -> Str
 }
 
 /// Number of v0.1 operations.
-const OP_COUNT: usize = 5;
+const OP_COUNT: usize = 6;
 
 impl Intent {
     /// Position of the operation in the table of spec section 10.
@@ -209,9 +225,10 @@ impl Intent {
         match self {
             Self::Confirm { .. } => 0,
             Self::SetAccount { .. } => 1,
-            Self::Dismiss { .. } => 2,
-            Self::OpenAccount { .. } => 3,
-            Self::AddImportRun { .. } => 4,
+            Self::SetPayee { .. } => 2,
+            Self::Dismiss { .. } => 3,
+            Self::OpenAccount { .. } => 4,
+            Self::AddImportRun { .. } => 5,
         }
     }
 }
@@ -259,6 +276,7 @@ struct Replay<'a> {
 #[derive(Debug)]
 struct TxnState {
     flag: char,
+    payee: Option<String>,
     /// Account of each posting, in file order.
     accounts: Vec<String>,
     dismissed: bool,
@@ -271,6 +289,7 @@ impl TxnState {
     fn new(txn: &Txn) -> Self {
         Self {
             flag: txn.flag,
+            payee: txn.payee.clone(),
             accounts: txn.postings.iter().map(|p| p.account.clone()).collect(),
             dismissed: false,
             intents: Vec::new(),
@@ -332,6 +351,7 @@ impl<'a> Replay<'a> {
                 old,
                 new,
             } => self.set_account(index, id, *posting, old, new),
+            Intent::SetPayee { id, old, new } => self.set_payee(index, id, old.as_deref(), new),
             Intent::Dismiss { id } => self.dismiss(index, id),
             Intent::OpenAccount { account, date } => self.open_account(index, account, *date),
             Intent::AddImportRun { file, content, .. } => self.add_import_run(file, content),
@@ -443,6 +463,34 @@ impl<'a> Replay<'a> {
         }
         let state = self.state_mut(i);
         state.accounts[posting] = new.to_owned();
+        state.intents.push(index);
+        Outcome::Applied
+    }
+
+    fn set_payee(&mut self, index: usize, id: &str, old: Option<&str>, new: &str) -> Outcome {
+        let i = match self.active(id) {
+            Ok(i) => i,
+            Err(outcome) => return outcome,
+        };
+        let txn = &self.ledger.transactions[i];
+        let current = self
+            .touched
+            .get(&i)
+            .map_or(txn.payee.as_deref(), |s| s.payee.as_deref());
+        if current == Some(new) {
+            return self.already_applied(i, index);
+        }
+        if current != old {
+            return Outcome::Conflict(Conflict {
+                code: ConflictCode::PayeeChanged,
+                current: current.map(ToOwned::to_owned),
+            });
+        }
+        if !self.text(txn).is_some_and(|text| payee_editable(text, txn)) {
+            return conflict(ConflictCode::NotEditable);
+        }
+        let state = self.state_mut(i);
+        state.payee = Some(new.to_owned());
         state.intents.push(index);
         Outcome::Applied
     }
@@ -610,6 +658,20 @@ fn flag_editable(text: &str, txn: &Txn) -> bool {
     })
 }
 
+/// Whether the payee string of `txn`, or without a payee its narration
+/// string, sits at its span inside the transaction's span, written as
+/// [`edit::quote`] writes it.
+fn payee_editable(text: &str, txn: &Txn) -> bool {
+    let reads = |span: &Range<usize>, value: &str| {
+        within(span, &txn.span) && text.get(span.clone()) == Some(edit::quote(value).as_str())
+    };
+    match (&txn.payee, &txn.payee_span, &txn.narration_span) {
+        (Some(payee), Some(span), _) => reads(span, payee),
+        (None, None, Some(span)) => reads(span, &txn.narration),
+        _ => false,
+    }
+}
+
 /// Whether `txn` starts at a line start and all its postings lie in its span,
 /// so commenting out the span leaves no stray line behind.
 fn dismiss_editable(text: &str, txn: &Txn) -> bool {
@@ -631,6 +693,12 @@ enum Element<'s> {
         old: &'s str,
         new: &'s str,
     },
+    Payee {
+        payee_span: Option<Range<usize>>,
+        narration_span: Range<usize>,
+        old: Option<&'s str>,
+        new: &'s str,
+    },
 }
 
 impl Element<'_> {
@@ -638,6 +706,11 @@ impl Element<'_> {
         match self {
             Self::Flag { offset, .. } => *offset,
             Self::Account { span, .. } => span.start,
+            Self::Payee {
+                payee_span,
+                narration_span,
+                ..
+            } => payee_span.as_ref().unwrap_or(narration_span).start,
         }
     }
 }
@@ -655,6 +728,14 @@ fn render(text: &str, txn: &Txn, state: &TxnState) -> Result<Option<String>, Edi
             offset,
             old: txn.flag,
             new: state.flag,
+        });
+    }
+    if state.payee != txn.payee {
+        elements.push(Element::Payee {
+            payee_span: txn.payee_span.clone(),
+            narration_span: txn.narration_span.clone().ok_or_else(mismatch)?,
+            old: txn.payee.as_deref(),
+            new: state.payee.as_deref().ok_or_else(mismatch)?,
         });
     }
     for (posting, account) in txn.postings.iter().zip(&state.accounts) {
@@ -680,6 +761,24 @@ fn render(text: &str, txn: &Txn, state: &TxnState) -> Result<Option<String>, Edi
             Element::Flag { old, new, .. } => edit::set_flag(&body, relative, old, new)?,
             Element::Account { span, old, new } => {
                 edit::set_account(&body, relative..relative + span.len(), old, new)?
+            }
+            Element::Payee {
+                payee_span,
+                narration_span,
+                old,
+                new,
+            } => {
+                let narration = narration_span
+                    .start
+                    .checked_sub(base)
+                    .ok_or_else(mismatch)?;
+                edit::set_payee(
+                    &body,
+                    payee_span.map(|span| relative..relative + span.len()),
+                    narration..narration + narration_span.len(),
+                    old,
+                    new,
+                )?
             }
         };
     }
@@ -817,6 +916,14 @@ include "imports/*/*/*.beancount"
         }
     }
 
+    fn payee(id: &str, old: Option<&str>, new: &str) -> Intent {
+        Intent::SetPayee {
+            id: id.into(),
+            old: old.map(Into::into),
+            new: new.into(),
+        }
+    }
+
     fn open(account: &str, day: &str) -> Intent {
         Intent::OpenAccount {
             account: account.into(),
@@ -892,6 +999,21 @@ include "imports/*/*/*.beancount"
     }
 
     use Outcome::{AlreadyApplied, Applied};
+
+    #[test]
+    fn intents_name_their_operation_and_transaction() {
+        let cases = [
+            (confirm(GROCERY), "confirm", Some(GROCERY)),
+            (set(TRANSFER, 1, "a", "b"), "set-account", Some(TRANSFER)),
+            (payee(BAKERY, None, "x"), "set-payee", Some(BAKERY)),
+            (dismiss(CAFE), "dismiss", Some(CAFE)),
+            (open("Expenses:Fresh", "2026-01-01"), "open-account", None),
+            (run_file("x", "y"), "add-import-run", None),
+        ];
+        for (intent, name, id) in cases {
+            assert_eq!((intent.op_name(), intent.transaction_id()), (name, id));
+        }
+    }
 
     #[test]
     fn confirm_changes_only_the_flag() {
@@ -1088,6 +1210,197 @@ include "imports/*/*/*.beancount"
     }
 
     #[test]
+    fn set_payee_changes_only_the_payee() {
+        let (after, outcomes) = replay_on(
+            &snapshot(),
+            &[payee(
+                GROCERY,
+                Some("Corner Grocery"),
+                r#"Corner "Shop" \ 1"#,
+            )],
+        );
+        assert_eq!(outcomes, vec![Applied]);
+        assert_eq!(
+            after.text(RUN_FILE).unwrap(),
+            changed(
+                RUN,
+                "\"Corner Grocery\" \"Card",
+                r#""Corner \"Shop\" \\ 1" "Card"#
+            )
+        );
+        assert_eq!(after.text("accounts.beancount"), Some(ACCOUNTS));
+        let ledger = reload(&after);
+        let txn = ledger.find(GROCERY).unwrap();
+        assert_eq!(txn.payee.as_deref(), Some(r#"Corner "Shop" \ 1"#));
+        assert_eq!(txn.narration, "Card payment");
+        assert_eq!(txn.flag, '!');
+    }
+
+    #[test]
+    fn set_payee_inserts_a_payee_before_the_narration() {
+        let before = without_transfer_payee();
+        let (after, outcomes) = replay_on(&before, &[payee(TRANSFER, None, "Transfer")]);
+        assert_eq!(outcomes, vec![Applied]);
+        assert_eq!(after.text(RUN_FILE).unwrap(), RUN);
+        assert_eq!(
+            reload(&after).find(TRANSFER).unwrap().payee.as_deref(),
+            Some("Transfer")
+        );
+    }
+
+    /// The snapshot with the transfer's header reduced to its narration.
+    fn without_transfer_payee() -> Snapshot {
+        let mut before = snapshot();
+        before.insert(
+            RUN_FILE,
+            changed(RUN, "\"Transfer\" \"To card\"", "\"To card\""),
+        );
+        before
+    }
+
+    #[test]
+    fn set_payee_works_on_a_txn_header() {
+        let (after, outcomes) = replay_on(&snapshot(), &[payee(BAKERY, Some("Bakery"), "Baker")]);
+        assert_eq!(outcomes, vec![Applied]);
+        assert_eq!(
+            after.text(RUN_FILE).unwrap(),
+            changed(
+                RUN,
+                "txn \"Bakery\" \"Bread\" #food",
+                "txn \"Baker\" \"Bread\" #food"
+            )
+        );
+        let ledger = reload(&after);
+        let txn = ledger.find(BAKERY).unwrap();
+        assert_eq!((txn.payee.as_deref(), txn.flag), (Some("Baker"), '*'));
+        assert_eq!(txn.tags, vec!["food"]);
+    }
+
+    #[test]
+    fn set_payee_is_done_when_the_payee_is_already_new() {
+        let intent = payee(TRANSFER, None, "Card Company");
+        let (after, outcomes) =
+            replay_on(&without_transfer_payee(), &[intent.clone(), intent.clone()]);
+        assert_eq!(outcomes, vec![Applied, AlreadyApplied]);
+        let (again, outcomes) = replay_on(&after, &[intent]);
+        assert_eq!(outcomes, vec![AlreadyApplied]);
+        assert_eq!(again, after);
+    }
+
+    #[test]
+    fn set_payee_builds_on_earlier_intents() {
+        let (after, outcomes) = replay_on(
+            &without_transfer_payee(),
+            &[
+                payee(TRANSFER, None, "Card"),
+                payee(TRANSFER, Some("Card"), "Card Company"),
+                payee(TRANSFER, None, "Other"),
+            ],
+        );
+        assert_eq!(
+            outcomes,
+            vec![
+                Applied,
+                Applied,
+                Outcome::Conflict(Conflict {
+                    code: ConflictCode::PayeeChanged,
+                    current: Some("Card Company".into()),
+                })
+            ]
+        );
+        assert_eq!(
+            after.text(RUN_FILE).unwrap(),
+            RUN.replace("\"Transfer\"", "\"Card Company\"")
+        );
+    }
+
+    #[test]
+    fn set_payee_reports_the_current_payee_on_conflict() {
+        let (after, outcomes) = replay_on(
+            &without_transfer_payee(),
+            &[
+                payee(GROCERY, Some("Corner Shop"), "Grocer"),
+                payee(GROCERY, None, "Grocer"),
+                payee(TRANSFER, Some("Transfer"), "Card Company"),
+            ],
+        );
+        let changed_from = |current: Option<&str>| {
+            Outcome::Conflict(Conflict {
+                code: ConflictCode::PayeeChanged,
+                current: current.map(Into::into),
+            })
+        };
+        assert_eq!(
+            outcomes,
+            vec![
+                changed_from(Some("Corner Grocery")),
+                changed_from(Some("Corner Grocery")),
+                changed_from(None)
+            ]
+        );
+        assert_eq!(after, without_transfer_payee());
+    }
+
+    #[test]
+    fn set_payee_conflicts_on_dismissed_and_unknown_transactions() {
+        let (after, outcomes) = replay_on(
+            &snapshot(),
+            &[
+                payee(UTILITIES, Some("City Utilities"), "Utility"),
+                payee("giro-000000000000", None, "Utility"),
+                dismiss(GROCERY),
+                payee(GROCERY, Some("Corner Grocery"), "Grocer"),
+            ],
+        );
+        assert_eq!(
+            outcomes,
+            vec![
+                conflict(ConflictCode::TransactionDismissed),
+                conflict(ConflictCode::TransactionNotFound),
+                Applied,
+                conflict(ConflictCode::TransactionDismissed),
+            ]
+        );
+        assert!(
+            after
+                .text(RUN_FILE)
+                .unwrap()
+                .contains("; 2026-10-18 ! \"Corner Grocery\"")
+        );
+    }
+
+    #[test]
+    fn set_payee_needs_strings_written_as_lentil_writes_them() {
+        let cases = [
+            // A payee with an escape the core does not write.
+            (
+                "\"Corner Grocery\" \"Card",
+                "\"Corner\\tGrocery\" \"Card",
+                payee(GROCERY, Some("Corner\tGrocery"), "Grocer"),
+            ),
+            // No narration to insert the payee before.
+            (
+                "\"Transfer\" \"To card\"",
+                "",
+                payee(TRANSFER, None, "Card"),
+            ),
+            // A narration with an escape the core does not write.
+            (
+                "\"Transfer\" \"To card\"",
+                "\"To\\tcard\"",
+                payee(TRANSFER, None, "Card"),
+            ),
+        ];
+        for (from, to, intent) in cases {
+            let mut before = snapshot();
+            before.insert(RUN_FILE, changed(RUN, from, to));
+            let (after, outcomes) = replay_on(&before, &[intent]);
+            assert_eq!(outcomes, vec![conflict(ConflictCode::NotEditable)], "{to}");
+            assert_eq!(after, before);
+        }
+    }
+
+    #[test]
     fn dismiss_comments_out_every_line_of_the_transaction() {
         let (after, outcomes) = replay_on(&snapshot(), &[dismiss(GROCERY)]);
         assert_eq!(outcomes, vec![Applied]);
@@ -1175,12 +1488,14 @@ include "imports/*/*/*.beancount"
                     "Expenses:Uncategorized",
                     "Expenses:Food:Groceries",
                 ),
+                payee(GROCERY, Some("Corner Grocery"), "Grocer"),
                 dismiss(GROCERY),
             ],
         );
-        assert_eq!(outcomes, vec![Applied, Applied, Applied]);
+        assert_eq!(outcomes, vec![Applied, Applied, Applied, Applied]);
         let edited = GROCERY_BLOCK
             .replace("18 ! ", "18 * ")
+            .replace("\"Corner Grocery\"", "\"Grocer\"")
             .replace("Expenses:Uncategorized", "Expenses:Food:Groceries");
         assert_eq!(
             after.text(RUN_FILE).unwrap(),
@@ -1198,11 +1513,14 @@ include "imports/*/*/*.beancount"
             &[
                 set(TRANSFER, 1, "Expenses:Uncategorized", "Assets:Transfer"),
                 confirm(CAFE),
+                payee(TRANSFER, Some("Transfer"), "Card Company"),
                 confirm(TRANSFER),
                 set(CAFE, 1, "Expenses:Uncategorized", "Expenses:Food:Groceries"),
+                payee(CAFE, Some("Café"), "Café Ünïcode"),
                 confirm(GROCERY),
                 dismiss(CAFE),
                 set(GROCERY, 1, "Expenses:Uncategorized", "Expenses:Late"),
+                payee(BAKERY, Some("Bakery"), "Bäckerei"),
             ],
         );
         assert_eq!(
@@ -1214,11 +1532,19 @@ include "imports/*/*/*.beancount"
                 Applied,
                 Applied,
                 Applied,
-                conflict(ConflictCode::AccountNotOpen)
+                Applied,
+                Applied,
+                conflict(ConflictCode::AccountNotOpen),
+                Applied,
             ]
         );
         let run = changed(RUN, "2026-10-18 ! ", "2026-10-18 * ");
-        let run = changed(&run, "2026-10-20 ! ", "2026-10-20 * ");
+        let run = changed(&run, "txn \"Bakery\"", "txn \"Bäckerei\"");
+        let run = changed(
+            &run,
+            "2026-10-20 ! \"Transfer\"",
+            "2026-10-20 * \"Card Company\"",
+        );
         let run = changed(
             &run,
             "  Expenses:Uncategorized\n\n2026-10-21",
@@ -1226,7 +1552,7 @@ include "imports/*/*/*.beancount"
         );
         assert_eq!(after.text(RUN_FILE).unwrap(), run);
         let card = CARD_RUN
-            .replace(" ! ", " * ")
+            .replace(" ! \"Café\"", " * \"Café Ünïcode\"")
             .replace("Expenses:Uncategorized", "Expenses:Food:Groceries");
         assert_eq!(after.text(CARD_FILE).unwrap(), commented(&card));
         let ledger = reload(&after);
@@ -1247,13 +1573,14 @@ include "imports/*/*/*.beancount"
         let intents = [
             confirm(GROCERY),
             set(TRANSFER, 1, "Expenses:Uncategorized", "Expenses:Late"),
+            payee(TRANSFER, Some("Transfer"), "Card Company"),
             dismiss(BAKERY),
             open("Expenses:Fresh", "2026-01-01"),
         ];
         let (lf_after, lf_outcomes) = replay_on(&snapshot(), &intents);
         let (crlf_after, crlf_outcomes) = replay_on(&crlf(&snapshot()), &intents);
         assert_eq!(crlf_outcomes, lf_outcomes);
-        assert_eq!(crlf_outcomes, vec![Applied; 4]);
+        assert_eq!(crlf_outcomes, vec![Applied; 5]);
         assert_eq!(crlf_after, crlf(&lf_after));
         let ledger = reload(&crlf_after);
         assert!(ledger.dismissed_ids.contains(BAKERY));
@@ -1425,10 +1752,18 @@ include "imports/*/*/*.beancount"
             .iter()
             .position(|t| t.id.as_deref() == Some(TRANSFER))
             .unwrap();
+        let bakery = ledger
+            .transactions
+            .iter()
+            .position(|t| t.id.as_deref() == Some(BAKERY))
+            .unwrap();
         ledger.transactions[grocery].flag_offset = None;
+        ledger.transactions[grocery].payee_span = None;
         let span = &ledger.transactions[transfer].postings[1].account_span;
         ledger.transactions[transfer].postings[1].account_span = span.start..span.start;
         ledger.transactions[transfer].span.start += 1;
+        let header = ledger.transactions[bakery].narration_span.clone().unwrap();
+        ledger.transactions[bakery].payee_span = Some(header);
         let (after, outcomes) = replay_with(
             &before,
             &ledger,
@@ -1436,13 +1771,11 @@ include "imports/*/*/*.beancount"
                 confirm(GROCERY),
                 set(TRANSFER, 1, "Expenses:Uncategorized", "Expenses:Late"),
                 dismiss(TRANSFER),
+                payee(GROCERY, Some("Corner Grocery"), "Grocer"),
+                payee(BAKERY, Some("Bakery"), "Baker"),
             ],
         );
-        let not_editable = conflict(ConflictCode::NotEditable);
-        assert_eq!(
-            outcomes,
-            vec![not_editable.clone(), not_editable.clone(), not_editable]
-        );
+        assert_eq!(outcomes, vec![conflict(ConflictCode::NotEditable); 5]);
         assert_eq!(after, before);
     }
 
@@ -1474,6 +1807,65 @@ include "imports/*/*/*.beancount"
     }
 
     #[test]
+    fn set_payee_needs_its_string_inside_the_transaction() {
+        // Spans that end inside the header never come from the parser; the
+        // payee edit conflicts while the flag before it can still change.
+        for (before, id, old) in [
+            (snapshot(), GROCERY, Some("Corner Grocery")),
+            (without_transfer_payee(), TRANSFER, None),
+        ] {
+            let mut ledger = ledger::load(&before, "main.beancount");
+            let txn = ledger
+                .transactions
+                .iter_mut()
+                .find(|t| t.id.as_deref() == Some(id))
+                .unwrap();
+            let string = txn
+                .payee_span
+                .clone()
+                .or(txn.narration_span.clone())
+                .unwrap();
+            txn.span.end = string.end - 1;
+            let (after, outcomes) =
+                replay_with(&before, &ledger, &[payee(id, old, "Card"), confirm(id)]);
+            assert_eq!(outcomes, vec![conflict(ConflictCode::NotEditable), Applied]);
+            let text = before.text(RUN_FILE).unwrap();
+            let flag = ledger.find(id).unwrap().flag_offset.unwrap();
+            let mut expected = text.to_owned();
+            expected.replace_range(flag..=flag, "*");
+            assert_eq!(after.text(RUN_FILE).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn set_payee_without_a_payee_needs_the_narration_string() {
+        let before = without_transfer_payee();
+        let mut ledger = ledger::load(&before, "main.beancount");
+        let transfer = ledger
+            .transactions
+            .iter_mut()
+            .find(|t| t.id.as_deref() == Some(TRANSFER))
+            .unwrap();
+        transfer.narration_span = None;
+        let (after, outcomes) = replay_with(&before, &ledger, &[payee(TRANSFER, None, "Card")]);
+        assert_eq!(outcomes, vec![conflict(ConflictCode::NotEditable)]);
+        assert_eq!(after, before);
+    }
+
+    #[test]
+    fn render_fails_without_a_narration_position() {
+        let before = without_transfer_payee();
+        let ledger = ledger::load(&before, "main.beancount");
+        let mut txn = ledger.find(TRANSFER).unwrap().clone();
+        let text = before.text(RUN_FILE).unwrap();
+        let mut state = TxnState::new(&txn);
+        state.payee = Some("Card".into());
+        assert!(render(text, &txn, &state).unwrap().is_some());
+        txn.narration_span = None;
+        assert!(render(text, &txn, &state).is_err());
+    }
+
+    #[test]
     fn render_fails_without_a_flag_position() {
         let ledger = ledger::load(&snapshot(), "main.beancount");
         let mut txn = ledger.find(GROCERY).unwrap().clone();
@@ -1496,10 +1888,12 @@ include "imports/*/*/*.beancount"
             set(TRANSFER, 1, "Expenses:Uncategorized", "Expenses:Late"),
             confirm(CAFE),
             run_file("x", "y"),
+            payee(GROCERY, None, "Grocer"),
         ]);
         let outcomes = vec![
             ("k0".to_owned(), Applied),
             ("k1".to_owned(), Applied),
+            ("k8".to_owned(), Applied),
             ("k2".to_owned(), AlreadyApplied),
             ("k3".to_owned(), Applied),
             ("k4".to_owned(), conflict(ConflictCode::AccountChanged)),
@@ -1509,7 +1903,7 @@ include "imports/*/*/*.beancount"
         ];
         assert_eq!(
             summary(&intents, &outcomes),
-            "confirm 2, set-account 1, dismiss 1, open-account 1"
+            "confirm 2, set-account 1, set-payee 1, dismiss 1, open-account 1"
         );
         let outcomes = vec![("k7".to_owned(), Applied)];
         assert_eq!(summary(&intents, &outcomes), "add-import-run 1");
@@ -1601,7 +1995,8 @@ mapping = "sources/giro.toml"
         gap: u8,
         month: u8,
         day: u8,
-        payee: usize,
+        /// Index into [`PAYEES`], or no payee.
+        payee: Option<usize>,
     }
 
     #[derive(Clone, Debug)]
@@ -1623,7 +2018,7 @@ mapping = "sources/giro.toml"
             any::<bool>(),
             0..3_u8,
             (1..=12_u8, 1..=28_u8),
-            0..PAYEES.len(),
+            prop::option::of(0..PAYEES.len()),
         )
             .prop_map(
                 |(
@@ -1682,6 +2077,10 @@ mapping = "sources/giro.toml"
         SetStale(usize),
         /// Try to move the source posting.
         SetSource(usize),
+        /// Set the payee to a new one with quotes and a backslash.
+        SetPayee(usize),
+        /// A payee intent recorded against a payee the transaction never had.
+        SetPayeeStale(usize),
         /// Open a new account, before (`true`) or after all transactions.
         Open(bool),
         /// Confirm an ID that does not exist.
@@ -1698,6 +2097,8 @@ mapping = "sources/giro.toml"
             1 => any::<usize>().prop_map(Op::SetLate),
             1 => any::<usize>().prop_map(Op::SetStale),
             1 => any::<usize>().prop_map(Op::SetSource),
+            3 => any::<usize>().prop_map(Op::SetPayee),
+            1 => any::<usize>().prop_map(Op::SetPayeeStale),
             2 => any::<bool>().prop_map(Op::Open),
             1 => Just(Op::Unknown),
         ]
@@ -1711,6 +2112,7 @@ mapping = "sources/giro.toml"
         ids: Vec<String>,
         flags: Vec<char>,
         counters: Vec<String>,
+        payees: Vec<Option<String>>,
     }
 
     fn render_ledger(ledger: &GenLedger) -> Model {
@@ -1743,6 +2145,7 @@ mapping = "sources/giro.toml"
             ids: Vec::new(),
             flags: Vec::new(),
             counters: Vec::new(),
+            payees: Vec::new(),
         };
         let mut n = 0;
         for (f, txns) in ledger.files.iter().enumerate() {
@@ -1751,7 +2154,11 @@ mapping = "sources/giro.toml"
                 n += 1;
                 let ind = ["  ", "    ", "\t"][usize::from(t.indent)];
                 let date = format!("2026-{:02}-{:02}", t.month, t.day);
-                let payee = PAYEES[t.payee];
+                let payee = t.payee.map(|p| PAYEES[p]);
+                let strings = match payee {
+                    Some(payee) => format!("\"{payee}\" \"Narration {n}\""),
+                    None => format!("\"Narration {n}\""),
+                };
                 let flag = match t.keyword {
                     0 => "!",
                     1 => "*",
@@ -1759,13 +2166,14 @@ mapping = "sources/giro.toml"
                 };
                 let amount = format!("{}.{:02}", t.cents / 100, t.cents % 100);
                 let counter = COUNTERS[t.counter];
-                text.push_str(&format!("{date} {flag} \"{payee}\" \"Narration {n}\"\n"));
+                text.push_str(&format!("{date} {flag} {strings}\n"));
                 if t.has_id {
                     let id = format!("giro-{n:012x}");
                     text.push_str(&format!("{ind}lentil_id: \"{id}\"\n"));
                     model.ids.push(id);
                     model.flags.push(if t.keyword == 0 { '!' } else { '*' });
                     model.counters.push(counter.to_owned());
+                    model.payees.push(payee.map(ToOwned::to_owned));
                 }
                 text.push_str(&format!("{ind}lentil_counterparty: \"COUNTERPARTY {n}\"\n"));
                 if t.meta {
@@ -1796,6 +2204,7 @@ mapping = "sources/giro.toml"
         outcomes: Vec<Outcome>,
         flags: Vec<char>,
         counters: Vec<String>,
+        payees: Vec<Option<String>>,
         dismissed: Vec<bool>,
         open_lines: Vec<String>,
     }
@@ -1806,6 +2215,7 @@ mapping = "sources/giro.toml"
             outcomes: Vec::new(),
             flags: model.flags.clone(),
             counters: model.counters.clone(),
+            payees: model.payees.clone(),
             dismissed: vec![false; model.ids.len()],
             open_lines: Vec::new(),
         };
@@ -1813,6 +2223,7 @@ mapping = "sources/giro.toml"
         let mut early: Vec<String> = Vec::new();
         let mut late: Vec<String> = Vec::new();
         let mut opened = 0;
+        let mut renamed = 0;
         let dismissed = conflict(ConflictCode::TransactionDismissed);
         for op in ops {
             let count = model.ids.len();
@@ -1947,6 +2358,30 @@ mapping = "sources/giro.toml"
                         outcome,
                     )
                 }
+                Op::SetPayee(i) | Op::SetPayeeStale(i) => {
+                    let Some(k) = pick(i) else { continue };
+                    renamed += 1;
+                    let new = format!("Payee \"{renamed}\" \\");
+                    let stale = matches!(op, Op::SetPayeeStale(_));
+                    let old = if stale {
+                        Some("Stale".to_owned())
+                    } else {
+                        plan.payees[k].clone()
+                    };
+                    let outcome = if plan.dismissed[k] {
+                        dismissed.clone()
+                    } else if stale {
+                        Outcome::Conflict(Conflict {
+                            code: ConflictCode::PayeeChanged,
+                            current: plan.payees[k].clone(),
+                        })
+                    } else {
+                        plan.payees[k] = Some(new.clone());
+                        Outcome::Applied
+                    };
+                    let id = model.ids[k].clone();
+                    (Intent::SetPayee { id, old, new }, outcome)
+                }
             };
             plan.intents.push(PendingIntent {
                 key: format!("k{}", plan.intents.len()),
@@ -1981,6 +2416,19 @@ mapping = "sources/giro.toml"
             if plan.counters[k] != model.counters[k] {
                 let span = &txn.postings[1].account_span;
                 block.replace_range(span.start - base..span.end - base, &plan.counters[k]);
+            }
+            if let Some(payee) = plan.payees[k]
+                .as_ref()
+                .filter(|_| plan.payees[k] != model.payees[k])
+            {
+                let quoted = format!("\"{}\"", payee.replace('\\', "\\\\").replace('"', "\\\""));
+                match &txn.payee_span {
+                    Some(span) => block.replace_range(span.start - base..span.end - base, &quoted),
+                    None => {
+                        let at = txn.narration_span.as_ref().unwrap().start - base;
+                        block.insert_str(at, &format!("{quoted} "));
+                    }
+                }
             }
             if plan.flags[k] != model.flags[k] {
                 let offset = txn.flag_offset.unwrap() - base;
@@ -2043,6 +2491,7 @@ mapping = "sources/giro.toml"
                     let txn = reloaded.find(id).unwrap();
                     prop_assert_eq!(txn.flag, plan.flags[k]);
                     prop_assert_eq!(&txn.postings[1].account, &plan.counters[k]);
+                    prop_assert_eq!(&txn.payee, &plan.payees[k]);
                 }
             }
 

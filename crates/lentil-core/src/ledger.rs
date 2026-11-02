@@ -64,6 +64,12 @@ pub struct Txn {
     pub payee: Option<String>,
     /// Narration.
     pub narration: String,
+    /// Bytes of the payee string in the header, quotes included, if the
+    /// transaction has a payee and its header strings were found.
+    pub payee_span: Option<Range<usize>>,
+    /// Bytes of the narration string in the header, quotes included, or
+    /// `None` if the header has no string or its strings were not found.
+    pub narration_span: Option<Range<usize>>,
     /// `lentil_counterparty`, the bank's counterparty.
     pub counterparty: Option<String>,
     /// `lentil_purpose`, the bank's purpose.
@@ -476,6 +482,11 @@ fn index_file(ledger: &mut Ledger, file: &str, text: &str) {
         match &spanned.value {
             Directive::Transaction(t) => {
                 let span = start..transaction_end(text, start, spanned.span.end);
+                let (payee_span, narration_span) =
+                    match header_strings(text, start, t.payee.is_some()) {
+                        Some((payee, narration)) => (payee, Some(narration)),
+                        None => (None, None),
+                    };
                 ledger.transactions.push(Txn {
                     id: meta_string(&t.meta, META_ID),
                     file: file.to_owned(),
@@ -486,6 +497,8 @@ fn index_file(ledger: &mut Ledger, file: &str, text: &str) {
                     flag: t.flag,
                     payee: t.payee.as_ref().map(ToString::to_string),
                     narration: t.narration.to_string(),
+                    payee_span,
+                    narration_span,
                     counterparty: meta_string(&t.meta, META_COUNTERPARTY),
                     purpose: meta_string(&t.meta, META_PURPOSE),
                     booking_type: meta_string(&t.meta, META_TYPE),
@@ -590,6 +603,57 @@ fn flag_offset(text: &str, start: usize) -> Option<usize> {
     }
     let flag = rest.chars().next()?;
     (!flag.is_whitespace() && flag != '"').then_some(pos)
+}
+
+/// The payee and narration strings of the header at `start`, quotes
+/// included: the strings after the date and the flag or `txn`, up to the
+/// first other token. `None` unless there is one string per parsed field, two
+/// with a payee and one without. Replay checks that the strings read as the
+/// parsed values before it edits them (spec section 10).
+fn header_strings(
+    text: &str,
+    start: usize,
+    has_payee: bool,
+) -> Option<(Option<Range<usize>>, Range<usize>)> {
+    let mut pos = start;
+    // The date, then the flag or `txn`, each up to a blank or a string.
+    for _ in 0..2 {
+        pos += text[pos..].find([' ', '\t', '"', '\r', '\n'])?;
+        pos += blanks(&text[pos..]);
+    }
+    let mut strings = Vec::new();
+    while text[pos..].starts_with('"') {
+        let end = pos + string_len(&text[pos..])?;
+        strings.push(pos..end);
+        pos = end + blanks(&text[end..]);
+    }
+    match (has_payee, strings.as_slice()) {
+        (false, [narration]) => Some((None, narration.clone())),
+        (true, [payee, narration]) => Some((Some(payee.clone()), narration.clone())),
+        _ => None,
+    }
+}
+
+/// Byte length of the spaces and tabs at the start of `text`.
+fn blanks(text: &str) -> usize {
+    text.len() - text.trim_start_matches([' ', '\t']).len()
+}
+
+/// Byte length of the string literal at the start of `text`, quotes
+/// included, or `None` if it is not closed. A backslash escapes the next
+/// character, as in rustledger's lexer.
+fn string_len(text: &str) -> Option<usize> {
+    let mut chars = text.char_indices().skip(1);
+    while let Some((i, c)) = chars.next() {
+        match c {
+            '"' => return Some(i + 1),
+            '\\' => {
+                chars.next();
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 fn meta_string(meta: &Metadata, key: &str) -> Option<String> {
@@ -817,15 +881,84 @@ include "imports/*/*/*.beancount"
             Some((Decimal::new(-4217, 2), "EUR".to_owned()))
         );
 
+        assert_eq!(
+            &RUN[first.payee_span.clone().unwrap()],
+            "\"Corner Grocery\""
+        );
+        assert_eq!(
+            &RUN[first.narration_span.clone().unwrap()],
+            "\"Card payment\""
+        );
+
         let second = ledger.find("giro-aaaaaaaaaaaa").unwrap();
         assert_eq!(second.flag, '*');
         assert_eq!(second.flag_offset, None);
+        assert_eq!(&RUN[second.payee_span.clone().unwrap()], "\"Bakery\"");
+        assert_eq!(&RUN[second.narration_span.clone().unwrap()], "\"Bread\"");
         assert!(RUN[second.span.clone()].ends_with("; trailing comment in txn"));
         assert_eq!(second.postings[1].flag, Some('!'));
         assert_eq!(
             &RUN[second.postings[1].account_span.clone()],
             "Expenses:Uncategorized"
         );
+    }
+
+    /// The text at the payee and narration spans of a transaction with
+    /// `header`.
+    fn header_spans(header: &str) -> (Option<String>, Option<String>) {
+        let text =
+            format!("; x\n{header}\n  Assets:Bank:Giro  -1.00 EUR\n  Expenses:Uncategorized\n");
+        let mut ledger = Ledger::default();
+        index_file(&mut ledger, "f", &text);
+        let txn = &ledger.transactions[0];
+        let at = |span: &Option<Range<usize>>| span.clone().map(|s| text[s].to_owned());
+        (at(&txn.payee_span), at(&txn.narration_span))
+    }
+
+    #[test]
+    fn finds_the_header_strings() {
+        let found = |payee: Option<&str>, narration: &str| {
+            (payee.map(ToOwned::to_owned), Some(narration.to_owned()))
+        };
+        assert_eq!(
+            header_spans(r#"2026-10-18 ! "Shop" "Food""#),
+            found(Some(r#""Shop""#), r#""Food""#)
+        );
+        assert_eq!(
+            header_spans(r#"2026-10-18 ! "Food" #tag ^link ; note"#),
+            found(None, r#""Food""#)
+        );
+        assert_eq!(
+            header_spans("2026-10-18 \t txn\t  \"Shop\"  \t\"Food\"\t"),
+            found(Some(r#""Shop""#), r#""Food""#)
+        );
+        assert_eq!(
+            header_spans(r#"2026-10-18 *"Shop""Food""#),
+            found(Some(r#""Shop""#), r#""Food""#)
+        );
+        assert_eq!(
+            header_spans(r#"2026-10-18 ! "Say \"hi\" \\" "Café ü""#),
+            found(Some(r#""Say \"hi\" \\""#), r#""Café ü""#)
+        );
+        assert_eq!(
+            header_spans(r#"2026-10-18 ! "" """#),
+            found(Some(r#""""#), r#""""#)
+        );
+    }
+
+    #[test]
+    fn header_strings_that_do_not_match_the_fields_are_not_found() {
+        for header in [
+            "2026-10-18 *",
+            "2026-10-18 * ; note",
+            r#"2026-10-18 * "Shop" | "Food""#,
+            r#"2026-10-18 * "Shop" "Food" "More""#,
+            r#"2026-10-18 * #tag "Food""#,
+        ] {
+            assert_eq!(header_spans(header), (None, None), "{header}");
+        }
+        assert_eq!(header_strings("2026-10-18 ! \"open", 0, false), None);
+        assert_eq!(header_strings("2026-10-18", 0, false), None);
     }
 
     #[test]

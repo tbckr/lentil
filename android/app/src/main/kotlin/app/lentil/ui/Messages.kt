@@ -92,6 +92,7 @@ private val conflictMessages =
         "TransactionNotFound" to R.string.conflict_transaction_not_found,
         "TransactionDismissed" to R.string.conflict_transaction_dismissed,
         "AccountChanged" to R.string.conflict_account_changed,
+        "PayeeChanged" to R.string.conflict_payee_changed,
         "PostingNotFound" to R.string.conflict_posting_not_found,
         "SourcePosting" to R.string.conflict_source_posting,
         "AccountNotOpen" to R.string.conflict_account_not_open,
