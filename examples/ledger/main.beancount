@@ -1,0 +1,8 @@
+option "title" "Example Ledger"
+option "operating_currency" "EUR"
+
+include "fava.beancount"
+include "accounts.beancount"
+include "imports/*/*/*.beancount"
+include "manual/*/*.beancount"
+include "prices/*/*.beancount"

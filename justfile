@@ -58,6 +58,11 @@ run *args:
 bean-check file:
     uv run bean-check "$1"
 
+# Regenerates the example ledger in examples/ledger from the current code.
+[group('ledger')]
+example:
+    LENTIL_UPDATE_EXAMPLE=1 cargo nextest run -p lentil-core --test example example_is_up_to_date
+
 # Builds, unit-tests and lints the app and checks its licenses; arguments go to Gradle.
 [group('android')]
 android *args:

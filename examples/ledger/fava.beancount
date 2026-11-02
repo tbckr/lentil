@@ -1,0 +1,5 @@
+; Fava options and sidebar links, written by lentil init. This file holds
+; only custom "fava-option" and custom "fava-sidebar-link" directives.
+
+2000-01-01 custom "fava-sidebar-link" "Open transactions" "/example-ledger/journal/?filter=flag%3A%22%21%22"
+2000-01-01 custom "fava-sidebar-link" "Uncategorized" "/example-ledger/account/Expenses:Uncategorized/"

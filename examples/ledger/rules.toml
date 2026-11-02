@@ -1,0 +1,24 @@
+# Suggestion rules (Lentil Convention Spec, section 16). Rules are evaluated
+# in file order and the first match wins. Without a match, the importer
+# learns from reviewed transactions, and only then uses fallback_account.
+# Regular expressions use RE2 syntax without lookaround.
+#
+# [[rule]]
+# source = "giro"                        # optional: limit the rule to one source
+# desc = "(?i)corner grocery"            # regular expression on lentil_desc
+# account = "Expenses:Food:Groceries"
+#
+# A rule never books to a source account. Transfers between your own accounts
+# go to Assets:Transfer on both sides:
+#
+# [[rule]]
+# desc = "(?i)card statement"
+# account = "Assets:Transfer"
+
+[[rule]]
+desc = "(?i)salary"
+account = "Income:Salary"
+
+[[rule]]
+desc = "(?i)^example housing co-op"
+account = "Expenses:Housing:Rent"

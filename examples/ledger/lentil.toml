@@ -1,0 +1,24 @@
+# Lentil configuration (Lentil Convention Spec, section 4). Never put
+# credentials, PINs or tokens into this file or anywhere in the repository.
+
+spec_version = 0
+main_file = "main.beancount"
+fallback_account = "Expenses:Uncategorized"
+unattributed_account = "Expenses:Unattributed"
+price_currencies = []
+
+# One [[source]] per imported bank account or card, for example:
+#
+# [[source]]
+# id = "giro"                       # [a-z0-9-], part of every imported ID; never change it
+# account = "Assets:Bank:Giro"      # must be opened in accounts.beancount
+# currency = "EUR"
+# importer = "csv"
+# mapping = "sources/giro.toml"     # CSV mapping (spec section 15)
+
+[[source]]
+id = "checking"
+account = "Assets:Bank:Checking"
+currency = "EUR"
+importer = "csv"
+mapping = "sources/checking.toml"

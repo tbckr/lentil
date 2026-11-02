@@ -16,6 +16,7 @@ Lentil has a first, unreleased draft of v0.1 next to its design documents:
 - `crates/lentil-ffi`: UniFFI bindings of the core for the Android app.
 - `android/`: the Kotlin and Compose triage app. It holds no finance logic: pending intents live in a JSON file in app storage and the core replays them. `build-logic` runs cargo-ndk and uniffi-bindgen through AGP's Variant API; versions, including the NDK, live in `gradle/libs.versions.toml`, which the flake reads.
 - `testdata/`: synthetic bank exports and their mappings.
+- `examples/`: a fictional ledger after one import and a review (`examples/ledger`), with the export it came from. `crates/lentil-core/tests/example.rs` generates it and fails when it no longer matches what the core writes.
 
 ## Commands
 
@@ -29,6 +30,7 @@ Run every command inside the development shell.
 - `scripts/deps.sh upgrade` raises the direct crates within their requirements and the Gradle catalog within each major, then rewrites the Gradle verification metadata and lockfiles; `scripts/deps.sh upgrade pins` raises the exact pins rustledger, UniFFI and Beancount. `scripts/deps.sh outdated` lists what both leave out: newer majors, the platform versions and the notes that say "Revisit" or "Drop this once". `latest-deps.yml` runs all of it weekly, the upgrades in a gVisor sandbox, and commits nothing.
 - `scripts/mutation.sh origin/main` mutation-tests the lines of `lentil-core` changed since the merge base and fails if the tests miss a mutant, as CI does. Without a ref, it mutates all of `lentil-core` and fails below 85 % test efficacy, which takes hours. The settings are in `.cargo/mutants.toml`.
 - The differential tests in `crates/lentil-core/tests/differential.rs` compare rustledger with Python Beancount through `uv`; `LENTIL_SKIP_DIFFERENTIAL=1` skips them where uv is missing. `cargo test -p lentil-core --release --test differential -- --ignored --nocapture` measures the load time of a synthetic 50,000-transaction ledger.
+- `just example` regenerates `examples/ledger` after a change in what Lentil writes; review the diff like any other output change.
 - `cargo run -p lentil-cli -- <command>` runs the CLI.
 - `nix build` builds the CLI as a package into `result/bin/lentil`, and `nix run . -- <command>` runs it.
 - In `android/`, `./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lint :app:checkLicenses` builds the app with the core for `arm64-v8a` and `x86_64`, runs its unit tests and Android Lint, and checks the licenses of its runtime and test dependencies against the allowlist in `deny.toml`. Gradle verifies every dependency against `gradle/verification-metadata.xml` and locks the app's configurations in `app/gradle.lockfile`; after a dependency change, rewrite both with `--write-verification-metadata sha256 --write-locks` and an empty Gradle user home (`-g <empty directory>`), because a warm cache hides artifacts that the clean CI build resolves. `scripts/deps.sh upgrade android` does both after raising the catalog.

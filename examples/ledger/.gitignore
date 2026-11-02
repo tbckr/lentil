@@ -1,0 +1,3 @@
+# Load caches of rustledger and Python Beancount never belong in Git.
+.*.cache
+.*.picklecache

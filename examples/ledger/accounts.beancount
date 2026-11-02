@@ -1,0 +1,12 @@
+; Accounts: open, close and commodity directives. Editors append new open
+; directives at the end of this file.
+
+2000-01-01 open Equity:Opening-Balances
+2000-01-01 open Assets:Transfer
+2000-01-01 open Expenses:Uncategorized
+2000-01-01 open Expenses:Unattributed
+
+2026-01-01 open Assets:Bank:Checking EUR
+2026-01-01 open Income:Salary
+2026-01-01 open Expenses:Housing:Rent
+2026-10-01 open Expenses:Food:Groceries

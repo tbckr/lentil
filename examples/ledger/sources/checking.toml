@@ -1,0 +1,14 @@
+# Fictional checking account export: UTF-8, oldest first, a running balance per row.
+
+[file]
+header = ["Date", "Amount"]
+
+[columns]
+booking_date = { column = "Date", format = "%Y-%m-%d" }
+amount = { column = "Amount" }
+counterparty = ["Payee"]
+purpose = ["Purpose"]
+
+[balance]
+from = "column"
+column = "Balance"

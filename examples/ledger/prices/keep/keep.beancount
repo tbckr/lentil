@@ -1,0 +1,3 @@
+; Placeholder written by lentil init. It keeps the include pattern
+; "prices/*/*.beancount" matching while no other file does.
+; Leave it in place and empty.
