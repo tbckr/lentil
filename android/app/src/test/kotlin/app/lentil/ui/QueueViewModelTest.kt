@@ -8,6 +8,7 @@ import app.lentil.data.IntentState
 import app.lentil.data.LedgerError
 import app.lentil.data.StoredConflict
 import app.lentil.data.StoredIntent
+import app.lentil.data.usableOn
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
@@ -142,6 +143,10 @@ class QueueViewModelTest {
 
             vm.openAccount(grocery, "Expenses:Garden")
             assertEquals(listOf(older), vm.state.value.items)
+            assertEquals(
+                listOf("Expenses:Garden", "Expenses:Groceries", "Expenses:Uncategorized"),
+                vm.state.value.accounts.usableOn("2026-10-18"),
+            )
             advanceUntilIdle()
 
             assertEquals(

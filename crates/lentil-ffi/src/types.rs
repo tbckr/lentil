@@ -354,6 +354,17 @@ pub struct QueueItem {
     pub line: u32,
 }
 
+/// An opened account of the ledger, for the account picker.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct AccountItem {
+    /// Account name.
+    pub name: String,
+    /// Its open date as `YYYY-MM-DD`: a counter posting of a transaction on
+    /// or after it may move to the account. `None` if no counter posting may,
+    /// because the account is closed or a source account (spec section 7).
+    pub open_from: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;

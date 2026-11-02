@@ -16,8 +16,8 @@ use lentil_core::validate::{self, Role};
 
 use crate::error::LentilError;
 use crate::types::{
-    FfiAuthor, FfiCredentials, FfiFinding, FfiIdentity, FfiPendingIntent, QueueItem, SyncReport,
-    findings, outcomes, pending_intents,
+    AccountItem, FfiAuthor, FfiCredentials, FfiFinding, FfiIdentity, FfiPendingIntent, QueueItem,
+    SyncReport, findings, outcomes, pending_intents,
 };
 
 /// A local clone of a Lentil repository.
@@ -83,15 +83,18 @@ impl LentilRepo {
         Ok(queue_items(&view.config, &view.ledger))
     }
 
-    /// Accounts a counter posting may move to, with `pending` applied, sorted:
-    /// open, not closed and not a source account.
+    /// Every opened account, with `pending` applied, sorted by name, with the
+    /// date from which a counter posting may move to it.
     ///
     /// # Errors
     ///
     /// As [`Self::queue`].
-    pub fn accounts(&self, pending: Vec<FfiPendingIntent>) -> Result<Vec<String>, LentilError> {
+    pub fn accounts(
+        &self,
+        pending: Vec<FfiPendingIntent>,
+    ) -> Result<Vec<AccountItem>, LentilError> {
         let view = self.view(pending)?;
-        Ok(open_accounts(&view.config, &view.ledger))
+        Ok(account_items(&view.config, &view.ledger))
     }
 
     /// The opening date for accounts the user opens during triage: the date
@@ -292,15 +295,22 @@ fn source_posting(config: &Config, txn: &Txn) -> Option<usize> {
     }
 }
 
-/// The accounts a counter posting may move to: open, not closed and not a
-/// source account (spec section 7).
-fn open_accounts(config: &Config, ledger: &Ledger) -> Vec<String> {
+/// Every opened account. A counter posting may move to one that is not
+/// closed and not a source account (spec section 7), from its open date on,
+/// because `set-account` needs the account open on the transaction's date.
+/// The others are listed too, so the app does not offer to open them again.
+fn account_items(config: &Config, ledger: &Ledger) -> Vec<AccountItem> {
     ledger
         .accounts
         .iter()
-        .filter(|(_, state)| state.opened.is_some() && state.closed.is_none())
-        .filter(|(account, _)| !config.is_source_account(account))
-        .map(|(account, _)| account.clone())
+        .filter_map(|(account, state)| {
+            let opened = state.opened?;
+            let usable = state.closed.is_none() && !config.is_source_account(account);
+            Some(AccountItem {
+                name: account.clone(),
+                open_from: usable.then(|| opened.to_string()),
+            })
+        })
         .collect()
 }
 
@@ -347,7 +357,7 @@ include "imports/*/*/*.beancount"
     const ACCOUNTS: &str = "2026-01-01 open Assets:Bank:Giro EUR
 2026-01-01 open Liabilities:Card EUR
 2026-01-01 open Expenses:Groceries EUR
-2026-01-01 open Expenses:Uncategorized EUR
+2026-03-15 open Expenses:Uncategorized EUR
 2026-01-01 open Expenses:Travel EUR
 2026-02-01 close Expenses:Travel
 ";
@@ -475,12 +485,23 @@ include "imports/*/*/*.beancount"
     }
 
     #[test]
-    fn accounts_are_open_and_not_source_accounts() {
+    fn counter_postings_may_move_to_open_accounts_from_their_open_date() {
         let (config, ledger) = sample();
 
+        let item = |name: &str, open_from: Option<&str>| AccountItem {
+            name: name.to_owned(),
+            open_from: open_from.map(str::to_owned),
+        };
         assert_eq!(
-            open_accounts(&config, &ledger),
-            vec!["Expenses:Groceries", "Expenses:Uncategorized"]
+            account_items(&config, &ledger),
+            vec![
+                // Source accounts and closed accounts are listed, but never usable.
+                item("Assets:Bank:Giro", None),
+                item("Expenses:Groceries", Some("2026-01-01")),
+                item("Expenses:Travel", None),
+                item("Expenses:Uncategorized", Some("2026-03-15")),
+                item("Liabilities:Card", None),
+            ]
         );
     }
 

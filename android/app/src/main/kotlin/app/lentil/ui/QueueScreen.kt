@@ -143,6 +143,7 @@ fun QueueScreen(viewModel: QueueViewModel, onChangeConnection: () -> Unit) {
     accountFor?.let { entry ->
         AccountSheet(
             accounts = state.accounts,
+            date = entry.date,
             recent = state.recentAccounts,
             onSelect = { account ->
                 viewModel.changeAccount(entry, account)

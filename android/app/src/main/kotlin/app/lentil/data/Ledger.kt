@@ -36,10 +36,24 @@ data class Finding(
     val args: Map<String, String>,
 )
 
+/** An opened account of the ledger. */
+data class LedgerAccount(
+    val name: String,
+    /**
+     * Its open date as `YYYY-MM-DD`: a counter posting of a transaction on or after it may move to
+     * the account. `null` if none may, because the account is closed or an imported account.
+     */
+    val openFrom: String?,
+)
+
+/** The names of the accounts a counter posting of a transaction on [date] may move to. */
+fun List<LedgerAccount>.usableOn(date: String): List<String> =
+    filter { account -> account.openFrom?.let { it <= date } == true }.map { it.name }
+
 /** Everything the queue screen shows of the local ledger. */
 data class LedgerView(
     val queue: List<QueueEntry>,
-    val accounts: List<String>,
+    val accounts: List<LedgerAccount>,
     val defaultOpenDate: String?,
     /** Why the app may not write; empty if it may. */
     val readOnly: List<Finding>,

@@ -13,8 +13,8 @@ mod types;
 pub use error::LentilError;
 pub use repo::LentilRepo;
 pub use types::{
-    FfiAuthor, FfiCredentials, FfiFinding, FfiIdentity, FfiIntent, FfiOutcome, FfiPendingIntent,
-    FfiSeverity, IntentOutcome, QueueItem, SyncReport,
+    AccountItem, FfiAuthor, FfiCredentials, FfiFinding, FfiIdentity, FfiIntent, FfiOutcome,
+    FfiPendingIntent, FfiSeverity, IntentOutcome, QueueItem, SyncReport,
 };
 
 /// A new device ID of spec section 9, created once on the device's first start.

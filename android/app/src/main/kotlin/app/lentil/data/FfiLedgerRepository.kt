@@ -49,7 +49,7 @@ class FfiLedgerRepository(
         val readOnly = repo.readOnlyReasons().map { it.toFinding() }
         LedgerView(
             queue = repo.queue(intents).map { it.toEntry() },
-            accounts = repo.accounts(intents),
+            accounts = repo.accounts(intents).map { LedgerAccount(it.name, it.openFrom) },
             defaultOpenDate = repo.defaultOpenDate(intents),
             readOnly = readOnly,
         )

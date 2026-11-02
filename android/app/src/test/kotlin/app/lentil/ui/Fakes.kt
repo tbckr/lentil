@@ -8,6 +8,7 @@ import app.lentil.data.Intent
 import app.lentil.data.IntentOutcome
 import app.lentil.data.IntentState
 import app.lentil.data.IntentStore
+import app.lentil.data.LedgerAccount
 import app.lentil.data.LedgerError
 import app.lentil.data.LedgerException
 import app.lentil.data.LedgerRepository
@@ -59,7 +60,11 @@ fun entry(
 /** A ledger whose queue hides confirmed and dismissed transactions, like the core's replay. */
 class FakeLedger(
     var queue: List<QueueEntry> = emptyList(),
-    var accounts: List<String> = listOf("Expenses:Groceries", "Expenses:Uncategorized"),
+    var accounts: List<LedgerAccount> =
+        listOf(
+            LedgerAccount("Expenses:Groceries", "2026-01-01"),
+            LedgerAccount("Expenses:Uncategorized", "2026-01-01"),
+        ),
     var defaultOpenDate: String? = "2026-10-18",
 ) : LedgerRepository {
     var readOnly = emptyList<app.lentil.data.Finding>()

@@ -12,8 +12,8 @@ use lentil_core::snapshot::Snapshot;
 use lentil_core::sync::git::Git2Backend;
 use lentil_core::sync::{Author, Credentials, GitBackend, PushOutcome};
 use lentil_ffi::{
-    FfiAuthor, FfiCredentials, FfiIdentity, FfiIntent, FfiOutcome, FfiPendingIntent, LentilError,
-    LentilRepo, new_device_id,
+    AccountItem, FfiAuthor, FfiCredentials, FfiIdentity, FfiIntent, FfiOutcome, FfiPendingIntent,
+    LentilError, LentilRepo, new_device_id,
 };
 use tempfile::TempDir;
 
@@ -205,11 +205,11 @@ fn a_fresh_clone_reads_offline() {
         repo.default_open_date(vec![]).unwrap().as_deref(),
         Some("2026-10-12")
     );
-    assert!(
-        repo.accounts(vec![])
-            .unwrap()
-            .contains(&"Expenses:Food:Groceries".to_owned())
-    );
+    let groceries = AccountItem {
+        name: "Expenses:Food:Groceries".to_owned(),
+        open_from: Some("2026-01-01".to_owned()),
+    };
+    assert!(repo.accounts(vec![]).unwrap().contains(&groceries));
 
     // Reopening finds the same clone.
     let reopened = LentilRepo::open(app_path(&dir)).unwrap();
@@ -249,11 +249,11 @@ fn pending_intents_show_before_the_sync() {
     assert_eq!(queue_ids(&repo, intents.clone()), vec!["giro-000000000001"]);
     let queue = repo.queue(intents.clone()).unwrap();
     assert_eq!(queue[0].counter_account.as_deref(), Some("Expenses:Books"));
-    assert!(
-        repo.accounts(intents)
-            .unwrap()
-            .contains(&"Expenses:Books".to_owned())
-    );
+    let books = AccountItem {
+        name: "Expenses:Books".to_owned(),
+        open_from: Some("2026-10-12".to_owned()),
+    };
+    assert!(repo.accounts(intents).unwrap().contains(&books));
     // Without the intents, the local state is unchanged.
     assert_eq!(queue_ids(&repo, vec![]).len(), 2);
 }

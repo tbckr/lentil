@@ -9,6 +9,7 @@ import app.lentil.data.Identity
 import app.lentil.data.Intent
 import app.lentil.data.IntentState
 import app.lentil.data.IntentStore
+import app.lentil.data.LedgerAccount
 import app.lentil.data.LedgerError
 import app.lentil.data.LedgerException
 import app.lentil.data.LedgerRepository
@@ -33,7 +34,7 @@ import kotlinx.coroutines.sync.withLock
 data class QueueUiState(
     val loading: Boolean = true,
     val items: List<QueueEntry> = emptyList(),
-    val accounts: List<String> = emptyList(),
+    val accounts: List<LedgerAccount> = emptyList(),
     val recentAccounts: List<String> = emptyList(),
     val defaultOpenDate: String? = null,
     /** Why the app may not write (spec section 13); empty if it may. */
@@ -134,7 +135,11 @@ class QueueViewModel(
     fun openAccount(entry: QueueEntry, account: String) {
         val change = accountChange(entry, account) ?: return
         val date = mutableState.value.defaultOpenDate ?: LocalDate.now(clock).toString()
-        mutableState.update { state -> state.copy(accounts = (state.accounts + account).sorted()) }
+        mutableState.update { state ->
+            state.copy(
+                accounts = (state.accounts + LedgerAccount(account, date)).sortedBy { it.name }
+            )
+        }
         record(entry, Intent.OpenAccount(account, date), change, Intent.Confirm(change.id))
     }
 
