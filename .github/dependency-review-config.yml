@@ -37,7 +37,9 @@ allow-licenses:
 # Exempt per package (any version): Python Beancount and its dependencies are
 # the reference implementation for the differential tests, and Fava and its
 # dependencies show the example ledger. They run only in development and CI
-# and never ship (pyproject.toml).
+# and never ship (pyproject.toml). The check reads the license that GitHub's
+# dependency graph reports, which can be wider than the one a package
+# declares, so judge a new package by the license the review names.
 allow-dependencies-licenses:
   # GPL-2.0-only.
   - pkg:pypi/beancount
@@ -50,6 +52,16 @@ allow-dependencies-licenses:
   - pkg:pypi/beanquery
   # 0BSD.
   - pkg:pypi/chardet
+  # BSD-2-Clause AND BSD-3-Clause; it ships BSD-3-Clause.
+  - pkg:pypi/cheroot
+  # BSD-2-Clause AND BSD-3-Clause; it ships BSD-3-Clause.
+  - pkg:pypi/flask-babel
+  # BSD-2-Clause AND BSD-3-Clause; it ships BSD-3-Clause.
+  - pkg:pypi/itsdangerous
+  # BSD-2-Clause AND BSD-3-Clause; it ships BSD-3-Clause.
+  - pkg:pypi/jinja2
+  # AFL-2.1 AND MIT, in part with Python-2.0; it ships MIT OR AFL-2.1.
+  - pkg:pypi/simplejson
   # BSD with an acknowledgment clause.
   - pkg:pypi/tatsu-lts
   # PSF-2.0.
