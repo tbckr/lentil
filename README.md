@@ -103,6 +103,8 @@ This walkthrough creates a ledger, adds one bank account and imports its CSV exp
    2026-01-01 open Income:Salary
    ```
 
+   `lentil init` opened `Equity:OpeningBalances`, `Assets:Transfer`, `Expenses:Uncategorized` and `Expenses:Unattributed` already. Leave them out when you copy an existing chart of accounts, because opening an account twice is an error.
+
    Add the source to `lentil.toml`:
 
    ```toml

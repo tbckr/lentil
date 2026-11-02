@@ -53,7 +53,7 @@ Rename payees and narrations freely instead; `lentil_desc` keeps the bank's word
 
 A source is one bank account or card whose CSV exports you import.
 
-1. Open its account in `accounts.beancount`, for example `2026-01-01 open Assets:Bank:Giro EUR`.
+1. Open its account in `accounts.beancount`, for example `2026-01-01 open Assets:Bank:Giro EUR`. `lentil init` opened `Equity:OpeningBalances`, `Assets:Transfer`, `Expenses:Uncategorized` and `Expenses:Unattributed` already. Leave them out when you copy an existing chart of accounts, because opening an account twice is an error.
 2. Add it to `lentil.toml`:
 
    ```toml
