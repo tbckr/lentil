@@ -41,7 +41,7 @@ include "prices/*/*.beancount"
 "#;
 
 const ACCOUNTS: &str = "2026-01-01 open Assets:Bank:Giro EUR
-2026-01-01 open Equity:Opening-Balances
+2026-01-01 open Equity:OpeningBalances
 2026-01-01 open Expenses:Uncategorized
 2026-01-01 open Expenses:Unattributed
 2026-01-01 open Expenses:Food:Groceries

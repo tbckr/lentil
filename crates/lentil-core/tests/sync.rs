@@ -57,7 +57,7 @@ include "prices/*/*.beancount"
 const FAVA: &str = "2020-01-01 custom \"fava-option\" \"language\" \"en\"\n";
 
 const ACCOUNTS: &str = "2020-01-01 open Assets:Bank:Giro EUR
-2020-01-01 open Equity:Opening-Balances
+2020-01-01 open Equity:OpeningBalances
 2020-01-01 open Expenses:Uncategorized
 2020-01-01 open Expenses:Unattributed
 2020-01-01 open Expenses:Food:Groceries

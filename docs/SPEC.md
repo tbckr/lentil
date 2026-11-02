@@ -197,7 +197,7 @@ Each import run reads one bank export through an adapter (section 15), writes ex
 
 **Opening balance.** The run that writes the first balance assertion for a source account also writes the account's opening transaction, unless the ledger already holds it, active or dismissed.
 
-- Its source posting books the part of the asserted balance that the source's transactions before the assertion, in the ledger and in the run, do not explain. Its counter posting is on `Equity:Opening-Balances`, which `init` opens.
+- Its source posting books the part of the asserted balance that the source's transactions before the assertion, in the ledger and in the run, do not explain. Its counter posting is on `Equity:OpeningBalances`, which `init` opens.
 - It carries flag `!`, `lentil_id` = `<source-id>-` + the first 12 hex characters of SHA-256 over `<source-id>|opening`, and `Opening balance` as narration and `lentil_desc`.
 - It is dated on the source's earliest transaction, but before the assertion.
 - If that part is zero, or a posting on the source account has no amount, the importer writes no opening transaction.
@@ -224,7 +224,7 @@ Manual entries go into files that only one device writes, so two devices can nev
 **Balance snapshots (v1).** A balance-tracked account (`[[snapshot]]` in section 4) has no transactions from a bank. Its user enters the balance once or twice a month, and the difference to the computed balance is booked to `unattributed_account`. This keeps net worth exact without importing every transaction.
 
 - The user enters the balance at the start of a day, before that day's transactions.
-- The editor computes the account's balance at that point with the core. If it matches, the editor writes only the balance assertion. If it differs, it also writes a `pad` dated the previous day, from the account to `unattributed_account`; the first snapshot of an account pads from `Equity:Opening-Balances`.
+- The editor computes the account's balance at that point with the core. If it matches, the editor writes only the balance assertion. If it differs, it also writes a `pad` dated the previous day, from the account to `unattributed_account`; the first snapshot of an account pads from `Equity:OpeningBalances`.
 - An editor MUST NOT write a `pad` without a difference: Python Beancount and rustledger report unused pads as errors.
 - Balance assertions carry `~ 0.00` like those of importers (section 8).
 - Snapshots are written only for snapshot accounts. A `pad` on a source account is never written, because it would hide import gaps.

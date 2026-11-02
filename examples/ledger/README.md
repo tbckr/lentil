@@ -92,7 +92,7 @@ A source is one bank account or card whose CSV exports you import.
    column = "Balance"
    ```
 
-4. Run `lentil import` with the source ID and the export file. Every new transaction arrives with flag `!` and a suggested counter account; transactions imported before are skipped. If the export holds no balance, `lentil import` asks for the balance shown in online banking, and `lentil status` reports the run as unchecked if you skip it. The first run with a balance check also books the account's opening balance against `Equity:Opening-Balances`, with flag `!` so you can check it.
+4. Run `lentil import` with the source ID and the export file. Every new transaction arrives with flag `!` and a suggested counter account; transactions imported before are skipped. If the export holds no balance, `lentil import` asks for the balance shown in online banking, and `lentil status` reports the run as unchecked if you skip it. The first run with a balance check also books the account's opening balance against `Equity:OpeningBalances`, with flag `!` so you can check it.
 
 ## Transfers between your own accounts
 

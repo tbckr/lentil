@@ -123,7 +123,7 @@ const MANUAL_TEXT: &str = r#"2026-10-05 * "Market" "Vegetables" #market
   Assets:Cash             -5.00 EUR
   Expenses:Food:Groceries
 
-2026-10-30 pad Assets:PaymentService Equity:Opening-Balances
+2026-10-30 pad Assets:PaymentService Equity:OpeningBalances
 2026-10-31 balance Assets:PaymentService  80.00 ~ 0.00 EUR
 "#;
 

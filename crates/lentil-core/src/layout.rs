@@ -39,7 +39,7 @@ pub const DEFAULT_FALLBACK_ACCOUNT: &str = "Expenses:Uncategorized";
 /// Unattributed account written by `init` (spec section 4).
 pub const DEFAULT_UNATTRIBUTED_ACCOUNT: &str = "Expenses:Unattributed";
 /// Counter account of the first balance snapshot of an account (spec section 9).
-pub const OPENING_BALANCES_ACCOUNT: &str = "Equity:Opening-Balances";
+pub const OPENING_BALANCES_ACCOUNT: &str = "Equity:OpeningBalances";
 /// Counter account of both sides of a transfer between source accounts
 /// (spec section 8).
 pub const TRANSFER_ACCOUNT: &str = "Assets:Transfer";
@@ -417,7 +417,7 @@ include "prices/*/*.beancount"
         for account in [
             "Expenses:Uncategorized",
             "Expenses:Unattributed",
-            "Equity:Opening-Balances",
+            "Equity:OpeningBalances",
             "Assets:Transfer",
         ] {
             assert!(ledger.accounts.contains_key(account), "{account}");

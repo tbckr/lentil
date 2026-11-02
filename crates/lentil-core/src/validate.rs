@@ -1742,7 +1742,7 @@ currency = "EUR"
         let files = appended(
             &base(),
             MANUAL,
-            "\n2026-10-30 pad Assets:PaymentService Equity:Opening-Balances\n2026-10-31 balance Assets:PaymentService  0.00 ~ 0.00 EUR\n",
+            "\n2026-10-30 pad Assets:PaymentService Equity:OpeningBalances\n2026-10-31 balance Assets:PaymentService  0.00 ~ 0.00 EUR\n",
         );
         let v = admin(&files);
         assert_codes(&v, &[FindingCode::CoreError]);
@@ -1985,10 +1985,10 @@ txn-free comment lines are fine too
 
     #[test]
     fn pads_only_on_snapshot_accounts() {
-        let snapshot = "\n2026-10-30 pad Assets:PaymentService Equity:Opening-Balances\n2026-10-31 balance Assets:PaymentService  80.00 ~ 0.00 EUR\n";
+        let snapshot = "\n2026-10-30 pad Assets:PaymentService Equity:OpeningBalances\n2026-10-31 balance Assets:PaymentService  80.00 ~ 0.00 EUR\n";
         assert_clean(&admin(&appended(&base(), MANUAL, snapshot)));
 
-        let other = "\n2026-10-30 pad Assets:Cash Equity:Opening-Balances\n2026-10-31 balance Assets:Cash  80.00 ~ 0.00 EUR\n";
+        let other = "\n2026-10-30 pad Assets:Cash Equity:OpeningBalances\n2026-10-31 balance Assets:Cash  80.00 ~ 0.00 EUR\n";
         let v = admin(&appended(&base(), MANUAL, other));
         assert_codes(&v, &[FindingCode::OutsideProfile]);
         assert_eq!(args(&v, FindingCode::OutsideProfile, "construct"), ["pad"]);
@@ -1997,7 +1997,7 @@ txn-free comment lines are fine too
             ["Assets:Cash"]
         );
 
-        let source = "\n2026-10-25 pad Assets:Bank:Giro Equity:Opening-Balances\n2026-10-26 balance Assets:Bank:Giro  0.00 ~ 0.00 EUR\n";
+        let source = "\n2026-10-25 pad Assets:Bank:Giro Equity:OpeningBalances\n2026-10-26 balance Assets:Bank:Giro  0.00 ~ 0.00 EUR\n";
         let v = admin(&appended(&base(), MANUAL, source));
         assert_codes(&v, &[FindingCode::PadOnSourceAccount]);
         assert_eq!(

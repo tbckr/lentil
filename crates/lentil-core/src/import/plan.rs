@@ -15,7 +15,7 @@ use crate::id;
 use crate::ledger::{Ledger, Txn};
 
 /// Counter account of the opening balance transaction of a source's first run.
-pub const OPENING_BALANCE_ACCOUNT: &str = "Equity:Opening-Balances";
+pub const OPENING_BALANCE_ACCOUNT: &str = "Equity:OpeningBalances";
 
 /// Everything an import run needs.
 #[derive(Clone, Copy, Debug)]
@@ -617,7 +617,7 @@ mod tests {
 
     const ACCOUNTS: &str = "2020-01-01 open Assets:Bank:Giro EUR
 2020-01-01 open Assets:Bank:Card EUR
-2020-01-01 open Equity:Opening-Balances
+2020-01-01 open Equity:OpeningBalances
 2020-01-01 open Expenses:Uncategorized
 2020-01-01 open Expenses:Food:Groceries
 2020-01-01 open Expenses:Home

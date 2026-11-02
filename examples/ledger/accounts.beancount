@@ -1,7 +1,7 @@
 ; Accounts: open, close and commodity directives. Editors append new open
 ; directives at the end of this file.
 
-2000-01-01 open Equity:Opening-Balances
+2000-01-01 open Equity:OpeningBalances
 2000-01-01 open Assets:Transfer
 2000-01-01 open Expenses:Uncategorized
 2000-01-01 open Expenses:Unattributed

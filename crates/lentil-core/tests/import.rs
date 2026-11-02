@@ -63,7 +63,7 @@ include "imports/*/*/*.beancount"
 const ACCOUNTS: &str = "2020-01-01 open Assets:Bank:Giro EUR
 2020-01-01 open Liabilities:Card EUR
 2020-01-01 open Assets:Wallet EUR
-2020-01-01 open Equity:Opening-Balances
+2020-01-01 open Equity:OpeningBalances
 2020-01-01 open Expenses:Uncategorized
 2020-01-01 open Expenses:Unattributed
 2020-01-01 open Expenses:Food:Groceries
@@ -295,7 +295,7 @@ fn giro_windows1252_with_stated_balance_on_the_run_date() {
   lentil_id: "giro-aa658d06d641"
   lentil_desc: "Opening balance"
   Assets:Bank:Giro           82.90 EUR
-  Equity:Opening-Balances
+  Equity:OpeningBalances
 
 2026-10-01 ! "Wohnbau Beispiel eG" "Miete Oktober"
   lentil_id: "giro-aee6867ae035"

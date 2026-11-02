@@ -246,7 +246,7 @@ fn first_checked_import_books_the_opening_balance() {
         "{second}"
     );
     assert!(
-        second.contains("Assets:Bank:Giro        106.17 EUR"),
+        second.contains("Assets:Bank:Giro       106.17 EUR"),
         "{second}"
     );
     assert!(
