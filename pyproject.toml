@@ -7,6 +7,9 @@ dependencies = []
 
 [dependency-groups]
 dev = ["beancount==3.2.3"]
+# Fava only shows the example ledger. It requires beancount<4 and shares the
+# lock with dev, so it holds Beancount at 3. Revisit once Beancount 4 is out.
+fava = ["fava==1.30.16"]
 
 [tool.uv]
 package = false

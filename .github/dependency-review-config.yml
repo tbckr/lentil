@@ -35,10 +35,22 @@ allow-licenses:
   - Zlib
 
 # Exempt per package (any version): Python Beancount and its dependencies are
-# the reference implementation for the differential tests. They run only in
-# development and CI and never ship (pyproject.toml).
+# the reference implementation for the differential tests, and Fava and its
+# dependencies show the example ledger. They run only in development and CI
+# and never ship (pyproject.toml).
 allow-dependencies-licenses:
   # GPL-2.0-only.
   - pkg:pypi/beancount
   # Apache-2.0 AND CNRI-Python.
   - pkg:pypi/regex
+  # Fava's dependencies from here on.
+  # GPL-2.0-only.
+  - pkg:pypi/beangulp
+  # GPL-2.0-only.
+  - pkg:pypi/beanquery
+  # 0BSD.
+  - pkg:pypi/chardet
+  # BSD with an acknowledgment clause.
+  - pkg:pypi/tatsu-lts
+  # PSF-2.0.
+  - pkg:pypi/typing-extensions

@@ -180,6 +180,15 @@ This walkthrough creates a ledger, adds one bank account and imports its CSV exp
 
 After a change in a text editor, `lentil check` validates the repository, and `lentil check --reference` also compares it with Python Beancount's `bean-check`. The README that `lentil init` writes into the repository explains its layout and roles and how to add further sources.
 
+## Example
+
+[`examples/ledger`](examples/ledger) is a fictional ledger after one import and a review, generated from the current code, so it shows exactly what Lentil writes.
+
+- [`imports/checking/2026/20261101T080000Z.beancount`](examples/ledger/imports/checking/2026/20261101T080000Z.beancount) is the import run: the opening balance, reviewed transactions with `*`, open ones with `!` and the balance assertion.
+- The review left an account change behind, and the `open` directive it needed at the end of `accounts.beancount`.
+- [`examples/checking.csv`](examples/checking.csv) is the bank export it came from, and `sources/checking.toml` its mapping.
+- `fava examples/ledger/main.beancount` shows it in Fava, as does `just fava` in the development shell. `lentil status` and `lentil check` work in the directory too. `lentil import` does not, because the ledger is not a Git repository of its own.
+
 ## Android app
 
 The app is the triage client: it shows a queue of open transactions, newest first, and one tap confirms one.

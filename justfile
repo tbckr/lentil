@@ -63,6 +63,11 @@ bean-check file:
 example:
     LENTIL_UPDATE_EXAMPLE=1 cargo nextest run -p lentil-core --test example example_is_up_to_date
 
+# Opens the example ledger in Fava; arguments go to Fava.
+[group('ledger')]
+fava *args:
+    uv run --frozen --group fava fava examples/ledger/main.beancount "$@"
+
 # Builds, unit-tests and lints the app and checks its licenses; arguments go to Gradle.
 [group('android')]
 android *args:

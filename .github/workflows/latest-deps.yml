@@ -5,9 +5,10 @@
 #   - rust: every direct crate within its requirement.
 #   - android: the Gradle catalog within each major, with verification
 #     metadata and lockfiles rewritten while the app builds, tests and lints.
-#   - pins: rustledger, UniFFI and Beancount at their newest release, which
-#     are upgraded deliberately. The differential tests guard rustledger and
-#     Beancount, the app build UniFFI's generated bindings.
+#   - pins: rustledger, UniFFI, Beancount and Fava at their newest release,
+#     which are upgraded deliberately. The differential tests guard rustledger
+#     and Beancount, the app build UniFFI's generated bindings; nothing tests
+#     Fava, which only shows the example ledger.
 #   - outdated: what the upgrades leave out, in the run's summary for review:
 #     newer majors, the platform versions and the reminders in the code. It
 #     never fails.
@@ -103,7 +104,7 @@ jobs:
             just upgrade android
 
   pins:
-    name: rustledger, UniFFI and Beancount (latest releases)
+    name: rustledger, UniFFI, Beancount and Fava (latest releases)
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:

@@ -11,7 +11,7 @@
 #            its major, then the Gradle verification metadata and lockfiles
 #            rewritten from an empty Gradle user home, which builds, tests
 #            and lints the app
-#   pins     the exact pins, rustledger, UniFFI and Beancount, to their
+#   pins     the exact pins, rustledger, UniFFI, Beancount and Fava, to their
 #            newest release; they are upgraded deliberately, so all leaves
 #            them out
 #   all      rust and android (default)
