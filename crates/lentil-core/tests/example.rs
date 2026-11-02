@@ -54,11 +54,12 @@ const ACCOUNTS: &str = "2026-01-01 open Assets:Bank:Checking EUR
 ";
 
 const RULES: &str = r#"[[rule]]
-desc = "(?i)salary"
+match = { purpose = "(?i)^salary" }
 account = "Income:Salary"
 
 [[rule]]
-desc = "(?i)^example housing co-op"
+match = { counterparty = "(?i)^example housing co-op$" }
+payee = "Housing Co-op"
 account = "Expenses:Housing:Rent"
 "#;
 

@@ -38,6 +38,13 @@ importer = "csv"
 mapping = "sources/giro.toml"
 "#;
 
+const RULES: &str = r#"
+[[rule]]
+match = { counterparty = "(?i)^example employer$", purpose = "(?i)^salary" }
+payee = "Employer"
+account = "Income:Salary"
+"#;
+
 struct Env {
     _dir: tempfile::TempDir,
     home: PathBuf,
@@ -84,12 +91,14 @@ impl Env {
             .unwrap()
     }
 
-    /// Adds the source `giro` by hand, as the README explains, pushes it and
-    /// returns the path of a matching export.
+    /// Adds the source `giro` and a rule by hand, as the README explains,
+    /// pushes them and returns the path of a matching export.
     fn add_giro_source(&self) -> PathBuf {
         let repo = self.repo.to_str().unwrap();
         let config = std::fs::read_to_string(self.repo.join("lentil.toml")).unwrap();
         std::fs::write(self.repo.join("lentil.toml"), format!("{config}{SOURCE}")).unwrap();
+        let rules = std::fs::read_to_string(self.repo.join("rules.toml")).unwrap();
+        std::fs::write(self.repo.join("rules.toml"), format!("{rules}{RULES}")).unwrap();
         std::fs::create_dir_all(self.repo.join("sources")).unwrap();
         std::fs::write(self.repo.join("sources/giro.toml"), MAPPING).unwrap();
         let accounts = std::fs::read_to_string(self.repo.join("accounts.beancount")).unwrap();
@@ -174,11 +183,24 @@ fn init_import_status_check() {
     assert!(subject.contains("Lentil-Role: importer"), "{subject}");
     assert!(subject.contains("Lentil-Client: lentil-cli/"), "{subject}");
 
-    // The working tree follows the pushed commit.
+    // The working tree follows the pushed commit, and the rule set the
+    // payee and the account.
     let runs: Vec<_> = std::fs::read_dir(env.repo.join("imports/giro/2026"))
         .unwrap()
+        .map(|e| std::fs::read_to_string(e.unwrap().path()).unwrap())
         .collect();
     assert_eq!(runs.len(), 1);
+    assert!(
+        runs[0].contains("2026-10-05 ! \"Employer\" \"Salary October\"\n"),
+        "{}",
+        runs[0]
+    );
+    assert!(
+        runs[0].contains("  lentil_counterparty: \"Example Employer\"\n"),
+        "{}",
+        runs[0]
+    );
+    assert!(runs[0].contains("  Income:Salary\n"), "{}", runs[0]);
 
     // A repeated import finds nothing new and writes no commit.
     let before = env.git(&env.remote, &["rev-parse", "main"]);
@@ -261,6 +283,37 @@ fn first_checked_import_books_the_opening_balance() {
     );
     assert!(!status.contains("Failed balance checks"), "{status}");
     assert!(ok(&env.lentil(&["-C", repo, "check"])).contains("valid"));
+}
+
+#[test]
+fn import_rejects_rules_in_the_old_format() {
+    let env = Env::new();
+    let repo = env.repo.to_str().unwrap();
+    ok(&env.lentil(&["init", repo, "--remote", env.remote.to_str().unwrap()]));
+    let export = env.add_giro_source();
+    std::fs::write(
+        env.repo.join("rules.toml"),
+        "[[rule]]\ndesc = \"(?i)salary\"\naccount = \"Income:Salary\"\n",
+    )
+    .unwrap();
+    env.git(&env.repo, &["commit", "-q", "-am", "admin: old rules"]);
+    env.git(&env.repo, &["push", "-q", "origin", "main"]);
+    let before = env.git(&env.remote, &["rev-parse", "main"]);
+    let out = env.lentil(&[
+        "-C",
+        repo,
+        "import",
+        "giro",
+        export.to_str().unwrap(),
+        "--run-date",
+        "2026-10-20",
+        "--yes",
+    ]);
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("rules.toml is invalid"), "{stderr}");
+    assert!(stderr.contains("desc"), "{stderr}");
+    assert_eq!(before, env.git(&env.remote, &["rev-parse", "main"]));
 }
 
 #[test]

@@ -184,21 +184,27 @@ fn placeholder_file(pattern: &str) -> String {
     )
 }
 
-const RULES: &str = r#"# Suggestion rules (Lentil Convention Spec, section 16). Rules are evaluated
-# in file order and the first match wins. Without a match, the importer
-# learns from reviewed transactions, and only then uses fallback_account.
-# Regular expressions use RE2 syntax without lookaround.
+const RULES: &str = r#"# Suggestion rules (Lentil Convention Spec, section 16). A rule matches the
+# bank's original fields and sets the payee, the counter account or both.
+# Rules are evaluated in file order; for each field, the first matching rule
+# that sets it wins. Without a payee from a rule, the payee is the bank's
+# counterparty. Without an account from a rule, the importer learns from
+# reviewed transactions, and only then uses fallback_account.
 #
 # [[rule]]
-# source = "giro"                        # optional: limit the rule to one source
-# desc = "(?i)corner grocery"            # regular expression on counterparty and purpose
+# match = { source = "giro", counterparty = "(?i)^corner grocery" }
+# payee = "Corner Grocery"
 # account = "Expenses:Food:Groceries"
+#
+# match holds regular expressions on counterparty, purpose and type, at least
+# one, and optionally the source the rule is limited to. A missing field
+# matches as empty text. Regular expressions use RE2 syntax without lookaround.
 #
 # A rule never books to a source account. Transfers between your own accounts
 # go to Assets:Transfer on both sides:
 #
 # [[rule]]
-# desc = "(?i)card statement"
+# match = { purpose = "(?i)card statement" }
 # account = "Assets:Transfer"
 "#;
 
@@ -479,6 +485,24 @@ include "prices/*/*.beancount"
         assert!(text.contains("# [[rule]]"));
         let table: toml::Table = toml::from_str(text).unwrap();
         assert!(table.is_empty());
+    }
+
+    #[test]
+    fn rules_file_examples_are_valid_rules() {
+        let files = init_files(&options());
+        let text = files.text(RULES_FILE).unwrap();
+        // Each example runs from `# [[rule]]` to the next line that is only `#`.
+        let mut examples = String::new();
+        let mut inside = false;
+        for line in text.lines() {
+            inside = (inside || line == "# [[rule]]") && line != "#";
+            if inside {
+                examples.push_str(&line[2..]);
+                examples.push('\n');
+            }
+        }
+        let rules = crate::import::Rules::parse(&examples).unwrap();
+        assert_eq!(rules.len(), 2, "{examples}");
     }
 
     #[test]

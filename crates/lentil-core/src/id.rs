@@ -23,8 +23,8 @@ pub fn normalize_text(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// The original text of a record (spec section 5). The importer matches
-/// rules and looks up learned suggestions by it.
+/// The original text of a record (spec section 5). The importer looks up
+/// learned suggestions by it and shows it for possible duplicates.
 #[must_use]
 pub fn description(record: &Record) -> String {
     original_text(record.counterparty.as_deref(), record.purpose.as_deref())

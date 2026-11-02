@@ -147,6 +147,7 @@ Every requirement has an ID and a target release; how it is implemented is defin
 | FR-C6 | If the CSV contains no balance, the CLI asks for the balance shown in online banking and the date it refers to, and writes it as a balance assertion with zero tolerance. The user may skip; `lentil status` then reports the import as unchecked. | v0.1 |
 | FR-C7 | If the export no longer reproduces the ID of an already imported transaction in its date range, for example after a mapping change, a new transaction with the same date, amount and currency is reported as a possible duplicate and imported only after confirmation. | v0.1 |
 | FR-C8 | Imported transactions keep the bank's counterparty, purpose and booking type as separate protected metadata. Suggestions learn from counterparty and purpose, not from a payee or narration the user has edited. | v0.1 |
+| FR-C18 | Rules in `rules.toml` match the bank's counterparty, purpose and booking type and set the payee, the counter account or both; for each field, the first matching rule that sets it wins ([Spec section 16](SPEC.md#16-suggestion-rules)). | v0.1 |
 | FR-C9 | `lentil source add` drafts a mapping from a sample export (encoding, delimiter, header, date and number formats, columns) and shows the first parsed rows for confirmation. | v1 |
 | FR-C10 | Transfers between own accounts are detected, and both sides are booked against the transfer account. | v1 |
 | FR-C11 | Corrections made during triage improve future suggestions; rules live in the repository. | v1 |
@@ -228,6 +229,6 @@ v0.1 proves the core loop, and v1 makes Lentil fit for everyday use. The phases 
 
 | Phase | Content | Scenarios | Requirements |
 | --- | --- | --- | --- |
-| v0.1 | Core loop: set up a repository, import CSV exports, triage on Android, read-only view in Fava | N1–N4 | FR-A1–A5, FR-B1–B4, FR-C1–C8, FR-D1–D6, FR-E1–E3, FR-F1–F7 |
+| v0.1 | Core loop: set up a repository, import CSV exports, triage on Android, read-only view in Fava | N1–N4 | FR-A1–A5, FR-B1–B4, FR-C1–C8, FR-C18, FR-D1–D6, FR-E1–E3, FR-F1–F7 |
 | v1 | Everyday use: capture, overview, month-end close, taxes, foreign currencies, conflict resolution, adopting existing ledgers, drafting CSV mappings | N5–N12 | FR-A6, FR-A7, FR-B5, FR-C9–C12, FR-D7–D11, FR-E4–E6, FR-F8 |
 | Later | Automatic bank access, own web UI, desktop app | N13, N14 | FR-C13–C17, FR-E7, FR-E8 |

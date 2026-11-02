@@ -243,7 +243,7 @@ impl Inputs {
                 CliError(i18n::msg(
                     lang,
                     Msg::RulesInvalid,
-                    &[("detail", &e.to_string())],
+                    &[("detail", &i18n::rules_error(lang, &e))],
                 ))
             })?;
         let statement = read_statement(export, &mapping, &source.currency).map_err(|e| {

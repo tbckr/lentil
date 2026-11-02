@@ -9,7 +9,7 @@ use jiff::{SignedDuration, Timestamp};
 use rust_decimal::Decimal;
 
 use super::render::{render_run, run_path};
-use super::{Learned, Record, Rules, Statement};
+use super::{Learned, Original, Record, Rules, Statement};
 use crate::config::{Config, SourceConfig};
 use crate::id;
 use crate::layout::OPENING_BALANCES_ACCOUNT;
@@ -78,7 +78,7 @@ pub struct PlannedTxn {
     pub id: String,
     /// Booking date.
     pub date: Date,
-    /// Payee: the normalized counterparty, if any.
+    /// Payee: a rule's payee, otherwise the normalized counterparty, if any.
     pub payee: Option<String>,
     /// Narration: the normalized purpose, or empty.
     pub narration: String,
@@ -251,16 +251,22 @@ pub fn plan_import(request: &ImportRequest<'_>) -> ImportPlan {
         }
         let counterparty = original(record.counterparty.as_deref());
         let purpose = original(record.purpose.as_deref());
-        let payee = counterparty.clone();
-        let narration = purpose.clone().unwrap_or_default();
-        let (counter_account, suggestion) = suggest(
-            request,
-            &learned,
-            record,
-            &desc,
-            payee.as_deref(),
-            &narration,
+        let booking_type = original(record.booking_type.as_deref());
+        let found = request.rules.suggest(
+            &source.id,
+            &Original::new(
+                counterparty.as_deref(),
+                purpose.as_deref(),
+                booking_type.as_deref(),
+            ),
         );
+        let payee = found
+            .payee
+            .map(str::to_owned)
+            .or_else(|| counterparty.clone());
+        let narration = purpose.clone().unwrap_or_default();
+        let (counter_account, suggestion) =
+            suggest(request, &learned, record, found.account, &desc);
         transactions.push(PlannedTxn {
             id: id.clone(),
             date: record.booking_date,
@@ -268,7 +274,7 @@ pub fn plan_import(request: &ImportRequest<'_>) -> ImportPlan {
             narration,
             counterparty,
             purpose,
-            booking_type: original(record.booking_type.as_deref()),
+            booking_type,
             reference: record.reference.clone(),
             amount: record.amount,
             currency: record.currency.clone(),
@@ -376,20 +382,17 @@ fn original(text: Option<&str>) -> Option<String> {
     Some(id::normalize_text(text?)).filter(|t| !t.is_empty())
 }
 
-/// Rules first, then a learned account that is open on the booking date and
-/// not a source account, then `fallback_account`.
+/// The counter account: a rule's account first, then a learned account for
+/// the original text `desc` that is open on the booking date and not a
+/// source account, then `fallback_account`.
 fn suggest(
     request: &ImportRequest<'_>,
     learned: &Learned,
     record: &Record,
+    rule_account: Option<&str>,
     desc: &str,
-    payee: Option<&str>,
-    narration: &str,
 ) -> (String, SuggestionKind) {
-    if let Some(account) = request
-        .rules
-        .suggest(&request.source.id, desc, payee, narration)
-    {
+    if let Some(account) = rule_account {
         return (account.to_owned(), SuggestionKind::Rule);
     }
     if let Some(account) = learned.suggest(desc).filter(|a| {
@@ -1019,7 +1022,7 @@ mapping = "sources/card.toml"
             ]
         );
         f.rules = Rules::parse(
-            "[[rule]]\ndesc = \"(?i)bakery|utilities\"\naccount = \"Expenses:Home\"\n",
+            "[[rule]]\nmatch = { counterparty = \"(?i)bakery|utilities\" }\naccount = \"Expenses:Home\"\n",
         )
         .unwrap();
         let plan = f.plan(&s, "2026-10-20", UserBalance::Skipped);
@@ -1030,6 +1033,88 @@ mapping = "sources/card.toml"
         assert_eq!(
             kinds(&plan)[1],
             ("Expenses:Home".into(), SuggestionKind::Rule)
+        );
+        f.assert_loads(&plan);
+    }
+
+    #[test]
+    fn rules_set_the_payee_from_the_normalized_original_fields() {
+        let existing = [
+            history(),
+            "2026-05-01 * \"Corner Grocery\" \"Card payment\"\n  lentil_id: \"giro-111111111111\"\n  lentil_counterparty: \"CORNER GROCERY 4711\"\n  lentil_purpose: \"Card payment\"\n  Assets:Bank:Giro  -2.00 EUR\n  Expenses:Food:Groceries\n\n".to_owned(),
+        ]
+        .concat();
+        let mut f = Fixture::new(&existing);
+        f.rules = Rules::parse(
+            r#"
+[[rule]]
+match = { counterparty = "^CORNER GROCERY 4711$", type = "^Debit card$" }
+payee = "Corner Grocery"
+
+[[rule]]
+match = { counterparty = "^CITY UTILITIES$" }
+payee = "City Utilities"
+account = "Expenses:Home"
+"#,
+        )
+        .unwrap();
+        let mut grocery = rec(
+            "2026-10-18",
+            "-1.00",
+            Some(" CORNER  GROCERY 4711 "),
+            Some("Card payment"),
+        );
+        grocery.booking_type = Some("Debit\tcard".into());
+        let utilities = rec("2026-10-18", "-2.00", Some("CITY UTILITIES"), None);
+        let untyped = rec(
+            "2026-10-18",
+            "-3.00",
+            Some("CORNER GROCERY 4711"),
+            Some("Card payment"),
+        );
+        let s = statement(vec![grocery, utilities, untyped]);
+        let plan = f.plan(&s, "2026-10-20", UserBalance::Skipped);
+        let written: Vec<_> = plan
+            .transactions
+            .iter()
+            .map(|t| {
+                (
+                    t.payee.as_deref(),
+                    t.counterparty.as_deref(),
+                    t.counter_account.as_str(),
+                    t.suggestion,
+                )
+            })
+            .collect();
+        assert_eq!(
+            written,
+            vec![
+                // A payee-only rule leaves the account to the learned suggestion.
+                (
+                    Some("Corner Grocery"),
+                    Some("CORNER GROCERY 4711"),
+                    "Expenses:Food:Groceries",
+                    SuggestionKind::Learned
+                ),
+                (
+                    Some("City Utilities"),
+                    Some("CITY UTILITIES"),
+                    "Expenses:Home",
+                    SuggestionKind::Rule
+                ),
+                // No type: the first rule does not match, the payee stays the counterparty.
+                (
+                    Some("CORNER GROCERY 4711"),
+                    Some("CORNER GROCERY 4711"),
+                    "Expenses:Food:Groceries",
+                    SuggestionKind::Learned
+                ),
+            ]
+        );
+        let content = &plan.run_file.as_ref().unwrap().content;
+        assert!(
+            content.contains("2026-10-18 ! \"Corner Grocery\" \"Card payment\"\n"),
+            "{content}"
         );
         f.assert_loads(&plan);
     }

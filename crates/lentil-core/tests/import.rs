@@ -72,12 +72,12 @@ const ACCOUNTS: &str = "2020-01-01 open Assets:Bank:Giro EUR
 
 const RULES: &str = r#"
 [[rule]]
-source = "giro"
-desc = "(?i)eckladen"
+match = { source = "giro", counterparty = "(?i)eckladen", type = "^Kartenzahlung$" }
+payee = "Eckladen"
 account = "Expenses:Food:Groceries"
 
 [[rule]]
-desc = "(?i)^beispiel gmbh gehalt"
+match = { counterparty = "(?i)^beispiel gmbh$", purpose = "(?i)^gehalt" }
 account = "Income:Salary"
 "#;
 
@@ -330,7 +330,7 @@ fn giro_windows1252_with_stated_balance_on_the_run_date() {
   Assets:Bank:Giro         2450.00 EUR
   Income:Salary
 
-2026-10-19 ! "Eckladen Müller" "Kartenzahlung 4711"
+2026-10-19 ! "Eckladen" "Kartenzahlung 4711"
   lentil_id: "giro-5d97a3acf95e"
   lentil_counterparty: "Eckladen Müller"
   lentil_purpose: "Kartenzahlung 4711"
@@ -338,7 +338,7 @@ fn giro_windows1252_with_stated_balance_on_the_run_date() {
   Assets:Bank:Giro          -42.17 EUR
   Expenses:Food:Groceries
 
-2026-10-19 ! "Eckladen Müller" "Kartenzahlung 4711"
+2026-10-19 ! "Eckladen" "Kartenzahlung 4711"
   lentil_id: "giro-ebbf18d5061b"
   lentil_counterparty: "Eckladen Müller"
   lentil_purpose: "Kartenzahlung 4711"

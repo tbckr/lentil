@@ -121,7 +121,7 @@ Every transaction Lentil writes carries a stable `lentil_id`; all edits, dedupli
 
 - `lentil_id` MUST be unique among active and commented-out transactions (section 10, `dismiss`).
 - No client may change, add or remove `lentil_id`, `lentil_ref` or the original fields `lentil_counterparty`, `lentil_purpose` and `lentil_type`. Users rename payees and narrations freely; the original fields keep the bank's wording, for example for finding the original statement line.
-- A transaction's original text is `lentil_counterparty` and `lentil_purpose` joined by one space, a missing field counting as empty, and normalized as above. Suggestions match and learn on it (section 16).
+- A transaction's original text is `lentil_counterparty` and `lentil_purpose` joined by one space, a missing field counting as empty, and normalized as above. Learned suggestions key on it, while rules match each original field on its own (section 16).
 - Transactions without `lentil_id` (for example written by hand in an editor) are valid but read-only for Lentil until the admin role assigns IDs.
 
 ## 6. Review state
@@ -189,6 +189,7 @@ Each import run reads one bank export through an adapter (section 15), writes ex
 - Importers MUST import only transactions booked before the run date; later ones follow with a later run. An export can end in the middle of the run date, and a later export would then number identical same-day transactions differently (section 5).
 - Each transaction has exactly two postings: the source posting with the amount as reported by the bank, and a counter posting with elided amount on the suggested account, or on `fallback_account` if there is no suggestion. The opening transaction (below) has the same shape.
 - Each transaction carries `lentil_id` (section 5), `lentil_ref` if the bank provides one, and each original field that is not empty, in the order `lentil_counterparty`, `lentil_purpose`, `lentil_type`.
+- The payee is the payee of a matching rule (section 16), otherwise the counterparty; a transaction with neither has no payee. The narration is the purpose, or empty without one. The opening transaction (below) is the exception: it has no payee, its narration is fixed, and rules do not apply to it.
 - Transactions are ordered by booking date, then in the order the bank lists them.
 - Before writing, the importer collects every `lentil_id` in the ledger, including those of commented-out transactions, and skips transactions whose ID already exists.
 - A transaction can get a new ID when the export describes it differently, for example after a mapping change or a change in the bank's wording. If an existing transaction of the same source lies between the export's first and last booking date and the export does not reproduce its `lentil_id`, any new transaction with that transaction's booking date, amount and currency is a possible duplicate. The importer MUST NOT write it without confirmation: the CLI shows both and asks, and an unattended import skips it and reports it.
@@ -418,18 +419,26 @@ column = "Saldo"                       # with from = "column"
 
 ## 16. Suggestion rules
 
-Explicit rules live in `rules.toml` and always win; learned suggestions are derived from the ledger's history and are never stored.
+Explicit rules live in `rules.toml`, set the payee and the counter account from the original fields, and always win; learned suggestions are derived from the ledger's history and are never stored.
 
 ```toml
 [[rule]]
-source = "giro"                        # optional
-desc = "(?i)corner grocery"            # regular expression on the original text
+match = { source = "giro", counterparty = "(?i)^corner grocery" }
+payee = "Corner Grocery"
 account = "Expenses:Food:Groceries"
+
+[[rule]]
+match = { counterparty = "(?i)^city utilities$" }
+payee = "City Utilities"
 ```
 
-- A rule matches on `desc` (the original text, section 5), `payee` and/or `narration`, optionally limited to one `source`. `account` is required and MUST NOT be a source account; transfers go to the transfer account (section 8). `desc` is preferred, because it never changes.
+- `match` holds the conditions: regular expressions on `counterparty`, `purpose` and `type`, which are the original fields (section 5), and optionally the ID of the one `source` the rule applies to. A rule MUST give at least one regular expression, and all of its conditions must match. A missing original field matches as the empty string.
+- Rules match only the original fields, never the payee or the narration, which users may edit. A rule therefore matches a transaction the same way at import and at any later time.
+- A rule sets `payee`, `account` or both, and MUST set at least one. `payee` is normalized like the original fields and MUST NOT be empty then. `account` MUST NOT be a source account; transfers go to the transfer account (section 8).
+- A client MUST reject a `rules.toml` with an unknown key or a rule without `match`, so a rule written for an earlier format never applies with a different meaning.
 - Regular expressions use RE2 syntax without lookaround, so implementations in different languages behave the same.
-- Rules are evaluated in file order; the first match wins. Only if no rule matches does the importer use a learned suggestion, and only then `fallback_account`.
+- Rules are evaluated in file order. For each field, the first matching rule that sets it wins, so a payee rule and a later account rule can both apply to one transaction (PRD: FR-C18).
+- The importer takes the payee from a rule, otherwise from the counterparty. It takes the account from a rule, otherwise from a learned suggestion, and only then uses `fallback_account`.
 - Learned suggestions are computed from reviewed (`*`) transactions. Their input is the original text (section 5) and the source account, never payee or narration, which users may edit (PRD: FR-C8). They never suggest a source account, and they need no file of their own, so any client can recompute them.
 - In v0.1 only the admin role edits `rules.toml`. In v1 editors add rules through an `add-rule` operation (PRD: FR-C11).
 

@@ -4,7 +4,7 @@
 //! messages into text. Templates use `{name}` placeholders.
 
 use lentil_core::finding::{Finding, FindingCode, Severity};
-use lentil_core::import::ImportError;
+use lentil_core::import::{ImportError, RulesError};
 use lentil_core::intent::ConflictCode;
 use lentil_core::sync::GitError;
 
@@ -395,6 +395,51 @@ pub fn import_error(lang: Lang, error: &ImportError) -> String {
     fill(template, &args)
 }
 
+/// Why `rules.toml` is rejected, as text. A syntax error keeps the TOML
+/// parser's own message.
+pub fn rules_error(lang: Lang, error: &RulesError) -> String {
+    use RulesError::*;
+    let (en, de, args): (&str, &str, Vec<(&str, String)>) = match error {
+        Syntax(detail) => ("{detail}", "{detail}", vec![("detail", detail.clone())]),
+        Regex(pattern) => (
+            "invalid regular expression {pattern}",
+            "ungültiger regulärer Ausdruck {pattern}",
+            vec![("pattern", format!("{pattern:?}"))],
+        ),
+        NoCondition(rule) => (
+            "rule {rule} has no regular expression in match",
+            "Regel {rule} hat keinen regulären Ausdruck in match",
+            vec![("rule", rule.to_string())],
+        ),
+        NoOutput(rule) => (
+            "rule {rule} sets neither payee nor account",
+            "Regel {rule} setzt weder payee noch account",
+            vec![("rule", rule.to_string())],
+        ),
+        EmptyPayee(rule) => (
+            "rule {rule} has an empty payee",
+            "Regel {rule} hat einen leeren payee",
+            vec![("rule", rule.to_string())],
+        ),
+        InvalidAccount(account) => (
+            "{account} is not a valid account name",
+            "{account} ist kein gültiger Kontoname",
+            vec![("account", account.clone())],
+        ),
+        SourceAccount(account) => (
+            "{account} is a bank account and cannot be a rule's account",
+            "{account} ist ein Bankkonto und kann nicht das Konto einer Regel sein",
+            vec![("account", account.clone())],
+        ),
+    };
+    let template = match lang {
+        Lang::En => en,
+        Lang::De => de,
+    };
+    let args: Vec<(&str, &str)> = args.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    fill(template, &args)
+}
+
 /// A conflict code as text.
 #[allow(dead_code)] // The CLI imports but does not replay editor intents yet.
 pub fn conflict(lang: Lang, code: ConflictCode) -> &'static str {
@@ -479,6 +524,26 @@ mod tests {
                 &[("count", "3"), ("source", "giro")]
             ),
             "3 new transactions from giro."
+        );
+    }
+
+    #[test]
+    fn translates_rules_errors() {
+        assert_eq!(
+            msg(
+                Lang::De,
+                Msg::RulesInvalid,
+                &[("detail", &rules_error(Lang::De, &RulesError::NoOutput(2)))]
+            ),
+            "rules.toml ist ungültig: Regel 2 setzt weder payee noch account"
+        );
+        assert_eq!(
+            rules_error(Lang::En, &RulesError::Regex("(?<=x)".into())),
+            "invalid regular expression \"(?<=x)\""
+        );
+        assert_eq!(
+            rules_error(Lang::En, &RulesError::Syntax("unknown field `desc`".into())),
+            "unknown field `desc`"
         );
     }
 

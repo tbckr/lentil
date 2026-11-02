@@ -8,6 +8,7 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::config::Config;
+use crate::id;
 use crate::ledger::Ledger;
 
 /// Path of the rules file, relative to the repository root.
@@ -19,29 +20,91 @@ pub struct Rules {
     rules: Vec<Rule>,
 }
 
-/// One `[[rule]]`: every given condition must match.
+/// One `[[rule]]`: every condition of its `match` must match, and it sets
+/// the payee, the account or both.
 #[derive(Clone, Debug)]
 struct Rule {
     source: Option<String>,
-    desc: Option<Regex>,
-    payee: Option<Regex>,
-    narration: Option<Regex>,
-    account: String,
+    counterparty: Option<Regex>,
+    purpose: Option<Regex>,
+    booking_type: Option<Regex>,
+    payee: Option<String>,
+    account: Option<String>,
+}
+
+impl Rule {
+    /// Whether the rule's `source` (if given) equals `source` and each of its
+    /// regular expressions matches its original field.
+    fn matches(&self, source: &str, original: &Original<'_>) -> bool {
+        let hit = |re: &Option<Regex>, text: &str| re.as_ref().is_none_or(|re| re.is_match(text));
+        self.source.as_deref().is_none_or(|s| s == source)
+            && hit(&self.counterparty, original.counterparty)
+            && hit(&self.purpose, original.purpose)
+            && hit(&self.booking_type, original.booking_type)
+    }
+}
+
+/// The original fields of one transaction (spec section 5), which rules
+/// match. Each is normalized as the run file writes it; a missing field is
+/// the empty string.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Original<'a> {
+    /// `lentil_counterparty`.
+    pub counterparty: &'a str,
+    /// `lentil_purpose`.
+    pub purpose: &'a str,
+    /// `lentil_type`.
+    pub booking_type: &'a str,
+}
+
+impl<'a> Original<'a> {
+    /// The original fields from the values of `lentil_counterparty`,
+    /// `lentil_purpose` and `lentil_type`, a missing one counting as empty.
+    #[must_use]
+    pub fn new(
+        counterparty: Option<&'a str>,
+        purpose: Option<&'a str>,
+        booking_type: Option<&'a str>,
+    ) -> Self {
+        Self {
+            counterparty: counterparty.unwrap_or_default(),
+            purpose: purpose.unwrap_or_default(),
+            booking_type: booking_type.unwrap_or_default(),
+        }
+    }
+}
+
+/// What the rules set for one transaction: for each field, the value of the
+/// first matching rule that sets it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RuleMatch<'r> {
+    /// The payee, normalized.
+    pub payee: Option<&'r str>,
+    /// The counter account.
+    pub account: Option<&'r str>,
 }
 
 /// Why `rules.toml` is rejected.
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum RulesError {
-    /// Not TOML, an unknown key or a missing `account`.
+    /// Not TOML, an unknown key or a missing `match`.
     #[error("invalid rules.toml: {0}")]
     Syntax(String),
     /// A regular expression does not compile.
     #[error("invalid regular expression {0:?}")]
     Regex(String),
-    /// A rule matches on nothing (no `desc`, `payee` or `narration`).
-    /// Carries the rule's 1-based position in the file.
-    #[error("rule {0} has no condition")]
+    /// A rule's `match` has no regular expression (`counterparty`, `purpose`
+    /// or `type`). Carries the rule's 1-based position in the file.
+    #[error("rule {0} has no regular expression in match")]
     NoCondition(usize),
+    /// A rule sets neither `payee` nor `account`. Carries the rule's 1-based
+    /// position in the file.
+    #[error("rule {0} sets neither payee nor account")]
+    NoOutput(usize),
+    /// A rule's `payee` is empty after normalization. Carries the rule's
+    /// 1-based position in the file.
+    #[error("rule {0} has an empty payee")]
+    EmptyPayee(usize),
     /// A rule's `account` is not a valid Beancount account name.
     #[error("invalid account {0:?}")]
     InvalidAccount(String),
@@ -61,11 +124,20 @@ struct RawRules {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawRule {
-    source: Option<String>,
-    desc: Option<String>,
+    #[serde(rename = "match")]
+    conditions: RawMatch,
     payee: Option<String>,
-    narration: Option<String>,
-    account: String,
+    account: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawMatch {
+    source: Option<String>,
+    counterparty: Option<String>,
+    purpose: Option<String>,
+    #[serde(rename = "type")]
+    booking_type: Option<String>,
 }
 
 fn compile(pattern: Option<String>) -> Result<Option<Regex>, RulesError> {
@@ -105,17 +177,32 @@ impl Rules {
             .into_iter()
             .enumerate()
             .map(|(i, r)| {
-                if r.desc.is_none() && r.payee.is_none() && r.narration.is_none() {
-                    return Err(RulesError::NoCondition(i + 1));
+                let position = i + 1;
+                let RawMatch {
+                    source,
+                    counterparty,
+                    purpose,
+                    booking_type,
+                } = r.conditions;
+                if counterparty.is_none() && purpose.is_none() && booking_type.is_none() {
+                    return Err(RulesError::NoCondition(position));
                 }
-                if !is_account_name(&r.account) {
-                    return Err(RulesError::InvalidAccount(r.account));
+                if r.payee.is_none() && r.account.is_none() {
+                    return Err(RulesError::NoOutput(position));
+                }
+                let payee = r.payee.map(|p| id::normalize_text(&p));
+                if payee.as_deref() == Some("") {
+                    return Err(RulesError::EmptyPayee(position));
+                }
+                if let Some(account) = r.account.as_ref().filter(|a| !is_account_name(a)) {
+                    return Err(RulesError::InvalidAccount(account.clone()));
                 }
                 Ok(Rule {
-                    source: r.source,
-                    desc: compile(r.desc)?,
-                    payee: compile(r.payee)?,
-                    narration: compile(r.narration)?,
+                    source,
+                    counterparty: compile(counterparty)?,
+                    purpose: compile(purpose)?,
+                    booking_type: compile(booking_type)?,
+                    payee,
                     account: r.account,
                 })
             })
@@ -124,6 +211,7 @@ impl Rules {
     }
 
     /// Checks that no rule books to a source account (spec section 16).
+    /// Rules that set only the payee book nowhere.
     ///
     /// # Errors
     ///
@@ -132,9 +220,10 @@ impl Rules {
         match self
             .rules
             .iter()
-            .find(|r| config.is_source_account(&r.account))
+            .filter_map(|r| r.account.as_deref())
+            .find(|a| config.is_source_account(a))
         {
-            Some(rule) => Err(RulesError::SourceAccount(rule.account.clone())),
+            Some(account) => Err(RulesError::SourceAccount(account.to_owned())),
             None => Ok(()),
         }
     }
@@ -151,30 +240,20 @@ impl Rules {
         self.rules.is_empty()
     }
 
-    /// The account of the first matching rule.
+    /// The payee and the account the rules set for a transaction of `source`
+    /// with these original fields.
     ///
-    /// A rule matches if its `source` (if given) equals `source` and every
-    /// given regular expression matches; a missing payee is matched as the
-    /// empty string.
+    /// A rule matches if its `source` (if given) equals `source` and each of
+    /// its regular expressions matches. For each field, the first matching
+    /// rule that sets it wins, so a payee rule and a later account rule both
+    /// apply.
     #[must_use]
-    pub fn suggest(
-        &self,
-        source: &str,
-        desc: &str,
-        payee: Option<&str>,
-        narration: &str,
-    ) -> Option<&str> {
-        let payee = payee.unwrap_or_default();
-        let hit = |re: &Option<Regex>, text: &str| re.as_ref().is_none_or(|re| re.is_match(text));
-        self.rules
-            .iter()
-            .find(|r| {
-                r.source.as_deref().is_none_or(|s| s == source)
-                    && hit(&r.desc, desc)
-                    && hit(&r.payee, payee)
-                    && hit(&r.narration, narration)
-            })
-            .map(|r| r.account.as_str())
+    pub fn suggest(&self, source: &str, original: &Original<'_>) -> RuleMatch<'_> {
+        let mut matching = self.rules.iter().filter(|r| r.matches(source, original));
+        RuleMatch {
+            payee: matching.clone().find_map(|r| r.payee.as_deref()),
+            account: matching.find_map(|r| r.account.as_deref()),
+        }
     }
 }
 
@@ -282,25 +361,43 @@ mod tests {
 
     const RULES: &str = r#"
 [[rule]]
-source = "giro"
-desc = "(?i)corner grocery"
+match = { source = "giro", counterparty = "(?i)corner grocery" }
+payee = "Corner Grocery"
 account = "Expenses:Food:Groceries"
 
 [[rule]]
-payee = "^City Utilities$"
-narration = "(?i)electricity"
+match = { counterparty = "^CITY UTILITIES$", purpose = "(?i)electricity", type = "^Direct debit$" }
 account = "Expenses:Home:Electricity"
 
 [[rule]]
-desc = "(?i)grocery"
+match = { counterparty = "(?i)grocery" }
 account = "Expenses:Food:Other"
 "#;
+
+    fn original<'a>(
+        counterparty: &'a str,
+        purpose: &'a str,
+        booking_type: &'a str,
+    ) -> Original<'a> {
+        Original {
+            counterparty,
+            purpose,
+            booking_type,
+        }
+    }
+
+    fn found<'r>(payee: Option<&'r str>, account: Option<&'r str>) -> RuleMatch<'r> {
+        RuleMatch { payee, account }
+    }
 
     #[test]
     fn empty_file_has_no_rules() {
         let rules = Rules::parse("").unwrap();
         assert!(rules.is_empty());
-        assert_eq!(rules.suggest("giro", "x", None, "x"), None);
+        assert_eq!(
+            rules.suggest("giro", &original("x", "x", "x")),
+            RuleMatch::default()
+        );
     }
 
     #[test]
@@ -308,58 +405,176 @@ account = "Expenses:Food:Other"
         let rules = Rules::parse(RULES).unwrap();
         assert_eq!(rules.len(), 3);
         assert!(!rules.is_empty());
+        let grocery = original("CORNER GROCERY 4711", "", "");
         assert_eq!(
-            rules.suggest("giro", "CORNER GROCERY 4711", None, ""),
-            Some("Expenses:Food:Groceries")
+            rules.suggest("giro", &grocery),
+            found(Some("Corner Grocery"), Some("Expenses:Food:Groceries"))
         );
         // The first rule is limited to giro; the third matches for other sources.
         assert_eq!(
-            rules.suggest("card", "CORNER GROCERY 4711", None, ""),
-            Some("Expenses:Food:Other")
+            rules.suggest("card", &grocery),
+            found(None, Some("Expenses:Food:Other"))
         );
-        assert_eq!(rules.suggest("giro", "BAKERY", None, ""), None);
+        assert_eq!(
+            rules.suggest("giro", &original("BAKERY", "", "")),
+            RuleMatch::default()
+        );
     }
 
     #[test]
-    fn every_given_condition_must_match() {
+    fn every_condition_must_match() {
         let rules = Rules::parse(RULES).unwrap();
+        let electricity = found(None, Some("Expenses:Home:Electricity"));
         assert_eq!(
-            rules.suggest("giro", "X", Some("City Utilities"), "Electricity 10/2026"),
-            Some("Expenses:Home:Electricity")
+            rules.suggest(
+                "giro",
+                &original("CITY UTILITIES", "Electricity 10/2026", "Direct debit")
+            ),
+            electricity
         );
-        assert_eq!(
-            rules.suggest("giro", "X", Some("City Utilities"), "Water"),
-            None
-        );
-        assert_eq!(rules.suggest("giro", "X", None, "Electricity"), None);
+        for other in [
+            original("CITY UTILITIES LTD", "Electricity", "Direct debit"),
+            original("CITY UTILITIES", "Water", "Direct debit"),
+            original("CITY UTILITIES", "Electricity", "Transfer"),
+            original("CITY UTILITIES", "Electricity", ""),
+        ] {
+            assert_eq!(
+                rules.suggest("giro", &other),
+                RuleMatch::default(),
+                "{other:?}"
+            );
+        }
     }
 
     #[test]
-    fn missing_payee_matches_as_empty() {
-        let rules =
-            Rules::parse("[[rule]]\npayee = \"^$\"\naccount = \"Expenses:Misc\"\n").unwrap();
-        assert_eq!(rules.suggest("giro", "x", None, "y"), Some("Expenses:Misc"));
-        assert_eq!(rules.suggest("giro", "x", Some("A"), "y"), None);
+    fn each_field_takes_the_first_rule_that_sets_it() {
+        let rules = Rules::parse(
+            r#"
+[[rule]]
+match = { counterparty = "(?i)^corner grocery" }
+payee = "Corner Grocery"
+
+[[rule]]
+match = { purpose = "(?i)card payment" }
+payee = "Card"
+account = "Expenses:Food:Groceries"
+
+[[rule]]
+match = { purpose = "(?i)card" }
+account = "Expenses:Food:Other"
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            rules.suggest("giro", &original("CORNER GROCERY 4711", "Card payment", "")),
+            found(Some("Corner Grocery"), Some("Expenses:Food:Groceries"))
+        );
+        assert_eq!(
+            rules.suggest("giro", &original("BAKERY", "Card payment", "")),
+            found(Some("Card"), Some("Expenses:Food:Groceries"))
+        );
+        assert_eq!(
+            rules.suggest("giro", &original("CORNER GROCERY", "Card", "")),
+            found(Some("Corner Grocery"), Some("Expenses:Food:Other"))
+        );
+        assert_eq!(
+            rules.suggest("giro", &original("CORNER GROCERY", "Cash", "")),
+            found(Some("Corner Grocery"), None)
+        );
     }
 
     #[test]
-    fn rejects_unknown_keys_and_missing_account() {
-        let unknown = "[[rule]]\ndesc = \"x\"\naccount = \"Expenses:A\"\nprogram = \"y\"\n";
+    fn a_missing_field_matches_as_empty() {
+        let rules = Rules::parse(
+            "[[rule]]\nmatch = { counterparty = \"^$\", type = \"^$\" }\naccount = \"Expenses:Misc\"\n",
+        )
+        .unwrap();
+        let missing = Original::new(None, Some("y"), None);
+        assert_eq!(missing, original("", "y", ""));
+        assert_eq!(
+            rules.suggest("giro", &missing),
+            found(None, Some("Expenses:Misc"))
+        );
+        assert_eq!(
+            rules.suggest("giro", &Original::new(Some("A"), Some("y"), None)),
+            RuleMatch::default()
+        );
+        assert_eq!(
+            Original::new(Some("A"), Some("B"), Some("C")),
+            original("A", "B", "C")
+        );
+    }
+
+    #[test]
+    fn the_payee_is_normalized() {
+        let rules = Rules::parse(
+            "[[rule]]\nmatch = { purpose = \"x\" }\npayee = \"  Corner \\t Grocery \"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            rules.suggest("giro", &original("", "x", "")),
+            found(Some("Corner Grocery"), None)
+        );
+    }
+
+    #[test]
+    fn rejects_rules_in_the_old_format() {
+        for old in [
+            "[[rule]]\ndesc = \"(?i)salary\"\naccount = \"Income:Salary\"\n",
+            "[[rule]]\npayee = \"^City Utilities$\"\nnarration = \"(?i)electricity\"\naccount = \"Expenses:Home\"\n",
+            "[[rule]]\nsource = \"giro\"\nmatch = { purpose = \"x\" }\naccount = \"Expenses:A\"\n",
+            "[[rule]]\nmatch = { desc = \"x\" }\naccount = \"Expenses:A\"\n",
+            "[[rule]]\nmatch = { payee = \"x\" }\naccount = \"Expenses:A\"\n",
+            "[[rule]]\nmatch = { narration = \"x\" }\naccount = \"Expenses:A\"\n",
+        ] {
+            assert!(
+                matches!(Rules::parse(old), Err(RulesError::Syntax(_))),
+                "{old}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_keys_and_a_missing_match() {
+        let unknown =
+            "[[rule]]\nmatch = { purpose = \"x\" }\naccount = \"Expenses:A\"\nprogram = \"y\"\n";
         assert!(matches!(Rules::parse(unknown), Err(RulesError::Syntax(_))));
         assert!(matches!(
             Rules::parse("[settings]\nx = 1\n"),
             Err(RulesError::Syntax(_))
         ));
         assert!(matches!(
-            Rules::parse("[[rule]]\ndesc = \"x\"\n"),
+            Rules::parse("[[rule]]\naccount = \"Expenses:A\"\n"),
             Err(RulesError::Syntax(_))
         ));
     }
 
     #[test]
     fn rejects_rules_without_condition() {
-        let text = "[[rule]]\ndesc = \"x\"\naccount = \"Expenses:A\"\n\n[[rule]]\nsource = \"giro\"\naccount = \"Expenses:B\"\n";
+        let text = "[[rule]]\nmatch = { purpose = \"x\" }\naccount = \"Expenses:A\"\n\n[[rule]]\nmatch = { source = \"giro\" }\naccount = \"Expenses:B\"\n";
         assert_eq!(Rules::parse(text).unwrap_err(), RulesError::NoCondition(2));
+        let empty = "[[rule]]\nmatch = {}\naccount = \"Expenses:A\"\n";
+        assert_eq!(Rules::parse(empty).unwrap_err(), RulesError::NoCondition(1));
+        for one in ["counterparty", "purpose", "type"] {
+            let text = format!("[[rule]]\nmatch = {{ {one} = \"x\" }}\naccount = \"Expenses:A\"\n");
+            assert_eq!(Rules::parse(&text).unwrap().len(), 1, "{one}");
+        }
+    }
+
+    #[test]
+    fn rejects_rules_without_output_or_with_an_empty_payee() {
+        let text = "[[rule]]\nmatch = { purpose = \"x\" }\npayee = \"A\"\n\n[[rule]]\nmatch = { purpose = \"y\" }\n";
+        assert_eq!(Rules::parse(text).unwrap_err(), RulesError::NoOutput(2));
+        for empty in ["", " \t "] {
+            let text = format!(
+                "[[rule]]\nmatch = {{ purpose = \"x\" }}\npayee = {empty:?}\naccount = \"Expenses:A\"\n"
+            );
+            assert_eq!(
+                Rules::parse(&text).unwrap_err(),
+                RulesError::EmptyPayee(1),
+                "{empty:?}"
+            );
+        }
     }
 
     #[test]
@@ -381,9 +596,10 @@ mapping = "sources/card.toml"
         .unwrap();
         let rules = Rules::parse(RULES).unwrap();
         assert_eq!(rules.check_accounts(&config), Ok(()));
-        let to_card =
-            Rules::parse("[[rule]]\ndesc = \"CARD STATEMENT\"\naccount = \"Liabilities:Card\"\n")
-                .unwrap();
+        let to_card = Rules::parse(
+            "[[rule]]\nmatch = { purpose = \"x\" }\npayee = \"Card\"\n\n[[rule]]\nmatch = { purpose = \"CARD STATEMENT\" }\naccount = \"Liabilities:Card\"\n",
+        )
+        .unwrap();
         assert_eq!(
             to_card.check_accounts(&config),
             Err(RulesError::SourceAccount("Liabilities:Card".into()))
@@ -392,10 +608,16 @@ mapping = "sources/card.toml"
 
     #[test]
     fn rejects_bad_regex_and_account() {
-        assert_eq!(
-            Rules::parse("[[rule]]\ndesc = \"(?<=x)y\"\naccount = \"Expenses:A\"\n").unwrap_err(),
-            RulesError::Regex("(?<=x)y".into())
-        );
+        for field in ["counterparty", "purpose", "type"] {
+            let text = format!(
+                "[[rule]]\nmatch = {{ {field} = \"(?<=x)y\" }}\naccount = \"Expenses:A\"\n"
+            );
+            assert_eq!(
+                Rules::parse(&text).unwrap_err(),
+                RulesError::Regex("(?<=x)y".into()),
+                "{field}"
+            );
+        }
         for bad in [
             "Food",
             "Expenses",
@@ -403,7 +625,7 @@ mapping = "sources/card.toml"
             "Spending:Food",
             "Expenses:Fo od",
         ] {
-            let text = format!("[[rule]]\ndesc = \"x\"\naccount = {bad:?}\n");
+            let text = format!("[[rule]]\nmatch = {{ purpose = \"x\" }}\naccount = {bad:?}\n");
             assert_eq!(
                 Rules::parse(&text).unwrap_err(),
                 RulesError::InvalidAccount(bad.into()),

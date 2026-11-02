@@ -133,11 +133,11 @@ This walkthrough creates a ledger, adds one bank account and imports its CSV exp
    column = "Balance"
    ```
 
-   Optionally, add a rule to `rules.toml` that suggests an account. Without a matching rule, Lentil learns from the transactions you have reviewed, and only then falls back to `Expenses:Uncategorized`:
+   Optionally, add a rule to `rules.toml`. A rule matches the bank's counterparty, purpose or booking type and sets the account, the payee or both. Without a rule for the account, Lentil learns from the transactions you have reviewed, and only then falls back to `Expenses:Uncategorized`:
 
    ```toml
    [[rule]]
-   desc = "(?i)salary"
+   match = { purpose = "(?i)^salary" }
    account = "Income:Salary"
    ```
 
