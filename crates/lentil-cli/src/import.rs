@@ -213,20 +213,24 @@ impl Inputs {
             ))
         })?;
         let mapping_path = source.mapping.clone().unwrap_or_default();
-        let mapping_text = snapshot.text(&mapping_path).ok_or_else(|| {
-            CliError(i18n::msg(
-                lang,
-                Msg::MappingMissing,
-                &[("path", &mapping_path)],
-            ))
-        })?;
-        let mapping = Mapping::parse(mapping_text).map_err(|e| {
-            CliError(i18n::msg(
-                lang,
-                Msg::MappingInvalid,
-                &[("path", &mapping_path), ("detail", &e.to_string())],
-            ))
-        })?;
+        let mapping = Mapping::load(snapshot, &mapping_path)
+            .ok_or_else(|| {
+                CliError(i18n::msg(
+                    lang,
+                    Msg::MappingMissing,
+                    &[("path", &mapping_path)],
+                ))
+            })?
+            .map_err(|e| {
+                CliError(i18n::msg(
+                    lang,
+                    Msg::MappingInvalid,
+                    &[
+                        ("path", &mapping_path),
+                        ("detail", &i18n::mapping_error(lang, &e)),
+                    ],
+                ))
+            })?;
         let rules = context::rules(lang, snapshot, &config)?;
         let statement = read_statement(export, &mapping, &source.currency).map_err(|e| {
             CliError(i18n::msg(

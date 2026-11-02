@@ -369,6 +369,37 @@ fn import_rejects_rules_in_the_old_format() {
 }
 
 #[test]
+fn import_rejects_a_mapping_that_is_not_utf8() {
+    let env = Env::new();
+    let repo = env.repo.to_str().unwrap();
+    ok(&env.lentil(&["init", repo, "--remote", env.remote.to_str().unwrap()]));
+    let export = env.add_giro_source();
+    let mut mapping = MAPPING.as_bytes().to_vec();
+    mapping.extend_from_slice(b"# Empf\xe4nger\n");
+    std::fs::write(env.repo.join("sources/giro.toml"), mapping).unwrap();
+    env.admin_push("admin: mapping in windows-1252");
+    let before = env.remote_head();
+    let out = env.lentil(&[
+        "-C",
+        repo,
+        "import",
+        "giro",
+        export.to_str().unwrap(),
+        "--run-date",
+        "2026-10-20",
+        "--yes",
+    ]);
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("Mapping file sources/giro.toml is invalid: the file is not UTF-8 text"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("not found"), "{stderr}");
+    assert_eq!(before, env.remote_head());
+}
+
+#[test]
 fn check_agrees_with_bean_check() {
     let env = Env::new();
     let repo = env.repo.to_str().unwrap();

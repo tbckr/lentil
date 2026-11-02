@@ -4,7 +4,7 @@
 //! messages into text. Templates use `{name}` placeholders.
 
 use lentil_core::finding::{Finding, FindingCode, Severity};
-use lentil_core::import::{ImportError, RulesError};
+use lentil_core::import::{ImportError, MappingError, RulesError};
 use lentil_core::intent::ConflictCode;
 use lentil_core::sync::GitError;
 
@@ -480,6 +480,111 @@ pub fn rules_error(lang: Lang, error: &RulesError) -> String {
     fill(template, &args)
 }
 
+/// A rejected mapping file as text. Only the TOML parser's own message stays
+/// untranslated.
+pub fn mapping_error(lang: Lang, error: &MappingError) -> String {
+    use MappingError::*;
+    let (en, de, args): (&str, &str, Vec<(&str, String)>) = match error {
+        Syntax(detail) => ("{detail}", "{detail}", vec![("detail", detail.clone())]),
+        NotUtf8 => (
+            "the file is not UTF-8 text",
+            "die Datei ist kein UTF-8-Text",
+            vec![],
+        ),
+        Regex(pattern) => (
+            "invalid regular expression {pattern}",
+            "ungültiger regulärer Ausdruck {pattern}",
+            vec![("pattern", format!("{pattern:?}"))],
+        ),
+        Encoding(encoding) => (
+            "unsupported encoding {encoding}",
+            "nicht unterstützte Kodierung {encoding}",
+            vec![("encoding", format!("{encoding:?}"))],
+        ),
+        DateFormat(format) => (
+            "unsupported date format {format}",
+            "nicht unterstütztes Datumsformat {format}",
+            vec![("format", format!("{format:?}"))],
+        ),
+        Delimiter => (
+            "delimiter must be one ASCII character",
+            "delimiter muss ein einzelnes ASCII-Zeichen sein",
+            vec![],
+        ),
+        EmptyHeader => (
+            "header needs at least one non-empty cell",
+            "header braucht mindestens eine nicht leere Zelle",
+            vec![],
+        ),
+        NotOneCharacter(key) => (
+            "{key} must be one character",
+            "{key} muss ein einzelnes Zeichen sein",
+            vec![("key", (*key).to_owned())],
+        ),
+        SameSeparator => (
+            "thousands and decimal must differ",
+            "thousands und decimal müssen sich unterscheiden",
+            vec![],
+        ),
+        DigitOrSign(key) => (
+            "{key} must not be a digit or sign",
+            "{key} darf keine Ziffer und kein Vorzeichen sein",
+            vec![("key", (*key).to_owned())],
+        ),
+        AmountColumns => (
+            "amount needs either column or both debit and credit",
+            "amount braucht entweder column oder debit und credit",
+            vec![],
+        ),
+        SkipCondition => (
+            "skip needs either equals or matches",
+            "skip braucht entweder equals oder matches",
+            vec![],
+        ),
+        EmptyColumnList(key) => (
+            "{key} needs at least one column",
+            "{key} braucht mindestens eine Spalte",
+            vec![("key", (*key).to_owned())],
+        ),
+        BalanceAmountGroup => (
+            "balance pattern needs a group named amount",
+            "balance pattern braucht eine Gruppe namens amount",
+            vec![],
+        ),
+        BalanceDateFormatMissing => (
+            "balance group date needs date_format",
+            "die balance-Gruppe date braucht date_format",
+            vec![],
+        ),
+        BalanceDateGroupMissing => (
+            "balance date_format needs a group named date",
+            "balance date_format braucht eine Gruppe namens date",
+            vec![],
+        ),
+        BalanceColumnKeys => (
+            "balance from column takes exactly the key column",
+            "balance from column nimmt genau den Schlüssel column",
+            vec![],
+        ),
+        BalanceTextKeys => (
+            "balance from text takes pattern and date_format only",
+            "balance from text nimmt nur pattern und date_format",
+            vec![],
+        ),
+        BalanceNoneKeys => (
+            "balance from none takes no other key",
+            "balance from none nimmt keinen weiteren Schlüssel",
+            vec![],
+        ),
+    };
+    let template = match lang {
+        Lang::En => en,
+        Lang::De => de,
+    };
+    let args: Vec<(&str, &str)> = args.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    fill(template, &args)
+}
+
 /// A conflict code as text.
 pub fn conflict(lang: Lang, code: ConflictCode) -> &'static str {
     use ConflictCode::*;
@@ -565,6 +670,31 @@ mod tests {
                 &[("count", "3"), ("source", "giro")]
             ),
             "3 new transactions from giro."
+        );
+    }
+
+    #[test]
+    fn translates_mapping_errors() {
+        assert_eq!(
+            mapping_error(Lang::En, &MappingError::DigitOrSign("decimal")),
+            "decimal must not be a digit or sign"
+        );
+        assert_eq!(
+            mapping_error(
+                Lang::En,
+                &MappingError::Syntax("missing field `balance`".into())
+            ),
+            "missing field `balance`"
+        );
+        assert_eq!(
+            mapping_error(Lang::En, &MappingError::Encoding("utf-16".into())),
+            "unsupported encoding \"utf-16\""
+        );
+        let de = mapping_error(Lang::De, &MappingError::EmptyColumnList("purpose"));
+        assert!(de.contains("purpose"), "{de}");
+        assert_ne!(
+            de,
+            mapping_error(Lang::En, &MappingError::EmptyColumnList("purpose"))
         );
     }
 

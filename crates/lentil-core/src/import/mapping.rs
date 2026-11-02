@@ -11,6 +11,8 @@ use regex::Regex;
 use serde::Deserialize;
 use thiserror::Error;
 
+use crate::snapshot::Snapshot;
+
 /// A parsed mapping file. Unknown keys are rejected.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Mapping {
@@ -328,6 +330,9 @@ pub enum MappingError {
     /// Not TOML, an unknown or missing key, or a wrong type. Detail from the TOML parser.
     #[error("invalid mapping: {0}")]
     Syntax(String),
+    /// The file is not UTF-8 text.
+    #[error("the file is not UTF-8 text")]
+    NotUtf8,
     /// A regular expression does not compile.
     #[error("invalid regular expression {0:?}")]
     Regex(String),
@@ -337,9 +342,48 @@ pub enum MappingError {
     /// A date format with codes other than `%d`, `%m`, `%Y`, `%y`.
     #[error("unsupported date format {0:?}")]
     DateFormat(String),
-    /// Keys that do not fit together, such as `from = "column"` without `column`.
-    #[error("inconsistent mapping: {0}")]
-    Inconsistent(String),
+    /// `delimiter` is not one ASCII character other than `"` and a line break.
+    #[error("delimiter must be one ASCII character")]
+    Delimiter,
+    /// `header` is empty or has an empty cell.
+    #[error("header needs at least one non-empty cell")]
+    EmptyHeader,
+    /// `decimal` or `thousands`, named by the key, is not one character.
+    #[error("{0} must be one character")]
+    NotOneCharacter(&'static str),
+    /// `thousands` equals `decimal`.
+    #[error("thousands and decimal must differ")]
+    SameSeparator,
+    /// `decimal` or `thousands`, named by the key, is a digit or a sign.
+    #[error("{0} must not be a digit or sign")]
+    DigitOrSign(&'static str),
+    /// `amount` has neither `column` nor both `debit` and `credit`, or both.
+    #[error("amount needs either column or both debit and credit")]
+    AmountColumns,
+    /// A `[[skip]]` entry has not exactly one of `equals` and `matches`.
+    #[error("skip needs either equals or matches")]
+    SkipCondition,
+    /// `counterparty`, `purpose` or `type`, named by the key, is an empty list.
+    #[error("{0} needs at least one column")]
+    EmptyColumnList(&'static str),
+    /// The balance pattern has no group named `amount`.
+    #[error("balance pattern needs a group named amount")]
+    BalanceAmountGroup,
+    /// The balance pattern has a group `date` but there is no `date_format`.
+    #[error("balance group date needs date_format")]
+    BalanceDateFormatMissing,
+    /// `date_format` is given but the balance pattern has no group `date`.
+    #[error("balance date_format needs a group named date")]
+    BalanceDateGroupMissing,
+    /// `from = "column"` with keys other than exactly `column`.
+    #[error("balance from column takes exactly the key column")]
+    BalanceColumnKeys,
+    /// `from = "text"` without `pattern`, or with `column`.
+    #[error("balance from text takes pattern and date_format only")]
+    BalanceTextKeys,
+    /// `from = "none"` with any other key.
+    #[error("balance from none takes no other key")]
+    BalanceNoneKeys,
 }
 
 #[derive(Deserialize)]
@@ -425,31 +469,42 @@ enum RawBalanceFrom {
     None,
 }
 
-fn inconsistent(detail: &str) -> MappingError {
-    MappingError::Inconsistent(detail.to_owned())
-}
-
 /// A single character from a one-character string.
-fn one_char(value: &str, key: &str) -> Result<char, MappingError> {
+fn one_char(value: &str, key: &'static str) -> Result<char, MappingError> {
     let mut chars = value.chars();
     match (chars.next(), chars.next()) {
         (Some(c), None) => Ok(c),
-        _ => Err(inconsistent(&format!("{key} must be one character"))),
+        _ => Err(MappingError::NotOneCharacter(key)),
     }
 }
 
 /// A column list for `counterparty`, `purpose` or `type`: absent or non-empty.
-fn column_list(value: Option<Vec<String>>, key: &str) -> Result<Vec<String>, MappingError> {
+fn column_list(value: Option<Vec<String>>, key: &'static str) -> Result<Vec<String>, MappingError> {
     match value {
-        Some(list) if list.is_empty() => {
-            Err(inconsistent(&format!("{key} needs at least one column")))
-        }
+        Some(list) if list.is_empty() => Err(MappingError::EmptyColumnList(key)),
         Some(list) => Ok(list),
         None => Ok(Vec::new()),
     }
 }
 
 impl Mapping {
+    /// Reads and parses the mapping file `path` of a repository state;
+    /// `None` if the file does not exist.
+    #[must_use]
+    pub fn load(snapshot: &Snapshot, path: &str) -> Option<Result<Self, MappingError>> {
+        snapshot.get(path).map(Self::from_bytes)
+    }
+
+    /// Parses the bytes of a mapping file.
+    ///
+    /// # Errors
+    ///
+    /// [`MappingError::NotUtf8`] if `bytes` is not UTF-8, otherwise as
+    /// [`Mapping::parse`].
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, MappingError> {
+        Self::parse(std::str::from_utf8(bytes).map_err(|_| MappingError::NotUtf8)?)
+    }
+
     /// Parses a mapping file.
     ///
     /// # Errors
@@ -468,7 +523,7 @@ impl Mapping {
             None => b',',
             Some(d) => match d.as_bytes() {
                 [b] if b.is_ascii() && !matches!(b, b'"' | b'\n' | b'\r') => *b,
-                _ => return Err(inconsistent("delimiter must be one ASCII character")),
+                _ => return Err(MappingError::Delimiter),
             },
         };
         let header: Vec<String> = raw
@@ -478,7 +533,7 @@ impl Mapping {
             .map(|h| h.trim().to_owned())
             .collect();
         if header.is_empty() || header.iter().any(String::is_empty) {
-            return Err(inconsistent("header needs at least one non-empty cell"));
+            return Err(MappingError::EmptyHeader);
         }
         let end = raw.file.end.as_deref().map(Pattern::new).transpose()?;
 
@@ -493,13 +548,13 @@ impl Mapping {
             .map(|t| one_char(t, "thousands"))
             .transpose()?;
         if thousands == Some(decimal) {
-            return Err(inconsistent("thousands and decimal must differ"));
+            return Err(MappingError::SameSeparator);
         }
         if decimal.is_ascii_digit() || matches!(decimal, '+' | '-') {
-            return Err(inconsistent("decimal must not be a digit or sign"));
+            return Err(MappingError::DigitOrSign("decimal"));
         }
         if thousands.is_some_and(|t| t.is_ascii_digit() || matches!(t, '+' | '-')) {
-            return Err(inconsistent("thousands must not be a digit or sign"));
+            return Err(MappingError::DigitOrSign("thousands"));
         }
 
         let columns = raw.columns;
@@ -525,9 +580,7 @@ impl Mapping {
                 invert,
             },
             _ => {
-                return Err(inconsistent(
-                    "amount needs either column or both debit and credit",
-                ));
+                return Err(MappingError::AmountColumns);
             }
         };
 
@@ -538,7 +591,7 @@ impl Mapping {
                 let condition = match (s.equals, s.matches) {
                     (Some(value), None) => SkipCondition::Equals(value),
                     (None, Some(pattern)) => SkipCondition::Matches(Pattern::new(&pattern)?),
-                    _ => return Err(inconsistent("skip needs either equals or matches")),
+                    _ => return Err(MappingError::SkipCondition),
                 };
                 Ok(SkipRule {
                     column: s.column,
@@ -554,16 +607,16 @@ impl Mapping {
                 let pattern = Pattern::new(&pattern)?;
                 let names: Vec<&str> = pattern.regex().capture_names().flatten().collect();
                 if !names.contains(&"amount") {
-                    return Err(inconsistent("balance pattern needs a group named amount"));
+                    return Err(MappingError::BalanceAmountGroup);
                 }
                 let date_format = match (names.contains(&"date"), date_format) {
                     (true, Some(format)) => Some(DateFormat::new(&format)?),
                     (false, None) => None,
                     (true, None) => {
-                        return Err(inconsistent("balance group date needs date_format"));
+                        return Err(MappingError::BalanceDateFormatMissing);
                     }
                     (false, Some(_)) => {
-                        return Err(inconsistent("balance date_format needs a group named date"));
+                        return Err(MappingError::BalanceDateGroupMissing);
                     }
                 };
                 BalanceSource::Text {
@@ -573,17 +626,13 @@ impl Mapping {
             }
             (RawBalanceFrom::None, None, None, None) => BalanceSource::None,
             (RawBalanceFrom::Column, ..) => {
-                return Err(inconsistent(
-                    "balance from column takes exactly the key column",
-                ));
+                return Err(MappingError::BalanceColumnKeys);
             }
             (RawBalanceFrom::Text, ..) => {
-                return Err(inconsistent(
-                    "balance from text takes pattern and date_format only",
-                ));
+                return Err(MappingError::BalanceTextKeys);
             }
             (RawBalanceFrom::None, ..) => {
-                return Err(inconsistent("balance from none takes no other key"));
+                return Err(MappingError::BalanceNoneKeys);
             }
         };
 
@@ -860,29 +909,32 @@ from = "none"
         assert!(pattern.is_match("Balance 1.1.2026: 5"));
         assert_eq!(date_format.unwrap().as_str(), "%d.%m.%Y");
 
-        for (balance, detail) in [
-            ("from = \"column\"", "column"),
+        for (balance, expected) in [
+            ("from = \"column\"", MappingError::BalanceColumnKeys),
             (
                 "from = \"column\"\ncolumn = \"S\"\npattern = \"(?P<amount>x)\"",
-                "column",
+                MappingError::BalanceColumnKeys,
             ),
-            ("from = \"text\"", "text"),
-            ("from = \"text\"\npattern = \"(?P<sum>x)\"", "amount"),
+            ("from = \"text\"", MappingError::BalanceTextKeys),
+            (
+                "from = \"text\"\npattern = \"(?P<sum>x)\"",
+                MappingError::BalanceAmountGroup,
+            ),
             (
                 "from = \"text\"\npattern = \"(?P<amount>x) (?P<date>y)\"",
-                "date_format",
+                MappingError::BalanceDateFormatMissing,
             ),
             (
                 "from = \"text\"\npattern = \"(?P<amount>x)\"\ndate_format = \"%d%m%Y\"",
-                "date",
+                MappingError::BalanceDateGroupMissing,
             ),
-            ("from = \"none\"\ncolumn = \"S\"", "none"),
+            (
+                "from = \"none\"\ncolumn = \"S\"",
+                MappingError::BalanceNoneKeys,
+            ),
         ] {
             let text = MINIMAL.replace("from = \"none\"", balance);
-            match err(&text) {
-                MappingError::Inconsistent(d) => assert!(d.contains(detail), "{balance}: {d}"),
-                other => panic!("{balance}: {other:?}"),
-            }
+            assert_eq!(err(&text), expected, "{balance}");
         }
         let text = MINIMAL.replace("from = \"none\"", "from = \"bank\"");
         assert!(matches!(err(&text), MappingError::Syntax(_)));
@@ -897,19 +949,16 @@ from = "none"
             "{ invert = true }",
         ] {
             let text = MINIMAL.replace("{ column = \"Amount\" }", amount);
-            assert!(
-                matches!(err(&text), MappingError::Inconsistent(_)),
-                "{amount}"
-            );
+            assert_eq!(err(&text), MappingError::AmountColumns, "{amount}");
         }
     }
 
     #[test]
     fn skip_needs_exactly_one_condition() {
         let base = format!("{MINIMAL}\n[[skip]]\ncolumn = \"Status\"\n");
-        assert!(matches!(err(&base), MappingError::Inconsistent(_)));
+        assert_eq!(err(&base), MappingError::SkipCondition);
         let both = format!("{base}equals = \"a\"\nmatches = \"b\"\n");
-        assert!(matches!(err(&both), MappingError::Inconsistent(_)));
+        assert_eq!(err(&both), MappingError::SkipCondition);
         let m = Mapping::parse(&format!("{base}matches = \"^Pend\"\n")).unwrap();
         assert!(m.skip[0].matches("  Pending "));
         assert!(!m.skip[0].matches("Booked"));
@@ -928,30 +977,40 @@ from = "none"
 
     #[test]
     fn rejects_bad_number_and_delimiter_settings() {
-        for file in [
-            "delimiter = \";;\"\nheader = [\"Date\", \"Amount\"]",
-            "delimiter = \"\\\"\"\nheader = [\"Date\", \"Amount\"]",
-            "delimiter = \"§\"\nheader = [\"Date\", \"Amount\"]",
-            "header = []",
-            "header = [\"Date\", \" \"]",
+        for (file, expected) in [
+            (
+                "delimiter = \";;\"\nheader = [\"Date\", \"Amount\"]",
+                MappingError::Delimiter,
+            ),
+            (
+                "delimiter = \"\\\"\"\nheader = [\"Date\", \"Amount\"]",
+                MappingError::Delimiter,
+            ),
+            (
+                "delimiter = \"§\"\nheader = [\"Date\", \"Amount\"]",
+                MappingError::Delimiter,
+            ),
+            ("header = []", MappingError::EmptyHeader),
+            ("header = [\"Date\", \" \"]", MappingError::EmptyHeader),
         ] {
             let text = MINIMAL.replace("header = [\"Date\", \"Amount\"]", file);
-            assert!(
-                matches!(err(&text), MappingError::Inconsistent(_)),
-                "{file}"
-            );
+            assert_eq!(err(&text), expected, "{file}");
         }
-        for numbers in [
-            "decimal = \",\"\nthousands = \",\"",
-            "decimal = \",,\"",
-            "decimal = \"1\"",
-            "thousands = \"-\"",
+        for (numbers, expected) in [
+            (
+                "decimal = \",\"\nthousands = \",\"",
+                MappingError::SameSeparator,
+            ),
+            ("decimal = \",,\"", MappingError::NotOneCharacter("decimal")),
+            (
+                "thousands = \"..\"",
+                MappingError::NotOneCharacter("thousands"),
+            ),
+            ("decimal = \"1\"", MappingError::DigitOrSign("decimal")),
+            ("thousands = \"-\"", MappingError::DigitOrSign("thousands")),
         ] {
             let text = format!("{MINIMAL}\n[numbers]\n{numbers}\n");
-            assert!(
-                matches!(err(&text), MappingError::Inconsistent(_)),
-                "{numbers}"
-            );
+            assert_eq!(err(&text), expected, "{numbers}");
         }
         let text = MINIMAL.replace("[file]\n", "[file]\ndelimiter = \"\\t\"\n");
         assert_eq!(Mapping::parse(&text).unwrap().delimiter, b'\t');
@@ -959,12 +1018,33 @@ from = "none"
 
     #[test]
     fn column_lists_must_not_be_empty() {
-        let text = MINIMAL.replace("[columns]\n", "[columns]\ncounterparty = []\n");
-        assert!(matches!(err(&text), MappingError::Inconsistent(_)));
+        for key in ["counterparty", "purpose", "type"] {
+            let text = MINIMAL.replace("[columns]\n", &format!("[columns]\n{key} = []\n"));
+            assert_eq!(err(&text), MappingError::EmptyColumnList(key), "{key}");
+        }
         let text = MINIMAL.replace("[columns]\n", "[columns]\npurpose = [\"A\", \"B\"]\n");
         assert_eq!(Mapping::parse(&text).unwrap().purpose, vec!["A", "B"]);
-        let text = MINIMAL.replace("[columns]\n", "[columns]\ntype = []\n");
-        assert!(matches!(err(&text), MappingError::Inconsistent(_)));
+    }
+
+    #[test]
+    fn load_reads_the_mapping_file_of_a_repository_state() {
+        let snapshot = Snapshot::from_files([("sources/giro.toml", MINIMAL)]);
+        assert_eq!(
+            Mapping::load(&snapshot, "sources/giro.toml"),
+            Some(Mapping::parse(MINIMAL))
+        );
+        assert_eq!(Mapping::load(&snapshot, "sources/card.toml"), None);
+    }
+
+    #[test]
+    fn from_bytes_rejects_text_that_is_not_utf8() {
+        assert_eq!(
+            Mapping::from_bytes(MINIMAL.as_bytes()),
+            Mapping::parse(MINIMAL)
+        );
+        let mut latin1 = MINIMAL.as_bytes().to_vec();
+        latin1.extend_from_slice(b"# Empf\xe4nger\n");
+        assert_eq!(Mapping::from_bytes(&latin1), Err(MappingError::NotUtf8));
     }
 
     #[test]
