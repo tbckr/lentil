@@ -12,3 +12,5 @@
 /android/build-logic/.gradle/
 /android/build-logic/.kotlin/
 /android/local.properties
+# Claude Code
+/.claude/settings.local.json
