@@ -334,7 +334,8 @@ pub struct QueueItem {
     pub payee: Option<String>,
     /// Narration.
     pub narration: String,
-    /// `lentil_desc`, the bank's description.
+    /// The bank's original text: `lentil_counterparty` and `lentil_purpose`,
+    /// joined by one space.
     pub desc: Option<String>,
     /// Number of the source posting, as written, such as `-12.50`.
     pub amount: Option<String>,

@@ -49,7 +49,8 @@ pub enum FindingCode {
     ManualPostingOnSourceAccount,
     /// A pad posts to a source account. Args: `account`.
     PadOnSourceAccount,
-    /// A `lentil_id`, `lentil_ref` or `lentil_desc` was changed or removed. Args: `id`, `key`.
+    /// A protected key such as `lentil_id` was changed, added or removed
+    /// ([`PROTECTED_META`](crate::ledger::PROTECTED_META)). Args: `id`, `key`.
     ProtectedMetadataChanged,
     /// A transaction was removed or its date or source posting changed by an editor. Args: `id`,
     /// `reason` (see `validate::reason`).

@@ -1,5 +1,6 @@
 # Fictional German-style giro export: Windows-1252, preamble, ";" delimiter,
-# decimal comma, pending rows and a stated balance after the table.
+# decimal comma, a booking type column, pending rows and a stated balance
+# after the table.
 
 [file]
 encoding = "windows-1252"
@@ -17,6 +18,7 @@ amount = { column = "Betrag" }
 currency = "Währung"
 counterparty = ["Zahlungspflichtiger/-empfänger"]
 purpose = ["Verwendungszweck"]
+type = ["Buchungstext"]
 
 [[skip]]
 column = "Status"

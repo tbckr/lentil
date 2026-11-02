@@ -268,7 +268,7 @@ fn queue_item(config: &Config, txn: &Txn) -> QueueItem {
         date: txn.date.to_string(),
         payee: txn.payee.clone(),
         narration: txn.narration.clone(),
-        desc: txn.desc.clone(),
+        desc: txn.original_text(),
         amount: units.map(|(number, _)| number.to_string()),
         currency: units.map(|(_, currency)| currency.clone()),
         source_account: source.map(|p| p.account.clone()),
@@ -354,13 +354,14 @@ include "imports/*/*/*.beancount"
 
     const GIRO_RUN: &str = r#"2026-10-18 ! "Corner Grocery" "Weekly shopping"
   lentil_id: "giro-3f9a1c2e7b4d"
-  lentil_desc: "CORNER GROCERY 4711 CARD PAYMENT"
+  lentil_counterparty: "CORNER GROCERY 4711"
+  lentil_purpose: "CARD PAYMENT"
   Assets:Bank:Giro  -42.10 EUR
   Expenses:Groceries
 
 2026-10-19 * "Card settlement"
   lentil_id: "giro-0a1b2c3d4e5f"
-  lentil_desc: "CARD SETTLEMENT"
+  lentil_counterparty: "CARD SETTLEMENT"
   Assets:Bank:Giro  -100.00 EUR
   Liabilities:Card  100.00 EUR
 
@@ -373,7 +374,7 @@ include "imports/*/*/*.beancount"
 
     const CARD_RUN: &str = r#"2026-10-19 ! "Card settlement"
   lentil_id: "card-222222222222"
-  lentil_desc: "PAYMENT RECEIVED"
+  lentil_counterparty: "PAYMENT RECEIVED"
   Assets:Bank:Giro  -100.00 EUR
   Liabilities:Card  100.00 EUR
 "#;

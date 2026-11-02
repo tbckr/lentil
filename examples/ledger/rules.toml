@@ -5,7 +5,7 @@
 #
 # [[rule]]
 # source = "giro"                        # optional: limit the rule to one source
-# desc = "(?i)corner grocery"            # regular expression on lentil_desc
+# desc = "(?i)corner grocery"            # regular expression on counterparty and purpose
 # account = "Expenses:Food:Groceries"
 #
 # A rule never books to a source account. Transfers between your own accounts

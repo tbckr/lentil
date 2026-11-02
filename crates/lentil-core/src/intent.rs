@@ -738,7 +738,8 @@ include "imports/*/*/*.beancount"
 
     const GROCERY_BLOCK: &str = r#"2026-10-18 ! "Corner Grocery" "Card payment"
   lentil_id: "giro-3f9a1c2e7b4d"
-  lentil_desc: "CORNER GROCERY 4711 CARD PAYMENT"
+  lentil_counterparty: "CORNER GROCERY 4711"
+  lentil_purpose: "CARD PAYMENT"
   Assets:Bank:Giro        -42.17 EUR
   Expenses:Uncategorized"#;
 
@@ -747,7 +748,8 @@ include "imports/*/*/*.beancount"
 
 2026-10-18 ! "Corner Grocery" "Card payment"
   lentil_id: "giro-3f9a1c2e7b4d"
-  lentil_desc: "CORNER GROCERY 4711 CARD PAYMENT"
+  lentil_counterparty: "CORNER GROCERY 4711"
+  lentil_purpose: "CARD PAYMENT"
   Assets:Bank:Giro        -42.17 EUR
   Expenses:Uncategorized
 
@@ -765,7 +767,7 @@ include "imports/*/*/*.beancount"
 
 2026-10-20 ! "Transfer" "To card"
   lentil_id: "giro-bbbbbbbbbbbb"
-  lentil_desc: "TRANSFER CARD"
+  lentil_counterparty: "TRANSFER CARD"
   Assets:Bank:Giro  -100.00 EUR
   Expenses:Uncategorized
 
@@ -774,7 +776,7 @@ include "imports/*/*/*.beancount"
 
     const CARD_FILE: &str = "imports/card/2026/20261022T080000Z.beancount";
     /// Ends without a line break after its only transaction.
-    const CARD_RUN: &str = "2026-10-21 ! \"Café\" \"Coffee\"\n  lentil_id: \"card-cccccccccccc\"\n  lentil_desc: \"CAFE\"\n  Liabilities:Card  -5.00 EUR\n  Expenses:Uncategorized";
+    const CARD_RUN: &str = "2026-10-21 ! \"Café\" \"Coffee\"\n  lentil_id: \"card-cccccccccccc\"\n  lentil_counterparty: \"CAFE\"\n  Liabilities:Card  -5.00 EUR\n  Expenses:Uncategorized";
 
     const GROCERY: &str = "giro-3f9a1c2e7b4d";
     const UTILITIES: &str = "giro-8c01d4e9a2f7";
@@ -1091,7 +1093,8 @@ include "imports/*/*/*.beancount"
         assert_eq!(outcomes, vec![Applied]);
         let expected = r#"; 2026-10-18 ! "Corner Grocery" "Card payment"
 ;   lentil_id: "giro-3f9a1c2e7b4d"
-;   lentil_desc: "CORNER GROCERY 4711 CARD PAYMENT"
+;   lentil_counterparty: "CORNER GROCERY 4711"
+;   lentil_purpose: "CARD PAYMENT"
 ;   Assets:Bank:Giro        -42.17 EUR
 ;   Expenses:Uncategorized"#;
         assert_eq!(
@@ -1350,7 +1353,7 @@ include "imports/*/*/*.beancount"
     #[test]
     fn add_import_run_writes_only_new_files() {
         let file = "imports/giro/2026/20261101T000000Z.beancount";
-        let content = "2026-10-30 ! \"New\" \"x\"\n  lentil_id: \"giro-dddddddddddd\"\n  lentil_desc: \"NEW\"\n  Assets:Bank:Giro  -1.00 EUR\n  Expenses:Uncategorized\n";
+        let content = "2026-10-30 ! \"New\" \"x\"\n  lentil_id: \"giro-dddddddddddd\"\n  lentil_counterparty: \"NEW\"\n  Assets:Bank:Giro  -1.00 EUR\n  Expenses:Uncategorized\n";
         let (after, outcomes) = replay_on(
             &snapshot(),
             &[
@@ -1764,7 +1767,7 @@ mapping = "sources/giro.toml"
                     model.flags.push(if t.keyword == 0 { '!' } else { '*' });
                     model.counters.push(counter.to_owned());
                 }
-                text.push_str(&format!("{ind}lentil_desc: \"DESC {n}\"\n"));
+                text.push_str(&format!("{ind}lentil_counterparty: \"COUNTERPARTY {n}\"\n"));
                 if t.meta {
                     text.push_str(&format!("{ind}note: \"m{n}\"\n"));
                 }

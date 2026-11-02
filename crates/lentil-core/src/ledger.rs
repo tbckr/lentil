@@ -17,16 +17,27 @@ use rust_decimal::Decimal;
 use rustledger_core::{Directive, IncompleteAmount, MetaValue, Metadata};
 use rustledger_loader::{ErrorSeverity, FileSystem, LoadError, LoadOptions};
 
+use crate::id;
 use crate::snapshot::{Snapshot, glob_match};
 
 /// Metadata key of the stable transaction ID (spec section 5).
 pub const META_ID: &str = "lentil_id";
 /// Metadata key of the bank's reference.
 pub const META_REF: &str = "lentil_ref";
-/// Metadata key of the bank's original description.
-pub const META_DESC: &str = "lentil_desc";
+/// Metadata key of the bank's counterparty, as imported.
+pub const META_COUNTERPARTY: &str = "lentil_counterparty";
+/// Metadata key of the bank's purpose, as imported.
+pub const META_PURPOSE: &str = "lentil_purpose";
+/// Metadata key of the bank's booking type, as imported.
+pub const META_TYPE: &str = "lentil_type";
 /// Keys no client may change or remove.
-pub const PROTECTED_META: [&str; 3] = [META_ID, META_REF, META_DESC];
+pub const PROTECTED_META: [&str; 5] = [
+    META_ID,
+    META_REF,
+    META_COUNTERPARTY,
+    META_PURPOSE,
+    META_TYPE,
+];
 
 /// Virtual root under which snapshot files are handed to the loader.
 const ROOT: &str = "/repo";
@@ -53,8 +64,12 @@ pub struct Txn {
     pub payee: Option<String>,
     /// Narration.
     pub narration: String,
-    /// `lentil_desc`, the bank's description.
-    pub desc: Option<String>,
+    /// `lentil_counterparty`, the bank's counterparty.
+    pub counterparty: Option<String>,
+    /// `lentil_purpose`, the bank's purpose.
+    pub purpose: Option<String>,
+    /// `lentil_type`, the bank's booking type.
+    pub booking_type: Option<String>,
     /// `lentil_ref`, the bank's reference.
     pub reference: Option<String>,
     /// Tags without `#`.
@@ -63,6 +78,19 @@ pub struct Txn {
     pub links: Vec<String>,
     /// Postings in file order.
     pub postings: Vec<Posting>,
+}
+
+impl Txn {
+    /// The original text of `lentil_counterparty` and `lentil_purpose`
+    /// ([`id::original_text`]), or `None` if both are missing or blank.
+    #[must_use]
+    pub fn original_text(&self) -> Option<String> {
+        Some(id::original_text(
+            self.counterparty.as_deref(),
+            self.purpose.as_deref(),
+        ))
+        .filter(|t| !t.is_empty())
+    }
 }
 
 /// One posting as written in its file.
@@ -458,7 +486,9 @@ fn index_file(ledger: &mut Ledger, file: &str, text: &str) {
                     flag: t.flag,
                     payee: t.payee.as_ref().map(ToString::to_string),
                     narration: t.narration.to_string(),
-                    desc: meta_string(&t.meta, META_DESC),
+                    counterparty: meta_string(&t.meta, META_COUNTERPARTY),
+                    purpose: meta_string(&t.meta, META_PURPOSE),
+                    booking_type: meta_string(&t.meta, META_TYPE),
                     reference: meta_string(&t.meta, META_REF),
                     tags: t.tags.iter().map(ToString::to_string).collect(),
                     links: t.links.iter().map(ToString::to_string).collect(),
@@ -706,7 +736,9 @@ include "imports/*/*/*.beancount"
 
 2026-10-18 ! "Corner Grocery" "Card payment"
   lentil_id: "giro-3f9a1c2e7b4d"
-  lentil_desc: "CORNER GROCERY 4711 CARD PAYMENT"
+  lentil_counterparty: "CORNER GROCERY 4711"
+  lentil_purpose: "CARD PAYMENT"
+  lentil_type: "DEBIT CARD"
   Assets:Bank:Giro        -42.17 EUR
   Expenses:Food:Groceries
 
@@ -754,7 +786,19 @@ include "imports/*/*/*.beancount"
         assert_eq!(first.flag, '!');
         assert_eq!(first.line, 4);
         assert_eq!(
-            first.desc.as_deref(),
+            (
+                first.counterparty.as_deref(),
+                first.purpose.as_deref(),
+                first.booking_type.as_deref()
+            ),
+            (
+                Some("CORNER GROCERY 4711"),
+                Some("CARD PAYMENT"),
+                Some("DEBIT CARD")
+            )
+        );
+        assert_eq!(
+            first.original_text().as_deref(),
             Some("CORNER GROCERY 4711 CARD PAYMENT")
         );
         assert!(RUN[first.span.clone()].starts_with("2026-10-18 !"));
@@ -785,6 +829,21 @@ include "imports/*/*/*.beancount"
     }
 
     #[test]
+    fn original_text_joins_counterparty_and_purpose() {
+        let ledger = load(&snapshot(), "main.beancount");
+        let mut txn = ledger.find("giro-aaaaaaaaaaaa").unwrap().clone();
+        assert_eq!(txn.original_text(), None);
+        txn.purpose = Some("  Bread ".into());
+        assert_eq!(txn.original_text().as_deref(), Some("Bread"));
+        txn.counterparty = Some("Bakery".into());
+        assert_eq!(txn.original_text().as_deref(), Some("Bakery Bread"));
+        txn.purpose = None;
+        assert_eq!(txn.original_text().as_deref(), Some("Bakery"));
+        txn.counterparty = Some(" ".into());
+        assert_eq!(txn.original_text(), None);
+    }
+
+    #[test]
     fn collects_dismissed_ids_from_comments() {
         let ledger = load(&snapshot(), "main.beancount");
         assert!(ledger.dismissed_ids.contains("giro-8c01d4e9a2f7"));
@@ -801,13 +860,13 @@ include "imports/*/*/*.beancount"
         assert_eq!(failure.asserted, Decimal::new(-4528, 2));
         assert_eq!(failure.difference, Decimal::new(1, 2));
         assert_eq!(failure.file.as_deref(), Some(RUN_FILE));
-        assert_eq!(failure.line, Some(23));
+        assert_eq!(failure.line, Some(25));
     }
 
     #[test]
     fn open_queue_is_newest_first() {
         let mut s = snapshot();
-        let extra = "2026-10-21 ! \"Later\" \"x\"\n  lentil_id: \"giro-bbbbbbbbbbbb\"\n  lentil_desc: \"LATER\"\n  Assets:Bank:Giro  -1.00 EUR\n  Expenses:Uncategorized\n";
+        let extra = "2026-10-21 ! \"Later\" \"x\"\n  lentil_id: \"giro-bbbbbbbbbbbb\"\n  lentil_counterparty: \"LATER\"\n  Assets:Bank:Giro  -1.00 EUR\n  Expenses:Uncategorized\n";
         s.insert("imports/giro/2026/20261022T000000Z.beancount", extra);
         let ledger = load(&s, "main.beancount");
         let ids: Vec<_> = ledger

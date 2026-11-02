@@ -70,7 +70,7 @@ There is no server. A Git repository of standard Beancount files is the single s
   - The admin role may change anything.
 
   Fixed include globs in `main.beancount` pick up new files, so no writer maintains include lists. Validation checks every commit against its role.
-- **Identity (§5):** clients address transactions by their `lentil_id` metadata. Imports get a deterministic hash, and manual entries get `<device-id>-<ulid>`. No client may change `lentil_id`, `lentil_ref` or `lentil_desc`.
+- **Identity (§5):** clients address transactions by their `lentil_id` metadata. Imports get a deterministic hash, and manual entries get `<device-id>-<ulid>`. No client may change `lentil_id`, `lentil_ref` or the bank's original fields `lentil_counterparty`, `lentil_purpose` and `lentil_type`.
 - **Review state (§6):** only the transaction flag carries it: `!` means open, `*` means reviewed.
 - **Sync by operation replay (§10–§12):** clients store intents (`confirm`, `set-account`, `dismiss`, …) that carry the old value; they never store text diffs.
   - A sync fetches `main`, builds a fresh working tree, re-applies the intents, validates, makes one commit with the `Lentil-*` trailers and pushes without force. If the push is rejected, it starts over, up to 5 attempts.
@@ -80,7 +80,7 @@ There is no server. A Git repository of standard Beancount files is the single s
 - **Import pipeline (§8, §15, §16):**
   1. An adapter reads the bank export. In v0 that is CSV with a declarative mapping in `sources/*.toml`. Mappings are pure data and never name commands.
   2. The adapter produces statement records.
-  3. The importer assigns IDs, removes duplicates and picks a suggested account: a `rules.toml` rule if one matches, otherwise a suggestion learned from the `lentil_desc` of reviewed transactions, otherwise `fallback_account`.
+  3. The importer assigns IDs, removes duplicates and picks a suggested account: a `rules.toml` rule if one matches, otherwise a suggestion learned from the counterparty and purpose of reviewed transactions, otherwise `fallback_account`.
   4. It adds a balance assertion and writes everything to one new run file.
 
 ## Invariants that are easy to get wrong

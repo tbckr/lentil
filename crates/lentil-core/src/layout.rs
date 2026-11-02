@@ -191,7 +191,7 @@ const RULES: &str = r#"# Suggestion rules (Lentil Convention Spec, section 16). 
 #
 # [[rule]]
 # source = "giro"                        # optional: limit the rule to one source
-# desc = "(?i)corner grocery"            # regular expression on lentil_desc
+# desc = "(?i)corner grocery"            # regular expression on counterparty and purpose
 # account = "Expenses:Food:Groceries"
 #
 # A rule never books to a source account. Transfers between your own accounts
@@ -255,9 +255,9 @@ Lentil addresses transactions by their metadata, so never change or remove these
 
 - `lentil_id`: the stable ID of a transaction.
 - `lentil_ref`: the bank's own reference.
-- `lentil_desc`: the bank's original description, from which suggestions learn.
+- `lentil_counterparty`, `lentil_purpose` and `lentil_type`: the bank's counterparty, purpose and booking type as imported, each only where the bank provides it.
 
-Rename payees and narrations freely instead; `lentil_desc` keeps the bank's wording.
+Rename payees and narrations freely instead; these keys keep the bank's wording, and suggestions learn from counterparty and purpose.
 
 ## Adding a source
 
@@ -292,6 +292,7 @@ A source is one bank account or card whose CSV exports you import.
    amount = {{ column = "Amount" }}
    counterparty = ["Payee"]
    purpose = ["Purpose"]
+   type = ["Type"]
 
    [[skip]]
    column = "Status"
@@ -488,9 +489,6 @@ include "prices/*/*.beancount"
             "# Ledger",
             "`!`",
             "`*`",
-            "lentil_id",
-            "lentil_ref",
-            "lentil_desc",
             "Importer",
             "Editor",
             "Admin",
@@ -499,6 +497,9 @@ include "prices/*/*.beancount"
             "fava main.beancount",
         ] {
             assert!(text.contains(needle), "{needle}");
+        }
+        for key in ledger::PROTECTED_META {
+            assert!(text.contains(&format!("`{key}`")), "{key}");
         }
     }
 }

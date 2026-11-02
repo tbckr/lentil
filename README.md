@@ -163,13 +163,15 @@ This walkthrough creates a ledger, adds one bank account and imports its CSV exp
    ```beancount
    2026-10-01 ! "Example Employer" "Salary October"
      lentil_id: "checking-87c56a8da0fc"
-     lentil_desc: "Example Employer Salary October"
+     lentil_counterparty: "Example Employer"
+     lentil_purpose: "Salary October"
      Assets:Bank:Checking   1500.00 EUR
      Income:Salary
 
    2026-10-02 ! "Corner Grocery" "Card payment"
      lentil_id: "checking-f035a3a427ef"
-     lentil_desc: "Corner Grocery Card payment"
+     lentil_counterparty: "Corner Grocery"
+     lentil_purpose: "Card payment"
      Assets:Bank:Checking    -23.50 EUR
      Expenses:Uncategorized
 

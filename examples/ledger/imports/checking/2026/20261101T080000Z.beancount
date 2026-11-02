@@ -3,49 +3,55 @@
 
 2026-10-01 * "Opening balance"
   lentil_id: "checking-9ff1c92be351"
-  lentil_desc: "Opening balance"
   Assets:Bank:Checking   1204.35 EUR
   Equity:OpeningBalances
 
 2026-10-01 * "Example Housing Co-op" "Rent October"
   lentil_id: "checking-7f72399e963e"
-  lentil_desc: "Example Housing Co-op Rent October"
+  lentil_counterparty: "Example Housing Co-op"
+  lentil_purpose: "Rent October"
   Assets:Bank:Checking   -950.00 EUR
   Expenses:Housing:Rent
 
 2026-10-02 * "Corner Grocery" "Card payment"
   lentil_id: "checking-f035a3a427ef"
-  lentil_desc: "Corner Grocery Card payment"
+  lentil_counterparty: "Corner Grocery"
+  lentil_purpose: "Card payment"
   Assets:Bank:Checking    -23.50 EUR
   Expenses:Food:Groceries
 
 2026-10-06 ! "City Utilities" "Electricity instalment 10/2026"
   lentil_id: "checking-fff9bdb33907"
-  lentil_desc: "City Utilities Electricity instalment 10/2026"
+  lentil_counterparty: "City Utilities"
+  lentil_purpose: "Electricity instalment 10/2026"
   Assets:Bank:Checking    -64.00 EUR
   Expenses:Uncategorized
 
 2026-10-09 * "Corner Grocery" "Card payment"
   lentil_id: "checking-6c3e2d5b458e"
-  lentil_desc: "Corner Grocery Card payment"
+  lentil_counterparty: "Corner Grocery"
+  lentil_purpose: "Card payment"
   Assets:Bank:Checking    -41.80 EUR
   Expenses:Food:Groceries
 
 2026-10-15 * "Example Employer" "Salary October"
   lentil_id: "checking-558d5a279ed1"
-  lentil_desc: "Example Employer Salary October"
+  lentil_counterparty: "Example Employer"
+  lentil_purpose: "Salary October"
   Assets:Bank:Checking   2450.00 EUR
   Income:Salary
 
 2026-10-27 ! "Corner Grocery" "Card payment"
   lentil_id: "checking-a3066716cb89"
-  lentil_desc: "Corner Grocery Card payment"
+  lentil_counterparty: "Corner Grocery"
+  lentil_purpose: "Card payment"
   Assets:Bank:Checking    -36.15 EUR
   Expenses:Uncategorized
 
 2026-10-31 ! "Example Bank" "Account fee October"
   lentil_id: "checking-93855950a72b"
-  lentil_desc: "Example Bank Account fee October"
+  lentil_counterparty: "Example Bank"
+  lentil_purpose: "Account fee October"
   Assets:Bank:Checking     -4.90 EUR
   Expenses:Uncategorized
 

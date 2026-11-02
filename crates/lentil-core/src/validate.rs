@@ -19,7 +19,7 @@ use rustledger_parser::ParseResult;
 use crate::config::{CONFIG_FILE, Config, ConfigError, SourceConfig, is_valid_name};
 use crate::finding::{Finding, FindingCode, Severity};
 use crate::layout::{ACCOUNTS_FILE, FAVA_FILE, MAIN_INCLUDES, PLACEHOLDERS};
-use crate::ledger::{self, ConstructKind, Ledger, META_DESC, META_ID, PROTECTED_META};
+use crate::ledger::{self, ConstructKind, Ledger, META_ID, PROTECTED_META};
 use crate::snapshot::{Change, Snapshot, glob_match, is_load_cache};
 
 /// The role a client acts in for one commit (spec section 7).
@@ -639,8 +639,6 @@ pub mod reason {
     pub const FLAG: &str = "flag";
     /// A new transaction lacks `lentil_id`.
     pub const MISSING_ID: &str = "missing-lentil-id";
-    /// An imported transaction lacks `lentil_desc`.
-    pub const MISSING_DESC: &str = "missing-lentil-desc";
     /// An imported transaction does not have exactly two postings, or an
     /// editor changed the number of postings.
     pub const POSTING_COUNT: &str = "posting-count";
@@ -809,9 +807,6 @@ impl Areas<'_, '_> {
                     }
                     if meta_str(&t.meta, META_ID).is_none() {
                         self.outside(path, Some(line), reason::MISSING_ID);
-                    }
-                    if meta_str(&t.meta, META_DESC).is_none() {
-                        self.outside(path, Some(line), reason::MISSING_DESC);
                     }
                     if t.postings.len() != 2 {
                         self.outside(path, Some(line), reason::POSTING_COUNT);
@@ -1233,20 +1228,23 @@ currency = "EUR"
 
 2026-10-18 ! "Corner Grocery" "Card payment"
   lentil_id: "giro-3f9a1c2e7b4d"
-  lentil_desc: "CORNER GROCERY 4711 CARD PAYMENT"
+  lentil_counterparty: "CORNER GROCERY 4711"
+  lentil_purpose: "CARD PAYMENT"
   Assets:Bank:Giro        -42.17 EUR
   Expenses:Uncategorized
 
 2026-10-19 ! "City Utilities" "Electricity, monthly instalment"
   lentil_id: "giro-8c01d4e9a2f7"
   lentil_ref: "2026101912345"
-  lentil_desc: "CITY UTILITIES ELECTRICITY INSTALMENT 10/2026"
+  lentil_counterparty: "CITY UTILITIES"
+  lentil_purpose: "ELECTRICITY INSTALMENT 10/2026"
   Assets:Bank:Giro        -64.00 EUR
   Expenses:Uncategorized
 
 ; 2026-10-19 ! "Card Company" "Card statement"
 ;   lentil_id: "giro-77aa88bb99cc"
-;   lentil_desc: "CARD COMPANY STATEMENT 09/2026"
+;   lentil_counterparty: "CARD COMPANY"
+;   lentil_purpose: "STATEMENT 09/2026"
 ;   Assets:Bank:Giro        -20.00 EUR
 ;   Expenses:Uncategorized
 
@@ -1259,7 +1257,7 @@ currency = "EUR"
 
 2026-10-10 ! "Bookshop" "Books"
   lentil_id: "card-111111111111"
-  lentil_desc: "BOOKSHOP 12 MAIN STREET"
+  lentil_counterparty: "BOOKSHOP 12 MAIN STREET"
   Liabilities:Card        -20.00 EUR
   Expenses:Books
 "#;
@@ -1282,14 +1280,15 @@ currency = "EUR"
 
 2026-10-28 ! "Corner Grocery" "Card payment"
   lentil_id: "giro-aaaaaaaaaaa1"
-  lentil_desc: "CORNER GROCERY 4711 CARD PAYMENT"
+  lentil_counterparty: "CORNER GROCERY 4711"
+  lentil_purpose: "CARD PAYMENT"
   Assets:Bank:Giro        -10.00 EUR
   Expenses:Uncategorized
 
 2026-10-29 ! "Bakery" "Bread"
   lentil_id: "giro-aaaaaaaaaaa2"
   lentil_ref: "REF-2"
-  lentil_desc: "BAKERY"
+  lentil_counterparty: "BAKERY"
   Assets:Bank:Giro        -3.00 EUR
   Expenses:Food
 
@@ -1816,7 +1815,7 @@ currency = "EUR"
         assert_eq!(finding.severity, Severity::Warning);
         assert_eq!(
             (finding.file.as_deref(), finding.line),
-            (Some(GIRO_RUN), Some(23))
+            (Some(GIRO_RUN), Some(26))
         );
         assert_eq!(finding.args["account"], "Assets:Bank:Giro");
         assert_eq!(finding.args["date"], "2026-10-20");
@@ -2102,7 +2101,6 @@ txn-free comment lines are fine too
                 "",
                 "missing-lentil-id",
             ),
-            ("  lentil_desc: \"BAKERY\"\n", "", "missing-lentil-desc"),
             (
                 "  Expenses:Food\n",
                 "  Expenses:Food  2.00 EUR\n  Expenses:Uncategorized\n",
@@ -2149,7 +2147,7 @@ txn-free comment lines are fine too
             assert_eq!(finding.args["account"], "Assets:Bank:Giro");
             assert_eq!(
                 (finding.file.as_deref(), finding.line),
-                (Some(NEW_RUN), Some(16))
+                (Some(NEW_RUN), Some(17))
             );
         }
         let second =
@@ -2230,14 +2228,20 @@ txn-free comment lines are fine too
     fn editor_never_changes_protected_metadata() {
         let cases = [
             (
-                "  lentil_desc: \"CORNER GROCERY 4711 CARD PAYMENT\"\n",
-                "  lentil_desc: \"CORNER GROCERY\"\n",
-                "lentil_desc",
+                "  lentil_counterparty: \"CORNER GROCERY 4711\"\n",
+                "  lentil_counterparty: \"CORNER GROCERY\"\n",
+                "lentil_counterparty",
+            ),
+            ("  lentil_purpose: \"CARD PAYMENT\"\n", "", "lentil_purpose"),
+            (
+                "  lentil_purpose: \"CARD PAYMENT\"\n",
+                "  lentil_purpose: \"CARD PAYMENT\"\n  lentil_type: \"DEBIT CARD\"\n",
+                "lentil_type",
             ),
             ("  lentil_ref: \"2026101912345\"\n", "", "lentil_ref"),
             (
-                "  lentil_desc: \"CORNER GROCERY 4711 CARD PAYMENT\"\n",
-                "  lentil_desc: \"CORNER GROCERY 4711 CARD PAYMENT\"\n  lentil_ref: \"NEW\"\n",
+                "  lentil_purpose: \"CARD PAYMENT\"\n",
+                "  lentil_purpose: \"CARD PAYMENT\"\n  lentil_ref: \"NEW\"\n",
                 "lentil_ref",
             ),
             (
@@ -2264,7 +2268,8 @@ txn-free comment lines are fine too
     fn a_bare_id_comment_is_no_dismissal() {
         let block = "2026-10-18 ! \"Corner Grocery\" \"Card payment\"
   lentil_id: \"giro-3f9a1c2e7b4d\"
-  lentil_desc: \"CORNER GROCERY 4711 CARD PAYMENT\"
+  lentil_counterparty: \"CORNER GROCERY 4711\"
+  lentil_purpose: \"CARD PAYMENT\"
   Assets:Bank:Giro        -42.17 EUR
   Expenses:Uncategorized
 ";
@@ -2354,7 +2359,7 @@ txn-free comment lines are fine too
     #[test]
     fn editor_never_deletes_transactions() {
         let text = GIRO_RUN_TEXT.replace(
-            "2026-10-18 ! \"Corner Grocery\" \"Card payment\"\n  lentil_id: \"giro-3f9a1c2e7b4d\"\n  lentil_desc: \"CORNER GROCERY 4711 CARD PAYMENT\"\n  Assets:Bank:Giro        -42.17 EUR\n  Expenses:Uncategorized\n\n",
+            "2026-10-18 ! \"Corner Grocery\" \"Card payment\"\n  lentil_id: \"giro-3f9a1c2e7b4d\"\n  lentil_counterparty: \"CORNER GROCERY 4711\"\n  lentil_purpose: \"CARD PAYMENT\"\n  Assets:Bank:Giro        -42.17 EUR\n  Expenses:Uncategorized\n\n",
             "",
         );
         assert_ne!(text, GIRO_RUN_TEXT);

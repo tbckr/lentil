@@ -150,6 +150,7 @@ struct Columns<'m> {
     currency: Option<usize>,
     counterparty: Vec<usize>,
     purpose: Vec<usize>,
+    booking_type: Vec<usize>,
     reference: Option<usize>,
     skip: Vec<(usize, &'m SkipRule)>,
     balance: Option<usize>,
@@ -198,6 +199,7 @@ impl<'m> Columns<'m> {
             currency: mapping.currency.as_deref().map(find).transpose()?,
             counterparty: find_all(&mapping.counterparty)?,
             purpose: find_all(&mapping.purpose)?,
+            booking_type: find_all(&mapping.booking_type)?,
             reference: mapping.reference.as_deref().map(find).transpose()?,
             skip: mapping
                 .skip
@@ -280,6 +282,7 @@ impl<'m> Columns<'m> {
             currency,
             counterparty: joined(row, &self.counterparty),
             purpose: joined(row, &self.purpose),
+            booking_type: joined(row, &self.booking_type),
             reference: self
                 .reference
                 .map(|index| cell(row, index).trim().to_owned())
@@ -471,6 +474,7 @@ Booked;ignored after end;21.10.2026;x;;;\n";
                     currency: "EUR".into(),
                     counterparty: Some("Corner  Grocery".into()),
                     purpose: Some("Card payment".into()),
+                    booking_type: None,
                     reference: None,
                     balance_after: None,
                     line: 4,
@@ -481,6 +485,7 @@ Booked;ignored after end;21.10.2026;x;;;\n";
                     currency: "EUR".into(),
                     counterparty: Some("City Utilities Ltd.".into()),
                     purpose: Some("Electricity".into()),
+                    booking_type: None,
                     reference: Some("R-1".into()),
                     balance_after: None,
                     line: 7,
@@ -491,11 +496,28 @@ Booked;ignored after end;21.10.2026;x;;;\n";
                     currency: "EUR".into(),
                     counterparty: None,
                     purpose: None,
+                    booking_type: None,
                     reference: None,
                     balance_after: None,
                     line: 8,
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn booking_type_joins_its_columns() {
+        let mapping = MAPPING.replace(
+            "purpose = [\"Text\"]\n",
+            "purpose = [\"Text\"]\ntype = [\"Status\", \"Ref\"]\n",
+        );
+        let records = read(EXPORT, &mapping).unwrap().records;
+        let types: Vec<_> = records.iter().map(|r| r.booking_type.as_deref()).collect();
+        assert_eq!(types, [Some("Booked"), Some("Booked R-1"), Some("Booked")]);
+        let renamed = mapping.replace("[\"Status\", \"Ref\"]", "[\"Kind\"]");
+        assert_eq!(
+            read(EXPORT, &renamed),
+            Err(ImportError::ColumnNotFound("Kind".into()))
         );
     }
 

@@ -166,7 +166,7 @@ include "imports/*/*/*.beancount"
         account: &str,
     ) -> String {
         format!(
-            "{date} {flag} \"{payee}\" \"{narration}\"\n  lentil_id: \"{id}\"\n  lentil_desc: \"X\"\n  {account}  -1.00 EUR\n  Expenses:Food\n\n"
+            "{date} {flag} \"{payee}\" \"{narration}\"\n  lentil_id: \"{id}\"\n  lentil_counterparty: \"X\"\n  {account}  -1.00 EUR\n  Expenses:Food\n\n"
         )
     }
 

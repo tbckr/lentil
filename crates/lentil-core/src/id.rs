@@ -23,11 +23,19 @@ pub fn normalize_text(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// `lentil_desc`: counterparty and purpose joined by one space, normalized (spec section 15).
+/// The original text of a record (spec section 5). The importer matches
+/// rules and looks up learned suggestions by it.
 #[must_use]
 pub fn description(record: &Record) -> String {
-    let counterparty = record.counterparty.as_deref().unwrap_or_default();
-    let purpose = record.purpose.as_deref().unwrap_or_default();
+    original_text(record.counterparty.as_deref(), record.purpose.as_deref())
+}
+
+/// The original text (spec section 5): counterparty and purpose joined by one
+/// space and normalized, a missing one counting as empty.
+#[must_use]
+pub fn original_text(counterparty: Option<&str>, purpose: Option<&str>) -> String {
+    let counterparty = counterparty.unwrap_or_default();
+    let purpose = purpose.unwrap_or_default();
     normalize_text(&format!("{counterparty} {purpose}"))
 }
 
@@ -166,6 +174,7 @@ mod tests {
             currency: "EUR".to_owned(),
             counterparty: counterparty.map(str::to_owned),
             purpose: purpose.map(str::to_owned),
+            booking_type: None,
             reference: None,
             balance_after: None,
             line: 1,
@@ -238,6 +247,15 @@ mod tests {
         assert_eq!(import_id("giro", &r, 0), expected);
         let empty = record(Decimal::new(5, 0), Some("  "), Some(""));
         assert_eq!(import_id("giro", &empty, 0), expected);
+    }
+
+    #[test]
+    fn booking_type_stays_out_of_the_id() {
+        let mut r = record(Decimal::new(-6400, 2), Some("City Utilities"), None);
+        let without = import_id("giro", &r, 0);
+        r.booking_type = Some("Direct debit".to_owned());
+        assert_eq!(import_id("giro", &r, 0), without);
+        assert_eq!(import_ids("giro", &[r]), [without]);
     }
 
     #[test]

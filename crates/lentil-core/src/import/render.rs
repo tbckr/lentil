@@ -4,7 +4,7 @@ use jiff::Timestamp;
 use rust_decimal::Decimal;
 
 use super::plan::{BalanceOutcome, PlannedTxn};
-use crate::ledger::{META_DESC, META_ID, META_REF};
+use crate::ledger::{META_COUNTERPARTY, META_ID, META_PURPOSE, META_REF, META_TYPE};
 use crate::status::UNCHECKED_MARK;
 
 /// `imports/<source-id>/<YYYY>/<YYYYMMDDTHHMMSSZ>.beancount` for a run started at `started` (UTC).
@@ -61,10 +61,16 @@ pub fn render_run(
                 None => format!("{} ! \"{}\"", t.date, escape(&t.narration)),
             }];
             lines.push(format!("  {META_ID}: \"{}\"", escape(&t.id)));
-            if let Some(reference) = &t.reference {
-                lines.push(format!("  {META_REF}: \"{}\"", escape(reference)));
+            for (key, value) in [
+                (META_REF, &t.reference),
+                (META_COUNTERPARTY, &t.counterparty),
+                (META_PURPOSE, &t.purpose),
+                (META_TYPE, &t.booking_type),
+            ] {
+                if let Some(value) = value {
+                    lines.push(format!("  {key}: \"{}\"", escape(value)));
+                }
             }
-            lines.push(format!("  {META_DESC}: \"{}\"", escape(&t.desc)));
             lines.push(format!(
                 "  {account:<account_column$}{:>number_width$} {}",
                 number(t.amount),
@@ -140,7 +146,7 @@ mod tests {
         narration: &str,
         id: &str,
         reference: Option<&str>,
-        desc: &str,
+        [counterparty, purpose, booking_type]: [Option<&str>; 3],
         amount: Decimal,
         counter: &str,
     ) -> PlannedTxn {
@@ -149,7 +155,9 @@ mod tests {
             date,
             payee: payee.map(Into::into),
             narration: narration.into(),
-            desc: desc.into(),
+            counterparty: counterparty.map(Into::into),
+            purpose: purpose.map(Into::into),
+            booking_type: booking_type.map(Into::into),
             reference: reference.map(Into::into),
             amount,
             currency: "EUR".into(),
@@ -166,7 +174,11 @@ mod tests {
                 "Card payment",
                 "giro-3f9a1c2e7b4d",
                 None,
-                "CORNER GROCERY 4711 CARD PAYMENT",
+                [
+                    Some("CORNER GROCERY 4711"),
+                    Some("Card payment"),
+                    Some("Debit card"),
+                ],
                 Decimal::new(-4217, 2),
                 "Expenses:Food:Groceries",
             ),
@@ -176,7 +188,11 @@ mod tests {
                 "Electricity, monthly instalment",
                 "giro-8c01d4e9a2f7",
                 Some("2026101912345"),
-                "CITY UTILITIES ELECTRICITY INSTALMENT 10/2026",
+                [
+                    Some("CITY UTILITIES"),
+                    Some("Electricity, monthly instalment"),
+                    Some("Direct debit"),
+                ],
                 Decimal::new(-6400, 2),
                 "Expenses:Uncategorized",
             ),
@@ -215,14 +231,18 @@ mod tests {
 
 2026-10-18 ! "Corner Grocery" "Card payment"
   lentil_id: "giro-3f9a1c2e7b4d"
-  lentil_desc: "CORNER GROCERY 4711 CARD PAYMENT"
+  lentil_counterparty: "CORNER GROCERY 4711"
+  lentil_purpose: "Card payment"
+  lentil_type: "Debit card"
   Assets:Bank:Giro        -42.17 EUR
   Expenses:Food:Groceries
 
 2026-10-19 ! "City Utilities" "Electricity, monthly instalment"
   lentil_id: "giro-8c01d4e9a2f7"
   lentil_ref: "2026101912345"
-  lentil_desc: "CITY UTILITIES ELECTRICITY INSTALMENT 10/2026"
+  lentil_counterparty: "CITY UTILITIES"
+  lentil_purpose: "Electricity, monthly instalment"
+  lentil_type: "Direct debit"
   Assets:Bank:Giro        -64.00 EUR
   Expenses:Uncategorized
 
@@ -277,7 +297,7 @@ mod tests {
                 "Interest",
                 "x-1",
                 None,
-                "Interest",
+                [None, Some("Interest"), None],
                 Decimal::new(5, 2),
                 "Income:Interest",
             ),
@@ -287,7 +307,7 @@ mod tests {
                 "Path C:\\x",
                 "x-2",
                 None,
-                "Big \"Shop\" C:\\x",
+                [Some("Big \"Shop\""), Some("Path C:\\x"), Some("A\\B \"C\"")],
                 Decimal::new(-123_456, 2),
                 "Expenses:X",
             ),
@@ -305,13 +325,15 @@ mod tests {
 
 2026-10-01 ! "Interest"
   lentil_id: "x-1"
-  lentil_desc: "Interest"
+  lentil_purpose: "Interest"
   Assets:Bank:Savings      0.05 EUR
   Income:Interest
 
 2026-10-02 ! "Big \"Shop\"" "Path C:\\x"
   lentil_id: "x-2"
-  lentil_desc: "Big \"Shop\" C:\\x"
+  lentil_counterparty: "Big \"Shop\""
+  lentil_purpose: "Path C:\\x"
+  lentil_type: "A\\B \"C\""
   Assets:Bank:Savings  -1234.56 EUR
   Expenses:X
 

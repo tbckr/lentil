@@ -126,7 +126,7 @@ fn run_file(balance: &str) -> String {
     );
     for (id, date, payee, amount) in TRANSACTIONS {
         text.push_str(&format!(
-            "\n{date} ! \"{payee}\" \"Card payment\"\n  lentil_id: \"{id}\"\n  lentil_desc: \"{} CARD PAYMENT\"\n  Assets:Bank:Giro  {amount} EUR\n  Expenses:Uncategorized\n",
+            "\n{date} ! \"{payee}\" \"Card payment\"\n  lentil_id: \"{id}\"\n  lentil_counterparty: \"{}\"\n  lentil_purpose: \"CARD PAYMENT\"\n  Assets:Bank:Giro  {amount} EUR\n  Expenses:Uncategorized\n",
             payee.to_uppercase()
         ));
     }

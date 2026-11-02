@@ -87,7 +87,7 @@
     <string name="finding_missing_zero_tolerance">Einer neuen Saldoprüfung für %1$s fehlt die Nulltoleranz.</string>
     <string name="finding_manual_posting_on_source_account">Die manuelle Buchung %2$s bucht auf das importierte Konto %1$s.</string>
     <string name="finding_pad_on_source_account">Ein Pad bucht auf das importierte Konto %1$s.</string>
-    <string name="finding_protected_metadata_changed">%2$s der Buchung %1$s wurde geändert oder entfernt.</string>
+    <string name="finding_protected_metadata_changed">%2$s der Buchung %1$s wurde geändert, hinzugefügt oder entfernt.</string>
     <string name="finding_protected_transaction_changed">Die Buchung %1$s wurde an einer Stelle geändert, die kein Client ändern darf: %2$s.</string>
     <string name="finding_stray_ledger_file">%1$s wird von main.beancount nicht eingebunden.</string>
     <string name="finding_invalid_path">Der Pfad %1$s verletzt die Namensregeln.</string>
@@ -98,7 +98,6 @@
     <string name="reason_directive">eine Direktive, die diese Rolle hier nicht schreiben oder ändern darf</string>
     <string name="reason_flag">eine importierte Buchung ohne das Flag !</string>
     <string name="reason_missing_lentil_id">eine neue Buchung ohne lentil_id</string>
-    <string name="reason_missing_lentil_desc">eine importierte Buchung ohne lentil_desc</string>
     <string name="reason_posting_count">die Zahl der Buchungszeilen</string>
     <string name="reason_source_posting">die Bankbuchungszeile</string>
     <string name="reason_balance">eine Saldoprüfung außerhalb des importierten Kontos</string>

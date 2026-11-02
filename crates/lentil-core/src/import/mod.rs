@@ -32,8 +32,10 @@ pub struct Record {
     pub currency: String,
     /// The other party, as the bank writes it.
     pub counterparty: Option<String>,
-    /// Purpose or booking text, as the bank writes it.
+    /// Purpose, as the bank writes it.
     pub purpose: Option<String>,
+    /// Booking type, such as direct debit or card payment, as the bank writes it.
+    pub booking_type: Option<String>,
     /// The bank's unique reference.
     pub reference: Option<String>,
     /// Running balance after this booking.

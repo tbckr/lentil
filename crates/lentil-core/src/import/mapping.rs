@@ -36,6 +36,8 @@ pub struct Mapping {
     pub counterparty: Vec<String>,
     /// Columns joined into the purpose.
     pub purpose: Vec<String>,
+    /// Columns joined into the booking type, from the key `type`.
+    pub booking_type: Vec<String>,
     /// Column with the bank's unique reference.
     pub reference: Option<String>,
     /// Rows to skip, such as pending transactions.
@@ -376,6 +378,8 @@ struct RawColumns {
     currency: Option<String>,
     counterparty: Option<Vec<String>>,
     purpose: Option<Vec<String>>,
+    #[serde(rename = "type")]
+    booking_type: Option<Vec<String>>,
     reference: Option<String>,
 }
 
@@ -434,7 +438,7 @@ fn one_char(value: &str, key: &str) -> Result<char, MappingError> {
     }
 }
 
-/// A column list for `counterparty` or `purpose`: absent or non-empty.
+/// A column list for `counterparty`, `purpose` or `type`: absent or non-empty.
 fn column_list(value: Option<Vec<String>>, key: &str) -> Result<Vec<String>, MappingError> {
     match value {
         Some(list) if list.is_empty() => {
@@ -595,6 +599,7 @@ impl Mapping {
             currency: columns.currency,
             counterparty: column_list(columns.counterparty, "counterparty")?,
             purpose: column_list(columns.purpose, "purpose")?,
+            booking_type: column_list(columns.booking_type, "type")?,
             reference: columns.reference,
             skip,
             balance,
@@ -624,6 +629,7 @@ amount = { column = "Betrag" }
 currency = "Währung"
 counterparty = ["Zahlungsempfänger"]
 purpose = ["Verwendungszweck"]
+type = ["Buchungstext"]
 reference = "Kundenreferenz"
 
 [[skip]]
@@ -671,6 +677,7 @@ from = "none"
         assert_eq!(m.currency.as_deref(), Some("Währung"));
         assert_eq!(m.counterparty, vec!["Zahlungsempfänger"]);
         assert_eq!(m.purpose, vec!["Verwendungszweck"]);
+        assert_eq!(m.booking_type, vec!["Buchungstext"]);
         assert_eq!(m.reference.as_deref(), Some("Kundenreferenz"));
         assert_eq!(
             m.skip,
@@ -689,7 +696,7 @@ from = "none"
         assert_eq!(m.delimiter, b',');
         assert_eq!((m.decimal, m.thousands), ('.', None));
         assert!(m.end.is_none());
-        assert!(m.counterparty.is_empty() && m.purpose.is_empty());
+        assert!(m.counterparty.is_empty() && m.purpose.is_empty() && m.booking_type.is_empty());
         assert!(m.skip.is_empty());
         assert_eq!(m.balance, BalanceSource::None);
     }
@@ -956,6 +963,8 @@ from = "none"
         assert!(matches!(err(&text), MappingError::Inconsistent(_)));
         let text = MINIMAL.replace("[columns]\n", "[columns]\npurpose = [\"A\", \"B\"]\n");
         assert_eq!(Mapping::parse(&text).unwrap().purpose, vec!["A", "B"]);
+        let text = MINIMAL.replace("[columns]\n", "[columns]\ntype = []\n");
+        assert!(matches!(err(&text), MappingError::Inconsistent(_)));
     }
 
     #[test]

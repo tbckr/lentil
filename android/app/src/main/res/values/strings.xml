@@ -95,7 +95,7 @@
     <string name="finding_missing_zero_tolerance">A new balance assertion for %1$s lacks the zero tolerance.</string>
     <string name="finding_manual_posting_on_source_account">The manual transaction %2$s posts to the imported account %1$s.</string>
     <string name="finding_pad_on_source_account">A pad posts to the imported account %1$s.</string>
-    <string name="finding_protected_metadata_changed">%2$s of transaction %1$s was changed or removed.</string>
+    <string name="finding_protected_metadata_changed">%2$s of transaction %1$s was changed, added or removed.</string>
     <string name="finding_protected_transaction_changed">Transaction %1$s was changed where no client may change it: %2$s.</string>
     <string name="finding_stray_ledger_file">%1$s isn\'t included by main.beancount.</string>
     <string name="finding_invalid_path">The path %1$s breaks the naming rules.</string>
@@ -107,7 +107,6 @@
     <string name="reason_directive">a directive this role may not write or change here</string>
     <string name="reason_flag">an imported transaction without the flag !</string>
     <string name="reason_missing_lentil_id">a new transaction without lentil_id</string>
-    <string name="reason_missing_lentil_desc">an imported transaction without lentil_desc</string>
     <string name="reason_posting_count">the number of postings</string>
     <string name="reason_source_posting">the bank posting</string>
     <string name="reason_balance">a balance assertion off the imported account</string>

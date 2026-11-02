@@ -146,7 +146,7 @@ Every requirement has an ID and a target release; how it is implemented is defin
 | FR-C5 | Where the CSV contains a balance, each import run writes it as a balance assertion. | v0.1 |
 | FR-C6 | If the CSV contains no balance, the CLI asks for the balance shown in online banking and the date it refers to, and writes it as a balance assertion with zero tolerance. The user may skip; `lentil status` then reports the import as unchecked. | v0.1 |
 | FR-C7 | If the export no longer reproduces the ID of an already imported transaction in its date range, for example after a mapping change, a new transaction with the same date, amount and currency is reported as a possible duplicate and imported only after confirmation. | v0.1 |
-| FR-C8 | Imported transactions keep the bank's original description in protected metadata. Suggestions learn from it, not from a payee or narration the user has edited. | v0.1 |
+| FR-C8 | Imported transactions keep the bank's counterparty, purpose and booking type as separate protected metadata. Suggestions learn from counterparty and purpose, not from a payee or narration the user has edited. | v0.1 |
 | FR-C9 | `lentil source add` drafts a mapping from a sample export (encoding, delimiter, header, date and number formats, columns) and shows the first parsed rows for confirmation. | v1 |
 | FR-C10 | Transfers between own accounts are detected, and both sides are booked against the transfer account. | v1 |
 | FR-C11 | Corrections made during triage improve future suggestions; rules live in the repository. | v1 |
@@ -167,7 +167,7 @@ Every requirement has an ID and a target release; how it is implemented is defin
 | FR-D4 | A duplicate, such as a transaction imported again after the bank changed its wording, can be dismissed; it stays in its file as a comment and is never imported again. | v0.1 |
 | FR-D5 | Triage works offline; changes are transferred on the next sync. | v0.1 |
 | FR-D6 | The UI syncs without using Git terminology. | v0.1 |
-| FR-D7 | Payee and narration can be corrected; the bank's original description stays unchanged (FR-C8). | v1 |
+| FR-D7 | Payee and narration can be corrected; the bank's original fields stay unchanged (FR-C8). | v1 |
 | FR-D8 | Cash payments and one-off entries on accounts without import can be recorded quickly; they go into one file per device. Entries on imported accounts are refused, because the import brings them anyway. | v1 |
 | FR-D9 | A quick overview shows balances per account and the current month's spending per category. | v1 |
 | FR-D10 | Split transactions are shown read-only; splitting happens in a text editor (FR-E6). | v1 |

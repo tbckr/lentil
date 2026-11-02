@@ -7,7 +7,7 @@ data class QueueEntry(
     val date: String,
     val payee: String?,
     val narration: String,
-    /** The bank's original description. */
+    /** The bank's original text: counterparty and purpose. */
     val desc: String?,
     val amount: String?,
     val currency: String?,

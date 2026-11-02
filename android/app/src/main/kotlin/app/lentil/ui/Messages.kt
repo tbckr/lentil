@@ -63,7 +63,6 @@ private val codedArgs =
                 "directive" to R.string.reason_directive,
                 "flag" to R.string.reason_flag,
                 "missing-lentil-id" to R.string.reason_missing_lentil_id,
-                "missing-lentil-desc" to R.string.reason_missing_lentil_desc,
                 "posting-count" to R.string.reason_posting_count,
                 "source-posting" to R.string.reason_source_posting,
                 "balance" to R.string.reason_balance,

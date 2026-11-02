@@ -73,26 +73,30 @@ const GIRO_RUN_TEXT: &str = r#"; lentil import run
 
 2026-10-01 ! "Employer" "Salary October"
   lentil_id: "giro-0a1b2c3d4e5f"
-  lentil_desc: "EMPLOYER SALARY 10/2026"
+  lentil_counterparty: "EMPLOYER"
+  lentil_purpose: "SALARY 10/2026"
   Assets:Bank:Giro        2500.00 EUR
   Income:Salary
 
 2026-10-18 ! "Corner Grocery" "Card payment"
   lentil_id: "giro-3f9a1c2e7b4d"
-  lentil_desc: "CORNER GROCERY 4711 CARD PAYMENT"
+  lentil_counterparty: "CORNER GROCERY 4711"
+  lentil_purpose: "CARD PAYMENT"
   Assets:Bank:Giro        -42.17 EUR
   Expenses:Food:Groceries
 
 2026-10-19 ! "City Utilities" "Electricity, monthly instalment"
   lentil_id: "giro-8c01d4e9a2f7"
   lentil_ref: "2026101912345"
-  lentil_desc: "CITY UTILITIES ELECTRICITY INSTALMENT 10/2026"
+  lentil_counterparty: "CITY UTILITIES"
+  lentil_purpose: "ELECTRICITY INSTALMENT 10/2026"
   Assets:Bank:Giro        -64.00 EUR
   Expenses:Uncategorized
 
 ; 2026-10-19 ! "Card Company" "Card statement"
 ;   lentil_id: "giro-77aa88bb99cc"
-;   lentil_desc: "CARD COMPANY STATEMENT 09/2026"
+;   lentil_counterparty: "CARD COMPANY"
+;   lentil_purpose: "STATEMENT 09/2026"
 ;   Assets:Bank:Giro        -20.00 EUR
 ;   Expenses:Uncategorized
 
@@ -106,13 +110,13 @@ const CARD_RUN_TEXT: &str = r#"; lentil import run
 
 2026-10-10 ! "Bookshop" "Books"
   lentil_id: "card-111111111111"
-  lentil_desc: "BOOKSHOP 12 MAIN STREET"
+  lentil_counterparty: "BOOKSHOP 12 MAIN STREET"
   Liabilities:Card        -20.00 EUR
   Expenses:Books
 
 2026-10-12 ! "Hotel" "Two nights"
   lentil_id: "card-222222222222"
-  lentil_desc: "HOTEL CENTRAL"
+  lentil_counterparty: "HOTEL CENTRAL"
   Liabilities:Card        -200.00 EUR
   Expenses:Travel         216.00 USD @@ 200.00 EUR
 "#;
@@ -524,7 +528,7 @@ fn large_repository() -> (Snapshot, usize) {
                 let counter = COUNTERS[(i + run) % COUNTERS.len()];
                 write!(
                     text,
-                    "{year}-{mon:02}-{day:02} ! \"Payee {i}\" \"Narration {run}\"\n  lentil_id: \"{id}-{run:06}{i:06}\"\n  lentil_desc: \"PAYEE {i} RUN {run}\"\n  {account}  {}.{:02} EUR\n  {counter}\n\n",
+                    "{year}-{mon:02}-{day:02} ! \"Payee {i}\" \"Narration {run}\"\n  lentil_id: \"{id}-{run:06}{i:06}\"\n  lentil_counterparty: \"PAYEE {i}\"\n  lentil_purpose: \"RUN {run}\"\n  {account}  {}.{:02} EUR\n  {counter}\n\n",
                     if cents < 0 { format!("-{}", -cents / 100) } else { (cents / 100).to_string() },
                     (cents % 100).abs()
                 )

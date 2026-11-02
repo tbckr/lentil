@@ -105,7 +105,9 @@ Every transaction Lentil writes carries a stable `lentil_id`; all edits, dedupli
 | --- | --- | --- | --- |
 | `lentil_id` | Yes, on every transaction Lentil creates | Unique, never changes, never reused | `"giro-3f9a1c2e7b4d"` |
 | `lentil_ref` | No | The bank's own reference, copied verbatim | `"2026101912345"` |
-| `lentil_desc` | Yes, on every imported transaction | The bank's description (counterparty and purpose) as delivered, inner whitespace collapsed; input for learned suggestions | `"CORNER GROCERY 4711 CARD PAYMENT"` |
+| `lentil_counterparty` | Only on imported transactions whose counterparty is not empty (section 8) | The bank's counterparty as delivered, trimmed and inner whitespace collapsed | `"CORNER GROCERY 4711"` |
+| `lentil_purpose` | Only on imported transactions whose purpose is not empty (section 8) | The bank's purpose, normalized likewise | `"Card payment"` |
+| `lentil_type` | Only on imported transactions whose booking type is not empty (section 8) | The bank's booking type, normalized likewise | `"Debit card"` |
 
 **Imported transactions.** The ID is deterministic, so a repeated import of the same data produces the same ID:
 
@@ -118,7 +120,8 @@ Every transaction Lentil writes carries a stable `lentil_id`; all edits, dedupli
 **Rules.**
 
 - `lentil_id` MUST be unique among active and commented-out transactions (section 10, `dismiss`).
-- No client may change or remove `lentil_id`, `lentil_ref` or `lentil_desc`. Users rename payees and narrations freely; `lentil_desc` keeps the bank's wording for suggestions and for finding the original statement line.
+- No client may change, add or remove `lentil_id`, `lentil_ref` or the original fields `lentil_counterparty`, `lentil_purpose` and `lentil_type`. Users rename payees and narrations freely; the original fields keep the bank's wording, for example for finding the original statement line.
+- A transaction's original text is `lentil_counterparty` and `lentil_purpose` joined by one space, a missing field counting as empty, and normalized as above. Suggestions match and learn on it (section 16).
 - Transactions without `lentil_id` (for example written by hand in an editor) are valid but read-only for Lentil until the admin role assigns IDs.
 
 ## 6. Review state
@@ -142,7 +145,7 @@ Every client acts in one of three roles, and each role may only touch its own ar
 | Role | Used by | May create | May change | MUST NOT |
 | --- | --- | --- | --- | --- |
 | Importer | CLI import; later a bot | New run files under `imports/<source-id>/`; price files under `prices/` (v1); `status/<bot-id>.json` | Nothing that already exists | Change, move or remove existing transactions |
-| Editor | Android; a local web UI if built | Files under `manual/<device-id>/`, including balance snapshots (section 9); `open` directives in `accounts.beancount` | Flag, payee, narration, tags, links, metadata other than `lentil_id`, `lentil_ref` and `lentil_desc`, and the account of postings that are not on a source account | Change dates, a source posting, `lentil_id`, `lentil_ref` or `lentil_desc`; move a posting onto a source account; delete transactions; write manual transactions or pads that post to a source account |
+| Editor | Android; a local web UI if built | Files under `manual/<device-id>/`, including balance snapshots (section 9); `open` directives in `accounts.beancount` | Flag, payee, narration, tags, links, metadata other than `lentil_id`, `lentil_ref` and the original fields (section 5), and the account of postings that are not on a source account | Change dates, a source posting, `lentil_id`, `lentil_ref` or an original field; move a posting onto a source account; delete transactions; write manual transactions or pads that post to a source account |
 | Admin | CLI (`init`, `adopt`, config commands) | Anything | Anything | Break any rule of this spec in the resulting state |
 
 - Every posting on a source account is a source posting. Editors never move a posting onto a source account, and suggestions never name one (section 16), so each side of a transfer between two source accounts stays a transaction of its own (section 8).
@@ -160,14 +163,18 @@ Each import run reads one bank export through an adapter (section 15), writes ex
 
 2026-10-18 ! "Corner Grocery" "Card payment"
   lentil_id: "giro-3f9a1c2e7b4d"
-  lentil_desc: "CORNER GROCERY 4711 CARD PAYMENT"
+  lentil_counterparty: "CORNER GROCERY 4711"
+  lentil_purpose: "Card payment"
+  lentil_type: "Debit card"
   Assets:Bank:Giro        -42.17 EUR
   Expenses:Food:Groceries
 
 2026-10-19 ! "City Utilities" "Electricity, monthly instalment"
   lentil_id: "giro-8c01d4e9a2f7"
   lentil_ref: "2026101912345"
-  lentil_desc: "CITY UTILITIES ELECTRICITY INSTALMENT 10/2026"
+  lentil_counterparty: "CITY UTILITIES"
+  lentil_purpose: "Electricity, monthly instalment"
+  lentil_type: "Direct debit"
   Assets:Bank:Giro        -64.00 EUR
   Expenses:Uncategorized
 
@@ -181,7 +188,7 @@ Each import run reads one bank export through an adapter (section 15), writes ex
 - Importers MUST import only booked transactions, never pending ones.
 - Importers MUST import only transactions booked before the run date; later ones follow with a later run. An export can end in the middle of the run date, and a later export would then number identical same-day transactions differently (section 5).
 - Each transaction has exactly two postings: the source posting with the amount as reported by the bank, and a counter posting with elided amount on the suggested account, or on `fallback_account` if there is no suggestion. The opening transaction (below) has the same shape.
-- Each transaction carries `lentil_id` and `lentil_desc` (section 5), and `lentil_ref` if the bank provides one.
+- Each transaction carries `lentil_id` (section 5), `lentil_ref` if the bank provides one, and each original field that is not empty, in the order `lentil_counterparty`, `lentil_purpose`, `lentil_type`.
 - Transactions are ordered by booking date, then in the order the bank lists them.
 - Before writing, the importer collects every `lentil_id` in the ledger, including those of commented-out transactions, and skips transactions whose ID already exists.
 - A transaction can get a new ID when the export describes it differently, for example after a mapping change or a change in the bank's wording. If an existing transaction of the same source lies between the export's first and last booking date and the export does not reproduce its `lentil_id`, any new transaction with that transaction's booking date, amount and currency is a possible duplicate. The importer MUST NOT write it without confirmation: the CLI shows both and asks, and an unattended import skips it and reports it.
@@ -198,7 +205,7 @@ Each import run reads one bank export through an adapter (section 15), writes ex
 **Opening balance.** The run that writes the first balance assertion for a source account also writes the account's opening transaction, unless the ledger already holds it, active or dismissed.
 
 - Its source posting books the part of the asserted balance that the source's transactions before the assertion, in the ledger and in the run, do not explain. Its counter posting is on `Equity:OpeningBalances`, which `init` opens.
-- It carries flag `!`, `lentil_id` = `<source-id>-` + the first 12 hex characters of SHA-256 over `<source-id>|opening`, and `Opening balance` as narration and `lentil_desc`.
+- It carries flag `!`, `lentil_id` = `<source-id>-` + the first 12 hex characters of SHA-256 over `<source-id>|opening`, and `Opening balance` as narration. It carries no original fields.
 - It is dated on the source's earliest transaction, but before the assertion.
 - If that part is zero, or a posting on the source account has no amount, the importer writes no opening transaction.
 - If earlier runs skipped the balance, an import gap among them ends up in the opening balance. The flag `!` puts it in front of the user.
@@ -246,7 +253,7 @@ Clients never ship text diffs; they record intents that name a transaction by ID
 | `open-account` | account, date | Account is not open | `<date> open <account>` appended to `accounts.beancount` | Editor, Admin | v0.1 |
 | `add-import-run` | source, file, content | File does not exist | New run file written | Importer | v0.1 |
 | `set-payee`, `set-narration` | id, old, new | Field equals `old` | Field becomes `new` | Editor | v1 |
-| `set-meta` | id, key, old, new | Key is not `lentil_id`, `lentil_ref` or `lentil_desc`; value equals `old` | Value becomes `new` | Editor | v1 |
+| `set-meta` | id, key, old, new | Key is not `lentil_id`, `lentil_ref` or an original field (section 5); value equals `old` | Value becomes `new` | Editor | v1 |
 | `add-entry` | device file, entry | File belongs to this device | Entry appended | Editor | v1 |
 | `add-snapshot` | account, date, amount | Account is a snapshot account; no balance assertion for it on that date | Balance assertion and, only if needed, a pad appended to the device's month file (section 9) | Editor | v1 |
 
@@ -352,11 +359,12 @@ An importer reads a bank export through an adapter that turns it into statement 
 | `amount` | Yes | Signed decimal, negative when money leaves the account |
 | `currency` | Yes | From a column, otherwise the source's `currency` (section 4) |
 | `counterparty` | No | The other party, as the bank writes it |
-| `purpose` | No | Purpose or booking text, as the bank writes it |
+| `purpose` | No | Purpose, as the bank writes it |
+| `type` | No | Booking type, such as direct debit or card payment, as the bank writes it |
 | `reference` | No | The bank's unique reference; becomes `lentil_ref` and the ID input (section 5) |
 | `balance_after` | No | Running balance after this booking |
 
-An export may also state one balance and the date it refers to. `lentil_desc` is `counterparty` and `purpose` joined by one space and normalized as in section 5.
+An export may also state one balance and the date it refers to. `counterparty`, `purpose` and `type` become the original fields `lentil_counterparty`, `lentil_purpose` and `lentil_type`, normalized as in section 5.
 
 **Mapping file.** Each `[[source]]` with `importer = "csv"` names a mapping file under `sources/`:
 
@@ -375,8 +383,9 @@ thousands = "."                        # optional
 booking_date = { column = "Buchungsdatum", format = "%d.%m.%Y" }
 amount = { column = "Betrag" }         # or { debit = "Soll", credit = "Haben" }; add invert = true to flip the sign
 currency = "Währung"                   # optional
-counterparty = ["Zahlungsempfänger"]   # one or more columns
-purpose = ["Verwendungszweck"]         # one or more columns
+counterparty = ["Zahlungsempfänger"]   # optional: one or more columns
+purpose = ["Verwendungszweck"]         # optional: one or more columns
+type = ["Buchungstext"]                # optional: one or more columns
 reference = "Kundenreferenz"           # optional
 
 [[skip]]                               # optional, repeatable
@@ -400,7 +409,8 @@ column = "Saldo"                       # with from = "column"
 - Every other row MUST parse or match a `[[skip]]` entry. A row that does not parse aborts the import with its line number; rows are never dropped silently. The import summary counts skipped rows.
 - If an export contains pending transactions, the mapping MUST skip them with a `[[skip]]` entry (section 8: booked transactions only). `equals` compares the trimmed cell exactly; `matches` takes a regular expression in the syntax of section 16.
 - Dates use strftime codes (`%d`, `%m`, `%Y`, `%y`). Amounts drop `thousands`, read `decimal` as the decimal point and accept a leading `+` or `-`. With `debit` and `credit`, exactly one of the two cells holds a number: the amount is the credit, or the debit made negative, whatever sign the file gives it. `invert = true` flips the sign after that.
-- `counterparty` and `purpose` join their non-empty cells with one space.
+- `counterparty`, `purpose` and `type` join their non-empty cells with one space.
+- `type` is not part of the ID (section 5), so adding it to a mapping keeps every ID.
 - `from = "column"`: in booking order, each row's balance MUST equal the previous row's balance plus its amount. This check also shows whether the bank lists rows oldest or newest first. If neither order fits, the importer writes no assertion and reports the mapping as suspect. Otherwise it uses the balance after the last booking before the run date.
 - `from = "text"`: `pattern` is matched against the lines before the header row and from the `end` line on. The named group `amount` is required; `date` is optional and read with `date_format`. Without `date`, the balance refers to the run date.
 - `from = "none"`: the CLI asks for the balance (section 8).
@@ -413,14 +423,14 @@ Explicit rules live in `rules.toml` and always win; learned suggestions are deri
 ```toml
 [[rule]]
 source = "giro"                        # optional
-desc = "(?i)corner grocery"            # regular expression on lentil_desc
+desc = "(?i)corner grocery"            # regular expression on the original text
 account = "Expenses:Food:Groceries"
 ```
 
-- A rule matches on `desc` (the bank's original description in `lentil_desc`), `payee` and/or `narration`, optionally limited to one `source`. `account` is required and MUST NOT be a source account; transfers go to the transfer account (section 8). `desc` is preferred, because it never changes.
+- A rule matches on `desc` (the original text, section 5), `payee` and/or `narration`, optionally limited to one `source`. `account` is required and MUST NOT be a source account; transfers go to the transfer account (section 8). `desc` is preferred, because it never changes.
 - Regular expressions use RE2 syntax without lookaround, so implementations in different languages behave the same.
 - Rules are evaluated in file order; the first match wins. Only if no rule matches does the importer use a learned suggestion, and only then `fallback_account`.
-- Learned suggestions are computed from reviewed (`*`) transactions. Their input is `lentil_desc` and the source account, never payee or narration, which users may edit (PRD: FR-C8). They never suggest a source account, and they need no file of their own, so any client can recompute them.
+- Learned suggestions are computed from reviewed (`*`) transactions. Their input is the original text (section 5) and the source account, never payee or narration, which users may edit (PRD: FR-C8). They never suggest a source account, and they need no file of their own, so any client can recompute them.
 - In v0.1 only the admin role edits `rules.toml`. In v1 editors add rules through an `add-rule` operation (PRD: FR-C11).
 
 ## 17. Bot status file (later)
@@ -457,7 +467,7 @@ Seven questions are settled; one remains open.
 - [x] **Includes:** glob patterns replace index files (section 3). Python Beancount, rustledger and go-beancount resolve them identically, also on a 10-year ledger.
 - [x] **Dismissing:** keep commenting out. All three parsers ignore commented-out transactions, so balances stay correct without plugins. Deduplication scans comment lines for `lentil_id`; rustledger's parse result exposes standalone comments with their source spans.
 - [x] **Partial days:** importers import only days before the run date (section 8). Same-day transactions arrive one day later, and in return the occurrence index stays deterministic.
-- [x] **Metadata keys:** `lentil_id`, `lentil_ref` and `lentil_desc` stay. They are long but avoid collisions with other tools.
+- [x] **Metadata keys:** `lentil_id`, `lentil_ref` and the original fields `lentil_counterparty`, `lentil_purpose` and `lentil_type` keep the `lentil_` prefix. They are long but avoid collisions with other tools.
 - [x] **Shared accounts file:** editors keep appending `open` directives to `accounts.beancount` through `open-account`, which is conflict-free.
 - [x] **Transfers:** both sides stay transactions of their own, with their own dates and IDs, and book against a transfer account (section 8). A merged transaction would carry one date and break balance assertions between the two booking dates.
 - [x] **Commit size:** one commit per sync (section 12).

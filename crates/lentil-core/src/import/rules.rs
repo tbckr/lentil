@@ -181,7 +181,7 @@ impl Rules {
 /// Suggestions learned from reviewed transactions of one source account.
 #[derive(Clone, Debug, Default)]
 pub struct Learned {
-    /// Normalized description to the chosen counter account.
+    /// Learn key of the original text to the chosen counter account.
     by_key: BTreeMap<String, String>,
 }
 
@@ -194,12 +194,14 @@ struct Tally {
 
 impl Learned {
     /// Learns from reviewed (`*`) transactions posting to `source_account`,
-    /// using only `lentil_desc` and the counter account (PRD FR-C8).
+    /// using only the bank's original text
+    /// ([`Txn::original_text`](crate::ledger::Txn::original_text)) and the
+    /// counter account (PRD FR-C8).
     ///
     /// Only active transactions with exactly two postings, one on
     /// `source_account`, count. A counter account equal to `fallback_account`
     /// is never learned, so an unsorted transaction teaches nothing. For each
-    /// normalized description the most frequent counter account wins; ties go
+    /// learn key the most frequent counter account wins; ties go
     /// to the most recent transaction (by date, then ledger order).
     #[must_use]
     pub fn from_ledger(ledger: &Ledger, source_account: &str, fallback_account: &str) -> Self {
@@ -216,7 +218,11 @@ impl Learned {
             if txn.flag != '*' || counter == fallback_account {
                 continue;
             }
-            let Some(key) = txn.desc.as_deref().map(learn_key).filter(|k| !k.is_empty()) else {
+            let Some(key) = txn
+                .original_text()
+                .map(|text| learn_key(&text))
+                .filter(|k| !k.is_empty())
+            else {
                 continue;
             };
             let tally = tallies
@@ -242,14 +248,14 @@ impl Learned {
         Self { by_key }
     }
 
-    /// The learned counter account for a description, if any.
+    /// The learned counter account for an original text, if any.
     #[must_use]
     pub fn suggest(&self, desc: &str) -> Option<&str> {
         self.by_key.get(&learn_key(desc)).map(String::as_str)
     }
 }
 
-/// The key under which a description is learned: lowercase, digits removed,
+/// The key under which an original text is learned: lowercase, digits removed,
 /// every other character that is not a letter turned into a space, and
 /// whitespace collapsed. Card numbers, dates and amounts in a bank's wording
 /// therefore do not split one payee into many keys.
@@ -438,7 +444,7 @@ mapping = "sources/card.toml"
         counter: &str,
     ) -> String {
         format!(
-            "{date} {flag} \"{payee}\" \"\"\n  lentil_desc: \"{desc}\"\n  {account}  -1.00 EUR\n  {counter}\n\n"
+            "{date} {flag} \"{payee}\" \"\"\n  lentil_counterparty: \"{desc}\"\n  {account}  -1.00 EUR\n  {counter}\n\n"
         )
     }
 
@@ -527,7 +533,7 @@ mapping = "sources/card.toml"
 
     #[test]
     fn learns_only_from_reviewed_two_posting_source_transactions() {
-        let three_postings = "2026-01-04 * \"\"\n  lentil_desc: \"SPLIT\"\n  Assets:Bank:Giro  -2.00 EUR\n  Expenses:Food:Other  1.00 EUR\n  Expenses:Home\n\n";
+        let three_postings = "2026-01-04 * \"\"\n  lentil_counterparty: \"SPLIT\"\n  Assets:Bank:Giro  -2.00 EUR\n  Expenses:Food:Other  1.00 EUR\n  Expenses:Home\n\n";
         let txns = [
             txn("2026-01-01", '!', "OPEN", "", GIRO, "Expenses:Food:Other"),
             txn(
@@ -559,16 +565,23 @@ mapping = "sources/card.toml"
     }
 
     #[test]
-    fn learns_from_desc_never_from_payee_or_narration() {
+    fn learns_from_the_original_text_never_from_payee_or_narration() {
         let txns = [
             txn("2026-01-01", '*', "BANK WORDING", "Edited Payee", GIRO, "Expenses:Home"),
-            "2026-01-02 * \"No Desc\" \"Narration\"\n  Assets:Bank:Giro  -1.00 EUR\n  Expenses:Food:Other\n\n".to_owned(),
+            "2026-01-02 * \"No Original\" \"Narration\"\n  Assets:Bank:Giro  -1.00 EUR\n  Expenses:Food:Other\n\n".to_owned(),
+            "2026-01-03 * \"Shop\" \"\"\n  lentil_counterparty: \"CORNER SHOP\"\n  lentil_purpose: \"CARD PAYMENT\"\n  lentil_type: \"DEBIT\"\n  Assets:Bank:Giro  -1.00 EUR\n  Expenses:Food:Groceries\n\n".to_owned(),
         ]
         .concat();
         let learned = learned(&txns);
         assert_eq!(learned.suggest("BANK WORDING"), Some("Expenses:Home"));
         assert_eq!(learned.suggest("Edited Payee"), None);
-        assert_eq!(learned.suggest("No Desc"), None);
+        assert_eq!(learned.suggest("No Original"), None);
         assert_eq!(learned.suggest("Narration"), None);
+        assert_eq!(
+            learned.suggest("CORNER SHOP CARD PAYMENT"),
+            Some("Expenses:Food:Groceries")
+        );
+        assert_eq!(learned.suggest("CORNER SHOP"), None);
+        assert_eq!(learned.suggest("CORNER SHOP CARD PAYMENT DEBIT"), None);
     }
 }

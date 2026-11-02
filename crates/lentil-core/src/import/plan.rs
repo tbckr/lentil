@@ -82,8 +82,12 @@ pub struct PlannedTxn {
     pub payee: Option<String>,
     /// Narration: the normalized purpose, or empty.
     pub narration: String,
-    /// `lentil_desc`.
-    pub desc: String,
+    /// `lentil_counterparty`: the normalized counterparty, if any.
+    pub counterparty: Option<String>,
+    /// `lentil_purpose`: the normalized purpose, if any.
+    pub purpose: Option<String>,
+    /// `lentil_type`: the normalized booking type, if any.
+    pub booking_type: Option<String>,
     /// `lentil_ref`, if the bank provides one.
     pub reference: Option<String>,
     /// Amount on the source account.
@@ -104,7 +108,7 @@ pub struct PossibleDuplicate {
     pub new_id: String,
     /// The new record's line in the export.
     pub line: usize,
-    /// The new record's description.
+    /// The new record's original text: counterparty and purpose.
     pub desc: String,
     /// Booking date shared by both.
     pub date: Date,
@@ -114,7 +118,7 @@ pub struct PossibleDuplicate {
     pub currency: String,
     /// The existing transaction's ID.
     pub existing_id: String,
-    /// The existing transaction's description.
+    /// The existing transaction's original text: counterparty and purpose.
     pub existing_desc: Option<String>,
     /// The existing transaction's file.
     pub existing_file: String,
@@ -180,7 +184,7 @@ pub struct ImportPlan {
     pub run_file: Option<RunFile>,
 }
 
-/// Narration and `lentil_desc` of the opening balance transaction.
+/// Narration of the opening balance transaction.
 pub const OPENING_BALANCE_TEXT: &str = "Opening balance";
 
 /// The `lentil_id` of a source's opening balance transaction:
@@ -239,17 +243,16 @@ pub fn plan_import(request: &ImportRequest<'_>) -> ImportPlan {
                 amount: record.amount,
                 currency: record.currency.clone(),
                 existing_id: orphan.id.to_owned(),
-                existing_desc: orphan.txn.desc.clone(),
+                existing_desc: orphan.txn.original_text(),
                 existing_file: orphan.txn.file.clone(),
                 existing_line: orphan.txn.line,
             });
             continue;
         }
-        let payee = Some(id::normalize_text(
-            record.counterparty.as_deref().unwrap_or_default(),
-        ))
-        .filter(|p| !p.is_empty());
-        let narration = id::normalize_text(record.purpose.as_deref().unwrap_or_default());
+        let counterparty = original(record.counterparty.as_deref());
+        let purpose = original(record.purpose.as_deref());
+        let payee = counterparty.clone();
+        let narration = purpose.clone().unwrap_or_default();
         let (counter_account, suggestion) = suggest(
             request,
             &learned,
@@ -263,7 +266,9 @@ pub fn plan_import(request: &ImportRequest<'_>) -> ImportPlan {
             date: record.booking_date,
             payee,
             narration,
-            desc,
+            counterparty,
+            purpose,
+            booking_type: original(record.booking_type.as_deref()),
             reference: record.reference.clone(),
             amount: record.amount,
             currency: record.currency.clone(),
@@ -364,6 +369,11 @@ fn orphans<'l>(
             })
         })
         .collect()
+}
+
+/// An original field as the run writes it: normalized, `None` if empty.
+fn original(text: Option<&str>) -> Option<String> {
+    Some(id::normalize_text(text?)).filter(|t| !t.is_empty())
 }
 
 /// Rules first, then a learned account that is open on the booking date and
@@ -595,7 +605,9 @@ fn plan_opening(
         date,
         payee: None,
         narration: OPENING_BALANCE_TEXT.to_owned(),
-        desc: OPENING_BALANCE_TEXT.to_owned(),
+        counterparty: None,
+        purpose: None,
+        booking_type: None,
         reference: None,
         amount: opening,
         currency: currency.clone(),
@@ -726,6 +738,7 @@ mapping = "sources/card.toml"
             currency: "EUR".into(),
             counterparty: counterparty.map(Into::into),
             purpose: purpose.map(Into::into),
+            booking_type: None,
             reference: None,
             balance_after: None,
             line: 0,
@@ -763,7 +776,7 @@ mapping = "sources/card.toml"
 
     fn txn(day: &str, flag: char, id: &str, desc: &str, amount: &str, counter: &str) -> String {
         format!(
-            "{day} {flag} \"x\"\n  lentil_id: \"{id}\"\n  lentil_desc: \"{desc}\"\n  Assets:Bank:Giro  {amount} EUR\n  {counter}\n\n"
+            "{day} {flag} \"x\"\n  lentil_id: \"{id}\"\n  lentil_counterparty: \"{desc}\"\n  Assets:Bank:Giro  {amount} EUR\n  {counter}\n\n"
         )
     }
 
@@ -857,27 +870,78 @@ mapping = "sources/card.toml"
     }
 
     #[test]
-    fn payee_narration_and_desc_are_normalized() {
+    fn payee_narration_and_original_fields_are_normalized() {
         let f = Fixture::new(&history());
-        let records = vec![
-            rec(
-                "2026-10-18",
-                "-42.17",
-                Some("  Corner   Grocery "),
-                Some(" 4711\tCARD "),
-            ),
-            rec("2026-10-18", "-1.00", None, None),
-        ];
+        let mut typed = rec(
+            "2026-10-18",
+            "-42.17",
+            Some("  Corner   Grocery "),
+            Some(" 4711\tCARD "),
+        );
+        typed.booking_type = Some(" Debit  card ".into());
+        let mut blank = rec("2026-10-18", "-1.00", Some(" "), None);
+        blank.booking_type = Some("\t".into());
+        let records = vec![typed, blank];
         let plan = f.plan(&statement(records), "2026-10-20", UserBalance::Skipped);
         let [a, b] = plan.transactions.as_slice() else {
             panic!()
         };
         assert_eq!(a.payee.as_deref(), Some("Corner Grocery"));
         assert_eq!(a.narration, "4711 CARD");
-        assert_eq!(a.desc, "Corner Grocery 4711 CARD");
         assert_eq!(
-            (b.payee.as_deref(), b.narration.as_str(), b.desc.as_str()),
-            (None, "", "")
+            (
+                a.counterparty.as_deref(),
+                a.purpose.as_deref(),
+                a.booking_type.as_deref()
+            ),
+            (
+                Some("Corner Grocery"),
+                Some("4711 CARD"),
+                Some("Debit card")
+            )
+        );
+        assert_eq!((b.payee.as_deref(), b.narration.as_str()), (None, ""));
+        assert_eq!(
+            (&b.counterparty, &b.purpose, &b.booking_type),
+            (&None, &None, &None)
+        );
+    }
+
+    #[test]
+    fn a_reviewed_run_teaches_the_wording_it_was_imported_with() {
+        // Quotes, backslashes and runs of whitespace pass through the run
+        // file, so the written transaction learns under the record's key.
+        let (counterparty, purpose) = (Some(" Café \"Zum  Eck\" "), Some("C:\\Karte\t4711"));
+        let record = rec("2026-10-18", "-4.20", counterparty, purpose);
+        let first = Fixture::new(&history());
+        let plan = first.plan(
+            &statement(vec![record.clone()]),
+            "2026-10-20",
+            UserBalance::Skipped,
+        );
+        let reviewed = plan
+            .run_file
+            .unwrap()
+            .content
+            .replacen(" ! ", " * ", 1)
+            .replace("Expenses:Uncategorized", "Expenses:Food:Groceries");
+        let second = Fixture::new(&format!("{}{reviewed}", history()));
+        let written = second
+            .ledger
+            .transactions
+            .iter()
+            .find(|t| t.date == date("2026-10-18"))
+            .unwrap();
+        assert_eq!(written.original_text(), Some(id::description(&record)));
+
+        let again = rec("2026-10-19", "-5.10", counterparty, purpose);
+        let plan = second.plan(&statement(vec![again]), "2026-10-20", UserBalance::Skipped);
+        let [t] = plan.transactions.as_slice() else {
+            panic!()
+        };
+        assert_eq!(
+            (t.counter_account.as_str(), t.suggestion),
+            ("Expenses:Food:Groceries", SuggestionKind::Learned)
         );
     }
 
@@ -974,7 +1038,7 @@ mapping = "sources/card.toml"
         let existing = [
             history(),
             txn("2026-10-18", '!', "giro-aaaaaaaaaaaa", "CORNER GROCERY OLD WORDING", "-42.17", "Expenses:Home"),
-            "2026-10-16 ! \"x\"\n  lentil_id: \"card-bbbbbbbbbbbb\"\n  lentil_desc: \"CARD\"\n  Assets:Bank:Card  -7.00 EUR\n  Expenses:Home\n\n".to_owned(),
+            "2026-10-16 ! \"x\"\n  lentil_id: \"card-bbbbbbbbbbbb\"\n  lentil_counterparty: \"CARD\"\n  Assets:Bank:Card  -7.00 EUR\n  Expenses:Home\n\n".to_owned(),
         ]
         .concat();
         Fixture::new(&existing)
@@ -1307,7 +1371,7 @@ mapping = "sources/card.toml"
     }
 
     /// A card transaction: the ledger has history, but none on the giro account.
-    const CARD_ONLY: &str = "2026-09-01 * \"x\"\n  lentil_id: \"card-cccccccccccc\"\n  lentil_desc: \"CARD\"\n  Assets:Bank:Card  -7.00 EUR\n  Expenses:Home\n";
+    const CARD_ONLY: &str = "2026-09-01 * \"x\"\n  lentil_id: \"card-cccccccccccc\"\n  lentil_counterparty: \"CARD\"\n  Assets:Bank:Card  -7.00 EUR\n  Expenses:Home\n";
 
     #[test]
     fn first_run_books_an_opening_balance() {
@@ -1330,7 +1394,9 @@ mapping = "sources/card.toml"
                 date: date("2026-10-15"),
                 payee: None,
                 narration: "Opening balance".into(),
-                desc: "Opening balance".into(),
+                counterparty: None,
+                purpose: None,
+                booking_type: None,
                 reference: None,
                 amount: dec("115.00"),
                 currency: "EUR".into(),

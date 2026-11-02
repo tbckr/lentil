@@ -70,13 +70,15 @@ const RUN: &str = r#"; lentil import run
 
 2026-10-12 ! "Corner Grocery" "Card payment"
   lentil_id: "giro-000000000001"
-  lentil_desc: "CORNER GROCERY CARD PAYMENT"
+  lentil_counterparty: "CORNER GROCERY"
+  lentil_purpose: "CARD PAYMENT"
   Assets:Bank:Giro  -42.17 EUR
   Expenses:Uncategorized
 
 2026-10-14 ! "Book Shop" "Card payment"
   lentil_id: "giro-000000000002"
-  lentil_desc: "BOOK SHOP CARD PAYMENT"
+  lentil_counterparty: "BOOK SHOP"
+  lentil_purpose: "CARD PAYMENT"
   Assets:Bank:Giro  -12.90 EUR
   Expenses:Uncategorized
 

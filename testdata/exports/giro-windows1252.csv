@@ -1,13 +1,13 @@
-Kontoumsätze Girokonto;;;;;;
-Konto;Beispielkonto 0001;;;;;
-Zeitraum;01.10.2026 - 20.10.2026;;;;;
-;;;;;;
-Buchungsdatum;Wertstellung;Status;Zahlungspflichtiger/-empfänger;Verwendungszweck;Betrag;Währung
-20.10.2026;20.10.2026;Vorgemerkt;Bäckerei Sonnenschein;Kartenzahlung;-3,80;EUR
-20.10.2026;20.10.2026;Gebucht;Stadtwerke Musterstadt;Abschlag Strom 10/2026;-64,00;EUR
-19.10.2026;19.10.2026;Gebucht;Eckladen Müller;Kartenzahlung  4711;-42,17;EUR
-19.10.2026;19.10.2026;Gebucht;Eckladen Müller;Kartenzahlung  4711;-42,17;EUR
-15.10.2026;15.10.2026;Gebucht;Beispiel GmbH;"Gehalt Oktober 2026 ""Projekt Süd""";2.450,00;EUR
-01.10.2026;01.10.2026;Gebucht;Wohnbau Beispiel eG;Miete Oktober;-1.150,00;EUR
-;;;;;;
-Kontostand am 20.10.2026: 1.234,56 EUR;;;;;;
+Kontoumsätze Girokonto;;;;;;;
+Konto;Beispielkonto 0001;;;;;;
+Zeitraum;01.10.2026 - 20.10.2026;;;;;;
+;;;;;;;
+Buchungsdatum;Wertstellung;Status;Buchungstext;Zahlungspflichtiger/-empfänger;Verwendungszweck;Betrag;Währung
+20.10.2026;20.10.2026;Vorgemerkt;Kartenzahlung;Bäckerei Sonnenschein;Kartenzahlung;-3,80;EUR
+20.10.2026;20.10.2026;Gebucht;SEPA-Lastschrift;Stadtwerke Musterstadt;Abschlag Strom 10/2026;-64,00;EUR
+19.10.2026;19.10.2026;Gebucht;Kartenzahlung;Eckladen Müller;Kartenzahlung  4711;-42,17;EUR
+19.10.2026;19.10.2026;Gebucht;Kartenzahlung;Eckladen Müller;Kartenzahlung  4711;-42,17;EUR
+15.10.2026;15.10.2026;Gebucht;Gutschrift  Überweisung;Beispiel GmbH;"Gehalt Oktober 2026 ""Projekt Süd""";2.450,00;EUR
+01.10.2026;01.10.2026;Gebucht;;Wohnbau Beispiel eG;Miete Oktober;-1.150,00;EUR
+;;;;;;;
+Kontostand am 20.10.2026: 1.234,56 EUR;;;;;;;

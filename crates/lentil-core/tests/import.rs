@@ -173,10 +173,17 @@ fn record(
         currency: currency.into(),
         counterparty: counterparty.map(Into::into),
         purpose: purpose.map(Into::into),
+        booking_type: None,
         reference: reference.map(Into::into),
         balance_after: balance_after.map(dec),
         line,
     }
+}
+
+/// `record` with the booking type the bank gives.
+fn typed(mut record: Record, booking_type: &str) -> Record {
+    record.booking_type = Some(booking_type.into());
+    record
 }
 
 #[test]
@@ -187,45 +194,57 @@ fn giro_windows1252_with_stated_balance_on_the_run_date() {
         statement,
         Statement {
             records: vec![
-                record(
-                    "2026-10-20",
-                    "-64.00",
-                    "EUR",
-                    Some("Stadtwerke Musterstadt"),
-                    Some("Abschlag Strom 10/2026"),
-                    None,
-                    None,
-                    7,
+                typed(
+                    record(
+                        "2026-10-20",
+                        "-64.00",
+                        "EUR",
+                        Some("Stadtwerke Musterstadt"),
+                        Some("Abschlag Strom 10/2026"),
+                        None,
+                        None,
+                        7,
+                    ),
+                    "SEPA-Lastschrift",
                 ),
-                record(
-                    "2026-10-19",
-                    "-42.17",
-                    "EUR",
-                    Some("Eckladen Müller"),
-                    Some("Kartenzahlung  4711"),
-                    None,
-                    None,
-                    8,
+                typed(
+                    record(
+                        "2026-10-19",
+                        "-42.17",
+                        "EUR",
+                        Some("Eckladen Müller"),
+                        Some("Kartenzahlung  4711"),
+                        None,
+                        None,
+                        8,
+                    ),
+                    "Kartenzahlung",
                 ),
-                record(
-                    "2026-10-19",
-                    "-42.17",
-                    "EUR",
-                    Some("Eckladen Müller"),
-                    Some("Kartenzahlung  4711"),
-                    None,
-                    None,
-                    9,
+                typed(
+                    record(
+                        "2026-10-19",
+                        "-42.17",
+                        "EUR",
+                        Some("Eckladen Müller"),
+                        Some("Kartenzahlung  4711"),
+                        None,
+                        None,
+                        9,
+                    ),
+                    "Kartenzahlung",
                 ),
-                record(
-                    "2026-10-15",
-                    "2450.00",
-                    "EUR",
-                    Some("Beispiel GmbH"),
-                    Some("Gehalt Oktober 2026 \"Projekt Süd\""),
-                    None,
-                    None,
-                    10,
+                typed(
+                    record(
+                        "2026-10-15",
+                        "2450.00",
+                        "EUR",
+                        Some("Beispiel GmbH"),
+                        Some("Gehalt Oktober 2026 \"Projekt Süd\""),
+                        None,
+                        None,
+                        10,
+                    ),
+                    "Gutschrift  Überweisung",
                 ),
                 record(
                     "2026-10-01",
@@ -293,31 +312,37 @@ fn giro_windows1252_with_stated_balance_on_the_run_date() {
 
 2026-10-01 ! "Opening balance"
   lentil_id: "giro-aa658d06d641"
-  lentil_desc: "Opening balance"
   Assets:Bank:Giro           82.90 EUR
   Equity:OpeningBalances
 
 2026-10-01 ! "Wohnbau Beispiel eG" "Miete Oktober"
   lentil_id: "giro-aee6867ae035"
-  lentil_desc: "Wohnbau Beispiel eG Miete Oktober"
+  lentil_counterparty: "Wohnbau Beispiel eG"
+  lentil_purpose: "Miete Oktober"
   Assets:Bank:Giro        -1150.00 EUR
   Expenses:Uncategorized
 
 2026-10-15 ! "Beispiel GmbH" "Gehalt Oktober 2026 \"Projekt Süd\""
   lentil_id: "giro-ff83424121d6"
-  lentil_desc: "Beispiel GmbH Gehalt Oktober 2026 \"Projekt Süd\""
+  lentil_counterparty: "Beispiel GmbH"
+  lentil_purpose: "Gehalt Oktober 2026 \"Projekt Süd\""
+  lentil_type: "Gutschrift Überweisung"
   Assets:Bank:Giro         2450.00 EUR
   Income:Salary
 
 2026-10-19 ! "Eckladen Müller" "Kartenzahlung 4711"
   lentil_id: "giro-5d97a3acf95e"
-  lentil_desc: "Eckladen Müller Kartenzahlung 4711"
+  lentil_counterparty: "Eckladen Müller"
+  lentil_purpose: "Kartenzahlung 4711"
+  lentil_type: "Kartenzahlung"
   Assets:Bank:Giro          -42.17 EUR
   Expenses:Food:Groceries
 
 2026-10-19 ! "Eckladen Müller" "Kartenzahlung 4711"
   lentil_id: "giro-ebbf18d5061b"
-  lentil_desc: "Eckladen Müller Kartenzahlung 4711"
+  lentil_counterparty: "Eckladen Müller"
+  lentil_purpose: "Kartenzahlung 4711"
+  lentil_type: "Kartenzahlung"
   Assets:Bank:Giro          -42.17 EUR
   Expenses:Food:Groceries
 
@@ -426,25 +451,25 @@ fn card_iso885915_with_running_balance_newest_first() {
 
 2026-10-02 ! "Train Tickets" ""
   lentil_id: "card-89042207e3e4"
-  lentil_desc: "Train Tickets"
+  lentil_counterparty: "Train Tickets"
   Liabilities:Card        -500.00 EUR
   Expenses:Uncategorized
 
 2026-10-16 ! "Card Repayment" ""
   lentil_id: "card-458742060aab"
-  lentil_desc: "Card Repayment"
+  lentil_counterparty: "Card Repayment"
   Liabilities:Card         500.00 EUR
   Expenses:Uncategorized
 
 2026-10-17 ! "Librairie Œuvre" ""
   lentil_id: "card-53648cd5da81"
-  lentil_desc: "Librairie Œuvre"
+  lentil_counterparty: "Librairie Œuvre"
   Liabilities:Card       -1250.00 EUR
   Expenses:Uncategorized
 
 2026-10-19 ! "Café Lumière, Lyon" ""
   lentil_id: "card-46319256750e"
-  lentil_desc: "Café Lumière, Lyon"
+  lentil_counterparty: "Café Lumière, Lyon"
   Liabilities:Card         -18.40 EUR
   Expenses:Uncategorized
 
@@ -524,13 +549,14 @@ fn wallet_utf8_with_references_and_a_user_balance() {
 2026-10-12 ! \"Top-up\" \"from giro\"
   lentil_id: \"{top_up}\"
   lentil_ref: \"TX-0001\"
-  lentil_desc: \"Top-up from giro\"
+  lentil_counterparty: \"Top-up\"
+  lentil_purpose: \"from giro\"
   Assets:Wallet           100.00 EUR
   Expenses:Uncategorized
 
 2026-10-18 * \"Coffee Corner\"
   lentil_id: \"wallet-0123456789ab\"
-  lentil_desc: \"COFFEE CORNER\"
+  lentil_counterparty: \"COFFEE CORNER\"
   Assets:Wallet  -3.20 EUR
   Expenses:Food:Groceries
 "
@@ -557,7 +583,7 @@ fn wallet_utf8_with_references_and_a_user_balance() {
     assert_eq!(duplicate.line, 4);
     assert_eq!(duplicate.existing_id, "wallet-0123456789ab");
     assert_eq!(duplicate.existing_file, existing_path);
-    assert_eq!(duplicate.existing_line, 11);
+    assert_eq!(duplicate.existing_line, 12);
 
     // The user enters the balance for yesterday; the possible duplicate
     // stays out of the run.
@@ -582,7 +608,8 @@ fn wallet_utf8_with_references_and_a_user_balance() {
 2026-10-18 ! "Green Grocer Musterstadt" "Weekly veg box"
   lentil_id: "wallet-c321c4732412"
   lentil_ref: "TX-0003"
-  lentil_desc: "Green Grocer Musterstadt Weekly veg box"
+  lentil_counterparty: "Green Grocer Musterstadt"
+  lentil_purpose: "Weekly veg box"
   Assets:Wallet          -23.50 EUR
   Expenses:Uncategorized
 
@@ -592,7 +619,7 @@ fn wallet_utf8_with_references_and_a_user_balance() {
     repo.assert_loads(&plan);
 
     // Accepted, the coffee is written, with the account learned from the
-    // reviewed transaction's description.
+    // reviewed transaction's original text.
     let accepted = BTreeSet::from(["wallet-65d8b298e334".to_owned()]);
     let plan = repo.plan(
         "wallet",
