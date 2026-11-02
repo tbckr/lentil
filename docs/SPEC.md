@@ -437,6 +437,7 @@ payee = "City Utilities"
 - Rules match only the original fields, never the payee or the narration, which users may edit. A rule therefore matches a transaction the same way at import and at any later time.
 - A rule sets `payee`, `account` or both, and MUST set at least one. `payee` is normalized like the original fields and MUST NOT be empty then. `account` MUST NOT be a source account; transfers go to the transfer account (section 8).
 - A client MUST reject a `rules.toml` with an unknown key or a rule without `match`, so a rule written for an earlier format never applies with a different meaning.
+- A client MUST reject a `rules.toml` in which a rule's `source` names no source of `lentil.toml`, so a mistyped ID never disables a rule silently.
 - Regular expressions use RE2 syntax without lookaround, so implementations in different languages behave the same.
 - Rules are evaluated in file order. For each field, the first matching rule that sets it wins, so a payee rule and a later account rule can both apply to one transaction (PRD: FR-C18).
 - The importer takes the payee from a rule, otherwise from the counterparty. It takes the account from a rule, otherwise from a learned suggestion, and only then uses `fallback_account`.

@@ -120,8 +120,7 @@ fn import_run(admin: &Snapshot) -> (Snapshot, ImportPlan) {
     let config = config(admin);
     let source = config.source("checking").unwrap();
     let mapping = Mapping::parse(admin.text(MAPPING_PATH).unwrap()).unwrap();
-    let rules = Rules::parse(admin.text("rules.toml").unwrap()).unwrap();
-    rules.check_accounts(&config).unwrap();
+    let rules = Rules::load(admin, &config).unwrap();
     let statement = read_statement(EXPORT, &mapping, &source.currency).unwrap();
     let ledger = ledger::load(admin, &config.main_file);
     let plan = plan_import(&ImportRequest {

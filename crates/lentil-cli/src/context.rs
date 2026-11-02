@@ -7,7 +7,6 @@ use lentil_core::config::{CONFIG_FILE, Config, ConfigError};
 use lentil_core::env::OsRandom;
 use lentil_core::finding::Finding;
 use lentil_core::id;
-use lentil_core::import::rules::RULES_FILE;
 use lentil_core::import::{Rules, RulesError};
 use lentil_core::snapshot::Snapshot;
 use lentil_core::sync::git::Git2Backend;
@@ -75,9 +74,7 @@ pub fn config(lang: Lang, snapshot: &Snapshot) -> Result<Config, CliError> {
 
 /// The `rules.toml` of a repository state, checked against its `config`.
 pub fn rules(lang: Lang, snapshot: &Snapshot, config: &Config) -> Result<Rules, CliError> {
-    Rules::parse(snapshot.text(RULES_FILE).unwrap_or_default())
-        .and_then(|rules| rules.check_accounts(config).map(|()| rules))
-        .map_err(|e| rules_error(lang, &e))
+    Rules::load(snapshot, config).map_err(|e| rules_error(lang, &e))
 }
 
 /// An unusable `lentil.toml` as an error.

@@ -1571,4 +1571,22 @@ fn rules_apply_stops_on_invalid_rules() {
         "{result:?}"
     );
     assert_eq!(remote.history().len(), 1);
+
+    let remote = Remote::with(&with_rules(
+        "[[rule]]\nmatch = { source = \"girro\", counterparty = \"^BAKERY$\" }\npayee = \"Bakery\"\n",
+    ));
+    let mut c = Client::new("cccccccc", "Carol");
+    let mut git_c = c.clone_from(&remote);
+    let result = reapply(&mut c, &mut git_c);
+    assert!(
+        matches!(
+            result,
+            Err(ReapplyError::Rules(RulesError::UnknownSource {
+                rule: 1,
+                ..
+            }))
+        ),
+        "{result:?}"
+    );
+    assert_eq!(remote.history().len(), 1);
 }

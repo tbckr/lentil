@@ -441,6 +441,11 @@ pub fn rules_error(lang: Lang, error: &RulesError) -> String {
     use RulesError::*;
     let (en, de, args): (&str, &str, Vec<(&str, String)>) = match error {
         Syntax(detail) => ("{detail}", "{detail}", vec![("detail", detail.clone())]),
+        NotUtf8 => (
+            "the file is not UTF-8 text",
+            "die Datei ist kein UTF-8-Text",
+            vec![],
+        ),
         Regex(pattern) => (
             "invalid regular expression {pattern}",
             "ungültiger regulärer Ausdruck {pattern}",
@@ -470,6 +475,11 @@ pub fn rules_error(lang: Lang, error: &RulesError) -> String {
             "{account} is a bank account and cannot be a rule's account",
             "{account} ist ein Bankkonto und kann nicht das Konto einer Regel sein",
             vec![("account", account.clone())],
+        ),
+        UnknownSource { rule, id } => (
+            "rule {rule} names the source {source}, which lentil.toml does not define",
+            "Regel {rule} nennt die Quelle {source}, die lentil.toml nicht enthält",
+            vec![("rule", rule.to_string()), ("source", format!("{id:?}"))],
         ),
     };
     let template = match lang {
@@ -715,6 +725,20 @@ mod tests {
         assert_eq!(
             rules_error(Lang::En, &RulesError::Syntax("unknown field `desc`".into())),
             "unknown field `desc`"
+        );
+        assert_eq!(
+            rules_error(
+                Lang::En,
+                &RulesError::UnknownSource {
+                    rule: 2,
+                    id: "girro".into()
+                }
+            ),
+            "rule 2 names the source \"girro\", which lentil.toml does not define"
+        );
+        assert_eq!(
+            rules_error(Lang::En, &RulesError::NotUtf8),
+            "the file is not UTF-8 text"
         );
     }
 

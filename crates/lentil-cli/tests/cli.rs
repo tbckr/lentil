@@ -369,6 +369,54 @@ fn import_rejects_rules_in_the_old_format() {
 }
 
 #[test]
+fn import_rejects_rules_for_an_unknown_source() {
+    let env = Env::new();
+    let repo = env.repo.to_str().unwrap();
+    ok(&env.lentil(&["init", repo, "--remote", env.remote.to_str().unwrap()]));
+    let export = env.add_giro_source();
+    std::fs::write(
+        env.repo.join("rules.toml"),
+        "[[rule]]\nmatch = { source = \"girro\", purpose = \"(?i)^salary\" }\naccount = \"Income:Salary\"\n",
+    )
+    .unwrap();
+    env.admin_push("admin: rule for a mistyped source");
+    let before = env.remote_head();
+    let out = env.lentil(&[
+        "-C",
+        repo,
+        "import",
+        "giro",
+        export.to_str().unwrap(),
+        "--run-date",
+        "2026-10-20",
+        "--yes",
+    ]);
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("rules.toml is invalid: rule 1 names the source \"girro\""),
+        "{stderr}"
+    );
+    assert_eq!(before, env.remote_head());
+
+    // `rules apply` reads the same rules, with and without a dry run.
+    for dry_run in [false, true] {
+        let mut args = vec!["-C", repo, "rules", "apply"];
+        if dry_run {
+            args.push("--dry-run");
+        }
+        let out = env.lentil(&args);
+        assert!(!out.status.success(), "{dry_run}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("rules.toml is invalid: rule 1 names the source \"girro\""),
+            "{dry_run}: {stderr}"
+        );
+    }
+    assert_eq!(before, env.remote_head());
+}
+
+#[test]
 fn import_rejects_a_mapping_that_is_not_utf8() {
     let env = Env::new();
     let repo = env.repo.to_str().unwrap();

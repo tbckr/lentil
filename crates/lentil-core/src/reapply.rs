@@ -10,7 +10,6 @@ use jiff::civil::Date;
 use thiserror::Error;
 
 use crate::config::{CONFIG_FILE, Config, ConfigError};
-use crate::import::rules::RULES_FILE;
 use crate::import::{Original, Rules, RulesError, opening_id};
 use crate::intent::{self, Intent, Outcome, PendingIntent};
 use crate::ledger::{self, Ledger, Txn};
@@ -236,8 +235,7 @@ where
         let inputs = Config::parse(fresh.text(CONFIG_FILE).unwrap_or_default())
             .map_err(ReapplyError::Config)
             .and_then(|config| {
-                Rules::parse(fresh.text(RULES_FILE).unwrap_or_default())
-                    .and_then(|rules| rules.check_accounts(&config).map(|()| rules))
+                Rules::load(fresh, &config)
                     .map(|rules| (config, rules))
                     .map_err(ReapplyError::Rules)
             });

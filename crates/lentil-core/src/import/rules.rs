@@ -10,6 +10,7 @@ use thiserror::Error;
 use crate::config::Config;
 use crate::id;
 use crate::ledger::{Ledger, Txn};
+use crate::snapshot::Snapshot;
 
 /// Path of the rules file, relative to the repository root.
 pub const RULES_FILE: &str = "rules.toml";
@@ -102,6 +103,9 @@ pub enum RulesError {
     /// Not TOML, an unknown key or a missing `match`.
     #[error("invalid rules.toml: {0}")]
     Syntax(String),
+    /// The file is not UTF-8 text.
+    #[error("the file is not UTF-8 text")]
+    NotUtf8,
     /// A regular expression does not compile.
     #[error("invalid regular expression {0:?}")]
     Regex(String),
@@ -124,6 +128,15 @@ pub enum RulesError {
     /// (spec section 16).
     #[error("rule account {0:?} is a source account")]
     SourceAccount(String),
+    /// A rule's `match.source` names no source of `lentil.toml` (spec
+    /// section 16).
+    #[error("rule {rule} names the source {id:?}, which lentil.toml does not define")]
+    UnknownSource {
+        /// The rule's 1-based position in the file.
+        rule: usize,
+        /// The source ID the rule names.
+        id: String,
+    },
 }
 
 #[derive(Deserialize)]
@@ -222,22 +235,52 @@ impl Rules {
         Ok(Self { rules })
     }
 
-    /// Checks that no rule books to a source account (spec section 16).
-    /// Rules that set only the payee book nowhere.
+    /// Reads, parses and checks the `rules.toml` of a repository state. A
+    /// missing file has no rules.
     ///
     /// # Errors
     ///
-    /// [`RulesError::SourceAccount`] for the first rule that does.
-    pub fn check_accounts(&self, config: &Config) -> Result<(), RulesError> {
-        match self
-            .rules
-            .iter()
-            .filter_map(|r| r.account.as_deref())
-            .find(|a| config.is_source_account(a))
-        {
-            Some(account) => Err(RulesError::SourceAccount(account.to_owned())),
-            None => Ok(()),
+    /// [`RulesError::NotUtf8`] if the file is not UTF-8, otherwise as
+    /// [`Rules::parse`] and [`Rules::check`].
+    pub fn load(snapshot: &Snapshot, config: &Config) -> Result<Self, RulesError> {
+        let text = match snapshot.get(RULES_FILE) {
+            Some(bytes) => std::str::from_utf8(bytes).map_err(|_| RulesError::NotUtf8)?,
+            None => "",
+        };
+        let rules = Self::parse(text)?;
+        rules.check(config)?;
+        Ok(rules)
+    }
+
+    /// Checks the rules against `config` (spec section 16): no rule books to
+    /// a source account, and every `match.source` names a configured
+    /// source. Rules that set only the payee book nowhere.
+    ///
+    /// # Errors
+    ///
+    /// [`RulesError::SourceAccount`] or [`RulesError::UnknownSource`] for
+    /// the first rule in file order that breaks either.
+    pub fn check(&self, config: &Config) -> Result<(), RulesError> {
+        for (i, rule) in self.rules.iter().enumerate() {
+            if let Some(account) = rule
+                .account
+                .as_deref()
+                .filter(|a| config.is_source_account(a))
+            {
+                return Err(RulesError::SourceAccount(account.to_owned()));
+            }
+            if let Some(id) = rule
+                .source
+                .as_deref()
+                .filter(|id| config.source(id).is_none())
+            {
+                return Err(RulesError::UnknownSource {
+                    rule: i + 1,
+                    id: id.to_owned(),
+                });
+            }
         }
+        Ok(())
     }
 
     /// Number of rules.
@@ -369,7 +412,6 @@ pub fn learn_key(desc: &str) -> String {
 mod tests {
     use super::*;
     use crate::ledger;
-    use crate::snapshot::Snapshot;
 
     const RULES: &str = r#"
 [[rule]]
@@ -589,13 +631,20 @@ account = "Expenses:Food:Other"
         }
     }
 
-    #[test]
-    fn rejects_rules_that_book_to_a_source_account() {
-        let config = Config::parse(
+    /// The sources `giro` and `card`.
+    fn config() -> Config {
+        Config::parse(
             r#"spec_version = 0
 main_file = "main.beancount"
 fallback_account = "Expenses:Uncategorized"
 unattributed_account = "Expenses:Unattributed"
+
+[[source]]
+id = "giro"
+account = "Assets:Bank:Giro"
+currency = "EUR"
+importer = "csv"
+mapping = "sources/giro.toml"
 
 [[source]]
 id = "card"
@@ -605,16 +654,79 @@ importer = "csv"
 mapping = "sources/card.toml"
 "#,
         )
-        .unwrap();
+        .unwrap()
+    }
+
+    #[test]
+    fn rejects_rules_that_book_to_a_source_account() {
+        let config = config();
         let rules = Rules::parse(RULES).unwrap();
-        assert_eq!(rules.check_accounts(&config), Ok(()));
+        assert_eq!(rules.check(&config), Ok(()));
         let to_card = Rules::parse(
             "[[rule]]\nmatch = { purpose = \"x\" }\npayee = \"Card\"\n\n[[rule]]\nmatch = { purpose = \"CARD STATEMENT\" }\naccount = \"Liabilities:Card\"\n",
         )
         .unwrap();
         assert_eq!(
-            to_card.check_accounts(&config),
+            to_card.check(&config),
             Err(RulesError::SourceAccount("Liabilities:Card".into()))
+        );
+    }
+
+    #[test]
+    fn rejects_rules_for_unknown_sources() {
+        let config = config();
+        let rule = |source: &str, out: &str| {
+            format!("[[rule]]\nmatch = {{ source = {source:?}, purpose = \"x\" }}\n{out}\n\n")
+        };
+        let unknown = format!(
+            "{}{}",
+            rule("card", "payee = \"A\""),
+            rule("girro", "payee = \"B\"")
+        );
+        assert_eq!(
+            Rules::parse(&unknown).unwrap().check(&config),
+            Err(RulesError::UnknownSource {
+                rule: 2,
+                id: "girro".into()
+            })
+        );
+        // The first offending rule in file order wins, whatever its kind.
+        let to_card = "[[rule]]\nmatch = { purpose = \"y\" }\naccount = \"Liabilities:Card\"\n\n";
+        let first_unknown = format!("{}{to_card}", rule("girro", "payee = \"B\""));
+        assert_eq!(
+            Rules::parse(&first_unknown).unwrap().check(&config),
+            Err(RulesError::UnknownSource {
+                rule: 1,
+                id: "girro".into()
+            })
+        );
+        let first_card = format!("{to_card}{}", rule("girro", "payee = \"B\""));
+        assert_eq!(
+            Rules::parse(&first_card).unwrap().check(&config),
+            Err(RulesError::SourceAccount("Liabilities:Card".into()))
+        );
+    }
+
+    #[test]
+    fn load_reads_rules_toml_and_checks_it() {
+        let config = config();
+        assert!(Rules::load(&Snapshot::new(), &config).unwrap().is_empty());
+        let with = |content: &[u8]| Snapshot::from_files([(RULES_FILE, content)]);
+        assert_eq!(
+            Rules::load(&with(RULES.as_bytes()), &config).unwrap().len(),
+            3
+        );
+        assert_eq!(
+            Rules::load(&with(b"# Regel f\xfcr die B\xe4ckerei\n"), &config).unwrap_err(),
+            RulesError::NotUtf8
+        );
+        let unknown = b"[[rule]]\nmatch = { source = \"girro\", purpose = \"x\" }\npayee = \"B\"\n";
+        assert_eq!(
+            Rules::load(&with(unknown), &config).unwrap_err(),
+            RulesError::UnknownSource {
+                rule: 1,
+                id: "girro".into()
+            }
         );
     }
 
