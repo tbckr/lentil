@@ -1,6 +1,7 @@
-//! `lentil check` (PRD FR-A5, FR-B3, FR-B4): validates the working tree,
-//! checks `rules.toml` and the mappings, and optionally compares the result
-//! with Python Beancount's `bean-check`.
+//! `lentil check` (PRD FR-A5, FR-A8, FR-B3, FR-B4): validates the working
+//! tree, checks `rules.toml`, `tags.toml` and the mappings, warns about tags
+//! outside `tags.toml`, and optionally compares the result with Python
+//! Beancount's `bean-check`.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -11,6 +12,7 @@ use lentil_core::config::{CONFIG_FILE, Config};
 use lentil_core::finding::{Finding, FindingCode, Severity};
 use lentil_core::import::check_inputs;
 use lentil_core::snapshot::Snapshot;
+use lentil_core::tags::tag_warnings;
 use lentil_core::validate::{self, Context, Role};
 
 use crate::context;
@@ -30,24 +32,29 @@ pub fn run(lang: Lang, repo: Option<&Path>, reference: Option<&str>) -> CliResul
     );
     // Problems that would stop an import or `rules apply`; without a valid
     // configuration, validation has reported that already.
-    let problems = match (&validation.config, &validation.ledger) {
-        (Some(config), Some(ledger)) => {
-            check_inputs(&snapshot, config, ledger, Zoned::now().date())
-        }
-        _ => Vec::new(),
+    // Tags outside `tags.toml` are warnings only (spec section 16).
+    let (problems, tags) = match (&validation.config, &validation.ledger) {
+        (Some(config), Some(ledger)) => (
+            check_inputs(&snapshot, config, ledger, Zoned::now().date()),
+            tag_warnings(&snapshot, config, ledger),
+        ),
+        _ => (Vec::new(), Vec::new()),
     };
     let blocking_findings = validation
         .findings
         .iter()
         .filter(|f| f.is_blocking())
         .count();
-    let warnings = validation.findings.len() - blocking_findings;
+    let warnings = validation.findings.len() - blocking_findings + tags.len();
     let blocking = blocking_findings + problems.len();
     context::print_findings(lang, &validation.findings);
     for problem in &problems {
         eprintln!("{}", i18n::input_problem(lang, problem));
     }
-    if validation.findings.is_empty() && problems.is_empty() {
+    for warning in &tags {
+        eprintln!("{}", i18n::tag_warning(lang, warning));
+    }
+    if validation.findings.is_empty() && problems.is_empty() && tags.is_empty() {
         println!("{}", i18n::text(lang, Msg::CheckOk));
     } else {
         println!(

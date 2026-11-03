@@ -7,7 +7,7 @@ use lentil_core::finding::{Finding, FindingCode, Severity};
 use lentil_core::import::{ImportError, InputProblem, MappingError, RulesError};
 use lentil_core::intent::ConflictCode;
 use lentil_core::sync::GitError;
-use lentil_core::tags::TaxonomyError;
+use lentil_core::tags::{TagWarning, TaxonomyError};
 
 /// A UI language.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -681,12 +681,53 @@ pub fn input_problem(lang: Lang, problem: &InputProblem) -> String {
             Msg::RuleAccountNotOpen,
             &[("rule", &rule.to_string()), ("account", account)],
         ),
+        InputProblem::Taxonomy(error) => msg(
+            lang,
+            Msg::TagsInvalid,
+            &[("detail", &taxonomy_error(lang, error))],
+        ),
         InputProblem::MappingMissing(path) => msg(lang, Msg::MappingMissing, &[("path", path)]),
         InputProblem::Mapping { path, error } => msg(
             lang,
             Msg::MappingInvalid,
             &[("path", path), ("detail", &mapping_error(lang, error))],
         ),
+    }
+}
+
+/// A tag outside `tags.toml` as a warning, located like a finding.
+pub fn tag_warning(lang: Lang, warning: &TagWarning) -> String {
+    let severity = text(lang, Msg::Warning);
+    match (warning, lang) {
+        (TagWarning::UnknownTag { file, line, tag }, Lang::En) => {
+            format!("{file}:{line}: {severity}: #{tag} is not in tags.toml.")
+        }
+        (TagWarning::UnknownTag { file, line, tag }, Lang::De) => {
+            format!("{file}:{line}: {severity}: #{tag} steht nicht in tags.toml.")
+        }
+        (TagWarning::ExclusiveTags { file, line, tags }, _) => {
+            let tags = tags
+                .iter()
+                .map(|t| format!("#{t}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            match lang {
+                Lang::En => {
+                    format!("{file}:{line}: {severity}: {tags} exclude each other in tags.toml.")
+                }
+                Lang::De => format!(
+                    "{file}:{line}: {severity}: {tags} schließen sich laut tags.toml gegenseitig aus."
+                ),
+            }
+        }
+        (TagWarning::UnknownRuleTag { rule, tag }, Lang::En) => {
+            format!("rules.toml: {severity}: Rule {rule} uses #{tag}, which is not in tags.toml.")
+        }
+        (TagWarning::UnknownRuleTag { rule, tag }, Lang::De) => {
+            format!(
+                "rules.toml: {severity}: Regel {rule} nutzt #{tag}, der nicht in tags.toml steht."
+            )
+        }
     }
 }
 
@@ -860,6 +901,57 @@ mod tests {
         assert_eq!(
             rules_error(Lang::En, &RulesError::NotUtf8),
             "the file is not UTF-8 text"
+        );
+    }
+
+    #[test]
+    fn translates_tag_warnings_and_taxonomy_errors() {
+        let unknown = TagWarning::UnknownTag {
+            file: "imports/giro/2026/x.beancount".into(),
+            line: 7,
+            tag: "grocery".into(),
+        };
+        let clash = TagWarning::ExclusiveTags {
+            file: "manual/k7p2q9xd/2026-10.beancount".into(),
+            line: 3,
+            tags: vec!["recurring".into(), "irregular".into()],
+        };
+        let rule = TagWarning::UnknownRuleTag {
+            rule: 2,
+            tag: "recuring".into(),
+        };
+        assert_eq!(
+            tag_warning(Lang::En, &unknown),
+            "imports/giro/2026/x.beancount:7: warning: #grocery is not in tags.toml."
+        );
+        assert_eq!(
+            tag_warning(Lang::De, &unknown),
+            "imports/giro/2026/x.beancount:7: Warnung: #grocery steht nicht in tags.toml."
+        );
+        assert_eq!(
+            tag_warning(Lang::En, &clash),
+            "manual/k7p2q9xd/2026-10.beancount:3: warning: #recurring, #irregular exclude each other in tags.toml."
+        );
+        assert_eq!(
+            tag_warning(Lang::De, &clash),
+            "manual/k7p2q9xd/2026-10.beancount:3: Warnung: #recurring, #irregular schließen sich laut tags.toml gegenseitig aus."
+        );
+        assert_eq!(
+            tag_warning(Lang::En, &rule),
+            "rules.toml: warning: Rule 2 uses #recuring, which is not in tags.toml."
+        );
+        assert_eq!(
+            tag_warning(Lang::De, &rule),
+            "rules.toml: Warnung: Regel 2 nutzt #recuring, der nicht in tags.toml steht."
+        );
+        let broken = InputProblem::Taxonomy(TaxonomyError::InvalidTag("#x".into()));
+        assert_eq!(
+            input_problem(Lang::En, &broken),
+            "tags.toml is invalid: \"#x\" is not a valid tag"
+        );
+        assert_eq!(
+            input_problem(Lang::De, &broken),
+            "tags.toml ist ungültig: \"#x\" ist kein gültiger Tag"
         );
     }
 

@@ -501,6 +501,53 @@ fn check_reports_broken_rules_and_mappings() {
 }
 
 #[test]
+fn check_warns_about_tags_outside_tags_toml() {
+    let env = Env::new();
+    let repo = env.repo.to_str().unwrap();
+    ok(&env.lentil(&["init", repo, "--remote", env.remote.to_str().unwrap()]));
+    let export = env.add_giro_source();
+    env.import_giro(&export);
+    std::fs::write(env.repo.join("tags.toml"), "tags = [\"recurring\"]\n").unwrap();
+    // Rule 2, after the salary rule.
+    env.append(
+        "rules.toml",
+        "\n[[rule]]\nmatch = { counterparty = \"^City Utilities$\" }\nadd_tags = [\"recuring\"]\n",
+    );
+    let (run, content) = env.giro_run();
+    std::fs::write(
+        &run,
+        content.replace(GROCERY, &GROCERY.replacen('\n', " #grocery\n", 1)),
+    )
+    .unwrap();
+    let run = run.strip_prefix(&env.repo).unwrap().display().to_string();
+    let line = content
+        .lines()
+        .position(|l| l == GROCERY.trim_end())
+        .unwrap()
+        + 1;
+
+    let out = env.lentil(&["-C", repo, "check"]);
+    assert_eq!(ok(&out), "0 errors, 2 warnings.\n");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains(&format!(
+            "{run}:{line}: warning: #grocery is not in tags.toml.\n"
+        )),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("rules.toml: warning: Rule 2 uses #recuring, which is not in tags.toml.\n"),
+        "{stderr}"
+    );
+
+    std::fs::write(env.repo.join("tags.toml"), "tags = \"x\"\n").unwrap();
+    let out = env.lentil(&["-C", repo, "check"]);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("tags.toml is invalid: "), "{stderr}");
+}
+
+#[test]
 fn check_agrees_with_bean_check() {
     let env = Env::new();
     let repo = env.repo.to_str().unwrap();

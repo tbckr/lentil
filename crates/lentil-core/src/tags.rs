@@ -1,10 +1,14 @@
-//! Tags: valid names and the optional taxonomy in `tags.toml` (spec section 16).
+//! Tags: valid names, the optional taxonomy in `tags.toml`, and the
+//! warnings `lentil check` gives about tags outside it (spec section 16).
 
 use std::collections::BTreeSet;
 
 use serde::Deserialize;
 use thiserror::Error;
 
+use crate::config::Config;
+use crate::import::Rules;
+use crate::ledger::Ledger;
 use crate::snapshot::Snapshot;
 
 /// The tag taxonomy at the repository root (spec section 16).
@@ -146,9 +150,90 @@ impl Taxonomy {
     }
 }
 
+/// A tag that breaks the taxonomy of `tags.toml` (spec section 16); never a
+/// finding of section 13.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TagWarning {
+    /// A transaction carries a tag the taxonomy does not know.
+    UnknownTag {
+        /// The file of the transaction.
+        file: String,
+        /// 1-based line of its header.
+        line: u32,
+        /// The tag, without `#`.
+        tag: String,
+    },
+    /// A transaction carries several tags of one exclusive group, in group
+    /// order.
+    ExclusiveTags {
+        /// The file of the transaction.
+        file: String,
+        /// 1-based line of its header.
+        line: u32,
+        /// The members it carries, without `#`.
+        tags: Vec<String>,
+    },
+    /// A rule names a tag the taxonomy does not know, in `match.tags` or
+    /// `add_tags`.
+    UnknownRuleTag {
+        /// The rule's 1-based position in `rules.toml`.
+        rule: usize,
+        /// The tag, without `#`.
+        tag: String,
+    },
+}
+
+/// Violations of `tags.toml` in the active transactions of `ledger` and in
+/// `rules.toml`, in ledger order and then rule order; empty without a
+/// readable `tags.toml`, and without the rule part if `rules.toml` is
+/// rejected.
+///
+/// Within each transaction, unknown tags come in tag order, without
+/// duplicates, and clashes follow in group order.
+#[must_use]
+pub fn tag_warnings(snapshot: &Snapshot, config: &Config, ledger: &Ledger) -> Vec<TagWarning> {
+    let Some(Ok(taxonomy)) = Taxonomy::load(snapshot) else {
+        return Vec::new();
+    };
+    let mut warnings = Vec::new();
+    for txn in &ledger.transactions {
+        let mut seen: Vec<&str> = Vec::new();
+        for tag in &txn.tags {
+            if !taxonomy.is_known(tag) && !seen.contains(&tag.as_str()) {
+                seen.push(tag);
+                warnings.push(TagWarning::UnknownTag {
+                    file: txn.file.clone(),
+                    line: txn.line,
+                    tag: tag.clone(),
+                });
+            }
+        }
+        for clash in taxonomy.clashes(&txn.tags) {
+            warnings.push(TagWarning::ExclusiveTags {
+                file: txn.file.clone(),
+                line: txn.line,
+                tags: clash.into_iter().map(str::to_owned).collect(),
+            });
+        }
+    }
+    if let Ok(rules) = Rules::load(snapshot, config) {
+        for (rule, tag) in rules.tag_names() {
+            if !taxonomy.is_known(tag) {
+                warnings.push(TagWarning::UnknownRuleTag {
+                    rule,
+                    tag: tag.to_owned(),
+                });
+            }
+        }
+    }
+    warnings
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Config;
+    use crate::ledger;
 
     const EXAMPLE: &str = "tags = [\"recurring\", \"irregular\", \"amortize-year\", \"friends\", \"tax-relevant\"]\nfamilies = [\"trip-\", \"share-\"]\nexclusive = [[\"recurring\", \"irregular\"]]\n";
 
@@ -251,6 +336,126 @@ mod tests {
         assert!(!t.holds_back("recurring", &carried(&["mine"])));
         assert!(!t.holds_back("friends", &carried(&["irregular"])));
         assert!(!t.holds_back("recurring", &[]));
+    }
+
+    const CONFIG: &str = r#"spec_version = 0
+main_file = "main.beancount"
+fallback_account = "Expenses:Uncategorized"
+unattributed_account = "Expenses:Uncategorized"
+
+[[source]]
+id = "giro"
+account = "Assets:Bank:Giro"
+currency = "EUR"
+importer = "csv"
+mapping = "sources/giro.toml"
+"#;
+    const MAIN: &str = "option \"operating_currency\" \"EUR\"\ninclude \"accounts.beancount\"\ninclude \"imports/*/*/*.beancount\"\ninclude \"manual/*/*.beancount\"\n";
+    const ACCOUNTS: &str =
+        "2020-01-01 open Assets:Bank:Giro EUR\n2020-01-01 open Expenses:Uncategorized\n";
+    const GIRO_RUN: &str = "imports/giro/2026/20261020T071502Z.beancount";
+    const MANUAL: &str = "manual/k7p2q9xd/2026-10.beancount";
+    const RULES: &str = "[[rule]]\nmatch = { tags = [\"amortize-year\"] }\nadd_tags = [\"recurring\", \"recuring\"]\n";
+
+    fn txn(day: u8, n: u8, tags: &str) -> String {
+        format!(
+            "2026-10-{day:02} ! \"Shop\" \"\" {tags}\n  lentil_id: \"giro-00000000000{n}\"\n  Assets:Bank:Giro  -1.00 EUR\n  Expenses:Uncategorized\n\n"
+        )
+    }
+
+    /// T1 on line 1, T2 on line 6 and T3 on line 11 of the run, and one
+    /// manual entry; `tags.toml` is the spec example.
+    fn tagged(rules: &str) -> Snapshot {
+        let run = [
+            txn(2, 1, "#recurring #trip-lisbon"),
+            txn(3, 2, "#Recurring #groceries"),
+            txn(4, 3, "#recurring #irregular"),
+        ]
+        .concat();
+        let manual = "2026-10-05 * \"Cash\" \"\" #typo\n  lentil_id: \"k7p2q9xd-01JBQ0000000000000000000000\"\n  Assets:Bank:Giro  -1.00 EUR\n  Expenses:Uncategorized\n";
+        Snapshot::from_files([
+            ("lentil.toml", CONFIG.to_owned()),
+            ("main.beancount", MAIN.to_owned()),
+            ("accounts.beancount", ACCOUNTS.to_owned()),
+            (GIRO_RUN, run),
+            (MANUAL, manual.to_owned()),
+            (TAGS_FILE, EXAMPLE.to_owned()),
+            ("rules.toml", rules.to_owned()),
+        ])
+    }
+
+    fn warnings(snapshot: &Snapshot) -> Vec<TagWarning> {
+        let config = Config::parse(CONFIG).unwrap();
+        let ledger = ledger::load(snapshot, "main.beancount");
+        assert!(ledger.errors.is_empty(), "{:?}", ledger.errors);
+        tag_warnings(snapshot, &config, &ledger)
+    }
+
+    fn unknown(file: &str, line: u32, tag: &str) -> TagWarning {
+        TagWarning::UnknownTag {
+            file: file.into(),
+            line,
+            tag: tag.into(),
+        }
+    }
+
+    /// The warnings about the transactions of [`tagged`].
+    fn transaction_warnings() -> Vec<TagWarning> {
+        vec![
+            unknown(GIRO_RUN, 6, "Recurring"),
+            unknown(GIRO_RUN, 6, "groceries"),
+            TagWarning::ExclusiveTags {
+                file: GIRO_RUN.into(),
+                line: 11,
+                tags: vec!["recurring".into(), "irregular".into()],
+            },
+            unknown(MANUAL, 1, "typo"),
+        ]
+    }
+
+    #[test]
+    fn warns_about_unknown_and_clashing_tags() {
+        let mut expected = transaction_warnings();
+        expected.push(TagWarning::UnknownRuleTag {
+            rule: 1,
+            tag: "recuring".into(),
+        });
+        assert_eq!(warnings(&tagged(RULES)), expected);
+    }
+
+    #[test]
+    fn unknown_tags_are_listed_once_per_transaction() {
+        let mut snapshot = tagged("");
+        let run = snapshot.text(GIRO_RUN).unwrap().replacen(
+            "#groceries",
+            "#groceries #groceries\n  #groceries",
+            1,
+        );
+        snapshot.insert(GIRO_RUN, run);
+        let t2 = |w: &&TagWarning| matches!(w, TagWarning::UnknownTag { line: 6, .. });
+        assert_eq!(
+            warnings(&snapshot).iter().filter(t2).collect::<Vec<_>>(),
+            transaction_warnings().iter().filter(t2).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn no_warnings_without_a_readable_tags_toml() {
+        let mut snapshot = tagged(RULES);
+        snapshot.remove(TAGS_FILE);
+        assert_eq!(warnings(&snapshot), Vec::new());
+        snapshot.insert(TAGS_FILE, "tags = \"x\"\n");
+        assert_eq!(warnings(&snapshot), Vec::new());
+    }
+
+    #[test]
+    fn rejected_rules_still_give_transaction_warnings() {
+        assert_eq!(
+            warnings(&tagged(
+                "[[rule]]\nmatch = { tags = [] }\nadd_tags = [\"recuring\"]\n"
+            )),
+            transaction_warnings()
+        );
     }
 
     #[test]

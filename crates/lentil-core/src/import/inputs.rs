@@ -1,8 +1,8 @@
 //! The files an import or `rules apply` reads, checked before they are needed.
 //!
 //! These checks are not part of [`validate`](crate::validate): a broken
-//! `rules.toml` or mapping stops only the commands that read it, never the
-//! clients that triage, so it never makes the repository read-only.
+//! `rules.toml`, `tags.toml` or mapping stops only the commands that read it,
+//! never the clients that triage, so it never makes the repository read-only.
 
 use std::collections::BTreeSet;
 
@@ -12,6 +12,7 @@ use crate::config::Config;
 use crate::import::{Mapping, MappingError, Rules, RulesError};
 use crate::ledger::Ledger;
 use crate::snapshot::Snapshot;
+use crate::tags::{Taxonomy, TaxonomyError};
 
 /// A problem with the files an import or `rules apply` reads (spec sections
 /// 15 and 16).
@@ -26,6 +27,8 @@ pub enum InputProblem {
         /// The account.
         account: String,
     },
+    /// `tags.toml` is rejected (spec section 16).
+    Taxonomy(TaxonomyError),
     /// A source's mapping file does not exist. Carries its path.
     MappingMissing(String),
     /// A source's mapping file is rejected.
@@ -37,13 +40,15 @@ pub enum InputProblem {
     },
 }
 
-/// Checks `rules.toml` and the mapping files of `config`'s sources in
-/// `snapshot`, and that every rule account is open in `ledger` on `today`.
+/// Checks `rules.toml`, `tags.toml` and the mapping files of `config`'s
+/// sources in `snapshot`, and that every rule account is open in `ledger` on
+/// `today`.
 ///
 /// Problems with the rules come first: either the reason `rules.toml` is
 /// rejected, or one problem per account that is not open, with the first
-/// rule that sets it. Problems with mappings follow in source order, one per
-/// file even if several sources share it.
+/// rule that sets it. The reason `tags.toml` is rejected follows, if it is.
+/// Problems with mappings come last, in source order, one per file even if
+/// several sources share it.
 #[must_use]
 pub fn check_inputs(
     snapshot: &Snapshot,
@@ -65,6 +70,9 @@ pub fn check_inputs(
                 }
             }
         }
+    }
+    if let Some(Err(error)) = Taxonomy::load(snapshot) {
+        problems.push(InputProblem::Taxonomy(error));
     }
     let mut seen = BTreeSet::new();
     for path in config.sources.iter().filter_map(|s| s.mapping.as_deref()) {
@@ -89,6 +97,7 @@ mod tests {
 
     use super::*;
     use crate::ledger;
+    use crate::tags::{TAGS_FILE, TaxonomyError};
 
     const MAIN: &str = "option \"title\" \"Ledger\"\noption \"operating_currency\" \"EUR\"\n\ninclude \"accounts.beancount\"\n";
 
@@ -256,6 +265,29 @@ from = "none"
                 path: "sources/giro.toml".into(),
                 error: MappingError::NotUtf8,
             }]
+        );
+    }
+
+    #[test]
+    fn reports_a_broken_tags_toml() {
+        let invalid = InputProblem::Taxonomy(TaxonomyError::InvalidTag("#x".into()));
+        let mut files = snapshot("");
+        assert_eq!(check(&files), []);
+        files.insert(TAGS_FILE, "tags = [\"#x\"]\n");
+        assert_eq!(check(&files), std::slice::from_ref(&invalid));
+        files.insert("rules.toml", "[[rule]]\n");
+        files.remove("sources/giro.toml");
+        let problems = check(&files);
+        assert!(
+            matches!(problems[0], InputProblem::Rules(RulesError::Syntax(_))),
+            "{problems:?}"
+        );
+        assert_eq!(
+            problems[1..],
+            [
+                invalid,
+                InputProblem::MappingMissing("sources/giro.toml".into())
+            ]
         );
     }
 
