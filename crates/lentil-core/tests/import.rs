@@ -80,6 +80,14 @@ account = "Expenses:Food:Groceries"
 [[rule]]
 match = { counterparty = "(?i)^beispiel gmbh$", purpose = "(?i)^gehalt" }
 account = "Income:Salary"
+
+[[rule]]
+match = { counterparty = "(?i)^wohnbau" }
+add_tags = ["housing"]
+
+[[rule]]
+match = { tags = ["housing"] }
+add_tags = ["recurring"]
 "#;
 
 struct Repo {
@@ -338,7 +346,7 @@ fn giro_windows1252_with_stated_balance_on_the_run_date() {
   Assets:Bank:Giro           82.90 EUR
   Equity:OpeningBalances
 
-2026-10-01 ! "Wohnbau Beispiel eG" "Miete Oktober"
+2026-10-01 ! "Wohnbau Beispiel eG" "Miete Oktober" #housing #recurring
   lentil_id: "giro-aee6867ae035"
   lentil_counterparty: "Wohnbau Beispiel eG"
   lentil_purpose: "Miete Oktober"

@@ -51,7 +51,7 @@ pub fn render_run(
     let mut blocks: Vec<String> = transactions
         .iter()
         .map(|t| {
-            let mut lines = vec![match &t.payee {
+            let mut header = match &t.payee {
                 Some(payee) => format!(
                     "{} ! \"{}\" \"{}\"",
                     t.date,
@@ -59,7 +59,12 @@ pub fn render_run(
                     escape(&t.narration)
                 ),
                 None => format!("{} ! \"{}\"", t.date, escape(&t.narration)),
-            }];
+            };
+            for tag in &t.tags {
+                header.push_str(" #");
+                header.push_str(tag);
+            }
+            let mut lines = vec![header];
             lines.push(format!("  {META_ID}: \"{}\"", escape(&t.id)));
             for (key, value) in [
                 (META_REF, &t.reference),
@@ -163,6 +168,7 @@ mod tests {
             currency: "EUR".into(),
             counter_account: counter.into(),
             suggestion: SuggestionKind::Fallback,
+            tags: Vec::new(),
         }
     }
 
@@ -285,6 +291,48 @@ mod tests {
         assert!(
             content.ends_with("  Expenses:Food:Groceries\n"),
             "{content}"
+        );
+    }
+
+    #[test]
+    fn renders_tags_after_the_narration() {
+        let header = |payee: Option<&str>, tags: &[&str]| {
+            let mut t = txn(
+                Date::constant(2026, 10, 18),
+                payee,
+                "Card payment",
+                "x-1",
+                None,
+                [None, Some("Card payment"), None],
+                Decimal::new(-4217, 2),
+                "Expenses:X",
+            );
+            t.tags = tags.iter().map(|t| (*t).to_owned()).collect();
+            let content = render_run(
+                "x",
+                "Assets:Bank:Savings",
+                started(),
+                "c",
+                &[t],
+                &BalanceOutcome::Unchecked,
+            );
+            content
+                .lines()
+                .find(|l| l.starts_with("2026-10-18"))
+                .unwrap()
+                .to_owned()
+        };
+        assert_eq!(
+            header(Some("Corner Grocery"), &["recurring", "amortize-year"]),
+            "2026-10-18 ! \"Corner Grocery\" \"Card payment\" #recurring #amortize-year"
+        );
+        assert_eq!(
+            header(None, &["recurring"]),
+            "2026-10-18 ! \"Card payment\" #recurring"
+        );
+        assert_eq!(
+            header(Some("Corner Grocery"), &[]),
+            "2026-10-18 ! \"Corner Grocery\" \"Card payment\""
         );
     }
 

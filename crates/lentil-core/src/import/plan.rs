@@ -98,6 +98,9 @@ pub struct PlannedTxn {
     pub counter_account: String,
     /// Where the suggestion came from.
     pub suggestion: SuggestionKind,
+    /// The tags the rules add, in the order the evaluation adds them (spec
+    /// section 16); none for the opening transaction.
+    pub tags: Vec<String>,
 }
 
 /// A new record that may duplicate an existing transaction whose ID the
@@ -252,14 +255,18 @@ pub fn plan_import(request: &ImportRequest<'_>) -> ImportPlan {
         let counterparty = original(record.counterparty.as_deref());
         let purpose = original(record.purpose.as_deref());
         let booking_type = original(record.booking_type.as_deref());
-        let found = request.rules.suggest(
-            &source.id,
-            &Original::new(
-                counterparty.as_deref(),
-                purpose.as_deref(),
-                booking_type.as_deref(),
-            ),
+        let fields = Original::new(
+            counterparty.as_deref(),
+            purpose.as_deref(),
+            booking_type.as_deref(),
         );
+        let found = request.rules.suggest(&source.id, &fields);
+        let tags = request
+            .rules
+            .tags(&source.id, &fields, &[], |_| false)
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
         let payee = found
             .payee
             .map(str::to_owned)
@@ -280,6 +287,7 @@ pub fn plan_import(request: &ImportRequest<'_>) -> ImportPlan {
             currency: record.currency.clone(),
             counter_account,
             suggestion,
+            tags,
         });
     }
     // Stable: same-day transactions keep the order the bank lists them in.
@@ -616,6 +624,7 @@ fn plan_opening(
         currency: currency.clone(),
         counter_account: OPENING_BALANCES_ACCOUNT.to_owned(),
         suggestion: SuggestionKind::Opening,
+        tags: Vec::new(),
     })
 }
 
@@ -1502,12 +1511,36 @@ account = "Expenses:Home"
                 currency: "EUR".into(),
                 counter_account: OPENING_BALANCES_ACCOUNT.into(),
                 suggestion: SuggestionKind::Opening,
+                tags: Vec::new(),
             })
         );
         let content = &plan.run_file.as_ref().unwrap().content;
         let opening_at = content.find("Opening balance").unwrap();
         let first_record_at = content.find("\"A\"").unwrap();
         assert!(opening_at < first_record_at, "{content}");
+        f.assert_loads(&plan);
+    }
+
+    #[test]
+    fn opening_gets_no_tags() {
+        let mut f = Fixture::new(CARD_ONLY);
+        f.rules = Rules::parse("[[rule]]\nmatch = { counterparty = \"^$\" }\nadd_tags = [\"x\"]\n")
+            .unwrap();
+        let s = stated(
+            statement(vec![
+                rec("2026-10-15", "-10.00", None, Some("A")),
+                rec("2026-10-18", "-5.00", None, Some("B")),
+                rec("2026-10-20", "-1.00", None, Some("C")),
+            ]),
+            "100.00",
+            Some("2026-10-19"),
+        );
+        let plan = f.plan(&s, "2026-10-20", UserBalance::NotAsked);
+        assert_eq!(plan.opening.as_ref().unwrap().tags, Vec::<String>::new());
+        assert!(!plan.transactions.is_empty());
+        for t in &plan.transactions {
+            assert_eq!(t.tags, vec!["x".to_owned()], "{}", t.narration);
+        }
         f.assert_loads(&plan);
     }
 
