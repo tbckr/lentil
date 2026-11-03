@@ -19,6 +19,7 @@ use rustledger_loader::{ErrorSeverity, FileSystem, LoadError, LoadOptions};
 
 use crate::id;
 use crate::snapshot::{Snapshot, glob_match};
+use crate::tags::is_tag_name;
 
 /// Metadata key of the stable transaction ID (spec section 5).
 pub const META_ID: &str = "lentil_id";
@@ -80,10 +81,27 @@ pub struct Txn {
     pub reference: Option<String>,
     /// Tags without `#`.
     pub tags: Vec<String>,
+    /// Where the tags stand, or `None` if the header strings were not found,
+    /// a scanned line holds a token other than a tag, a link or a comment, or
+    /// the tags written do not read as the parsed ones (for example a tag
+    /// from `pushtag`).
+    pub tag_spans: Option<TagSpans>,
     /// Links without `^`.
     pub links: Vec<String>,
     /// Postings in file order.
     pub postings: Vec<Posting>,
+}
+
+/// Where the tags of a transaction stand (spec section 10, `add-tag` and
+/// `remove-tag`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TagSpans {
+    /// Offset in the header line after its last string, tag or link, where
+    /// ` #<tag>` goes: before trailing blanks and a comment.
+    pub insert_at: usize,
+    /// Each tag as written, in file order: its name without `#` and the bytes
+    /// of `#<name>`.
+    pub tags: Vec<(String, Range<usize>)>,
 }
 
 impl Txn {
@@ -487,6 +505,10 @@ fn index_file(ledger: &mut Ledger, file: &str, text: &str) {
                         Some((payee, narration)) => (payee, Some(narration)),
                         None => (None, None),
                     };
+                let tags: Vec<String> = t.tags.iter().map(ToString::to_string).collect();
+                let tag_spans = narration_span
+                    .as_ref()
+                    .and_then(|narration| tag_spans(text, &span, narration, &tags));
                 ledger.transactions.push(Txn {
                     id: meta_string(&t.meta, META_ID),
                     file: file.to_owned(),
@@ -503,7 +525,8 @@ fn index_file(ledger: &mut Ledger, file: &str, text: &str) {
                     purpose: meta_string(&t.meta, META_PURPOSE),
                     booking_type: meta_string(&t.meta, META_TYPE),
                     reference: meta_string(&t.meta, META_REF),
-                    tags: t.tags.iter().map(ToString::to_string).collect(),
+                    tags,
+                    tag_spans,
                     links: t.links.iter().map(ToString::to_string).collect(),
                     postings: t
                         .postings
@@ -631,6 +654,120 @@ fn header_strings(
         (false, [narration]) => Some((None, narration.clone())),
         (true, [payee, narration]) => Some((Some(payee.clone()), narration.clone())),
         _ => None,
+    }
+}
+
+/// Where the tags of the transaction at `span` stand: on the header line
+/// after the narration, and on later lines of the transaction whose first
+/// token is a tag or a link, outside a multi-line string. `None` if the
+/// narration ends outside the span (a multi-line string continued at the
+/// line start), if such a line holds a token other than a tag, a link or a
+/// comment, or if the names written differ from `parsed` as a set.
+fn tag_spans(
+    text: &str,
+    span: &Range<usize>,
+    narration: &Range<usize>,
+    parsed: &[String],
+) -> Option<TagSpans> {
+    let text = text.get(..span.end)?;
+    if narration.end > text.len() {
+        return None;
+    }
+    let mut tags = Vec::new();
+    let header_end = line_end(text, narration.end);
+    let insert_at =
+        scan_tag_line(text, narration.end..header_end, &mut tags)?.unwrap_or(narration.end);
+    let mut in_string = false;
+    let mut pos = next_line(text, header_end);
+    while pos < text.len() {
+        let end = line_end(text, pos);
+        let line = &text[pos..end];
+        if !in_string && starts_with_tag_or_link(line) {
+            scan_tag_line(text, pos..end, &mut tags)?;
+        } else {
+            in_string = string_open_after(line, in_string);
+        }
+        pos = next_line(text, end);
+    }
+    let written: BTreeSet<&str> = tags.iter().map(|(name, _)| name.as_str()).collect();
+    let parsed: BTreeSet<&str> = parsed.iter().map(String::as_str).collect();
+    (written == parsed).then_some(TagSpans { insert_at, tags })
+}
+
+/// The token at the start of `text`: up to a blank or a comment.
+fn first_token(text: &str) -> &str {
+    &text[..text.find([' ', '\t', ';']).unwrap_or(text.len())]
+}
+
+/// Whether the first token of `line` is a tag or a link, as on the tag and
+/// link lines Beancount v3 accepts after a transaction header. A posting
+/// with the flag `#` starts with `#` and a blank, so it is none.
+fn starts_with_tag_or_link(line: &str) -> bool {
+    let token = first_token(line.trim_start_matches([' ', '\t']));
+    token.strip_prefix(['#', '^']).is_some_and(is_tag_name)
+}
+
+/// Whether a string literal is still open at the end of `line`, given
+/// whether one was open at its start. Outside a string, `;` starts a
+/// comment; inside one, a backslash escapes the next character.
+fn string_open_after(line: &str, mut open: bool) -> bool {
+    let mut chars = line.chars();
+    while let Some(c) = chars.next() {
+        match (open, c) {
+            (true, '\\') => {
+                chars.next();
+            }
+            (true, '"') => open = false,
+            (false, '"') => open = true,
+            (false, ';') => break,
+            _ => {}
+        }
+    }
+    open
+}
+
+/// Scans `line` for tags, links and a trailing comment, pushing each tag onto
+/// `tags`. Returns the end of the last tag or link, `Some(None)` if there is
+/// none, and `None` if the line holds any other token.
+fn scan_tag_line(
+    text: &str,
+    line: Range<usize>,
+    tags: &mut Vec<(String, Range<usize>)>,
+) -> Option<Option<usize>> {
+    let mut last = None;
+    let mut pos = line.start;
+    loop {
+        pos += blanks(&text[pos..line.end]);
+        let rest = &text[pos..line.end];
+        if rest.is_empty() || rest.starts_with(';') {
+            return Some(last);
+        }
+        let token = first_token(rest);
+        let len = token.len();
+        if let Some(tag) = token.strip_prefix('#').filter(|name| is_tag_name(name)) {
+            tags.push((tag.to_owned(), pos..pos + len));
+        } else if !token.strip_prefix('^').is_some_and(is_tag_name) {
+            return None;
+        }
+        pos += len;
+        last = Some(pos);
+    }
+}
+
+/// The end of the line at `pos`: the next `\r` or `\n`, or the end of `text`.
+fn line_end(text: &str, pos: usize) -> usize {
+    text[pos..]
+        .find(['\r', '\n'])
+        .map_or(text.len(), |i| pos + i)
+}
+
+/// The start of the line after the line ending at `end`.
+fn next_line(text: &str, end: usize) -> usize {
+    let rest = &text[end..];
+    end + if rest.starts_with("\r\n") {
+        2
+    } else {
+        usize::from(!rest.is_empty())
     }
 }
 
@@ -959,6 +1096,171 @@ include "imports/*/*/*.beancount"
         }
         assert_eq!(header_strings("2026-10-18 ! \"open", 0, false), None);
         assert_eq!(header_strings("2026-10-18", 0, false), None);
+    }
+
+    const TAGGED: &str = "2026-01-02 ! \"P\" \"N\" #one ^l1 ; note\n  #two ^l2\n  #three\n  lentil_id: \"x\"\n  Assets:Bank:Giro  -1.00 EUR\n  Expenses:Uncategorized\n";
+
+    /// The one transaction of a run file with `text`, loaded without errors.
+    fn tagged_txn(text: &str) -> Txn {
+        let snapshot = Snapshot::from_files([
+            ("main.beancount", MAIN),
+            ("accounts.beancount", ACCOUNTS),
+            (RUN_FILE, text),
+        ]);
+        let ledger = load(&snapshot, "main.beancount");
+        assert!(ledger.errors.is_empty(), "{:?}", ledger.errors);
+        ledger.transactions.into_iter().next().unwrap()
+    }
+
+    fn assert_tag_spans(text: &str) {
+        let spans = tagged_txn(text).tag_spans.unwrap();
+        let names: Vec<&str> = spans.tags.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["one", "two", "three"]);
+        for (name, range) in &spans.tags {
+            assert_eq!(text[range.clone()], format!("#{name}"));
+        }
+        assert!(text[..spans.insert_at].ends_with("^l1"), "{text:?}");
+        assert!(text[spans.insert_at..].starts_with(" ; note"), "{text:?}");
+    }
+
+    #[test]
+    fn indexes_where_tags_stand() {
+        assert_eq!(tagged_txn(TAGGED).tags, ["one", "two", "three"]);
+        assert_tag_spans(TAGGED);
+    }
+
+    #[test]
+    fn inserts_after_the_narration_without_tags() {
+        let text =
+            "2026-01-02 ! \"N\"   \n  Assets:Bank:Giro  -1.00 EUR\n  Expenses:Uncategorized\n";
+        let spans = tagged_txn(text).tag_spans.unwrap();
+        assert_eq!(spans.tags, Vec::new());
+        assert_eq!(&text[..spans.insert_at], "2026-01-02 ! \"N\"");
+    }
+
+    #[test]
+    fn tag_spans_in_a_crlf_file() {
+        assert_tag_spans(&TAGGED.replace('\n', "\r\n"));
+    }
+
+    #[test]
+    fn tags_from_pushtag_have_no_spans() {
+        let text = "pushtag #trip\n\n2026-01-02 ! \"N\"\n  Assets:Bank:Giro  -1.00 EUR\n  Expenses:Uncategorized\n\npoptag #trip\n";
+        let txn = tagged_txn(text);
+        assert_eq!(txn.tags, ["trip"]);
+        assert_eq!(txn.tag_spans, None);
+    }
+
+    /// The names and the text at each tag span of the one transaction in a
+    /// run file with `text`, which loads without errors.
+    fn written_tags(text: &str) -> Vec<(String, String)> {
+        let spans = tagged_txn(text).tag_spans.unwrap();
+        spans
+            .tags
+            .iter()
+            .map(|(name, range)| (name.clone(), text[range.clone()].to_owned()))
+            .collect()
+    }
+
+    fn named(tags: &[(&str, &str)]) -> Vec<(String, String)> {
+        tags.iter()
+            .map(|(name, text)| ((*name).to_owned(), (*text).to_owned()))
+            .collect()
+    }
+
+    #[test]
+    fn a_comment_right_after_a_tag_ends_it() {
+        let text = "2026-01-02 ! \"N\" #one;note\n  #two;x\n  Assets:Bank:Giro  -1.00 EUR\n  Expenses:Uncategorized\n";
+        let spans = tagged_txn(text).tag_spans.unwrap();
+        assert_eq!(
+            written_tags(text),
+            named(&[("one", "#one"), ("two", "#two")])
+        );
+        assert!(text[spans.insert_at..].starts_with(";note"), "{text:?}");
+    }
+
+    #[test]
+    fn a_posting_with_the_flag_hash_is_no_tag_line() {
+        let text = "2026-01-02 ! \"N\" #one\n  Assets:Bank:Giro  -1.00 EUR\n  # Expenses:Uncategorized\n  #two\n";
+        assert_eq!(
+            written_tags(text),
+            named(&[("one", "#one"), ("two", "#two")])
+        );
+    }
+
+    #[test]
+    fn a_line_inside_a_metadata_string_is_no_tag_line() {
+        let text = "2026-01-02 ! \"N\" #one\n  note: \"first \\\" quote\n  #one\n  last\" ; \"\n  #two\n  Assets:Bank:Giro  -1.00 EUR\n  Expenses:Uncategorized\n";
+        assert_eq!(tagged_txn(text).tags, ["one", "two"]);
+        assert_eq!(
+            written_tags(text),
+            named(&[("one", "#one"), ("two", "#two")])
+        );
+        let spans = tagged_txn(text).tag_spans.unwrap();
+        assert!(spans.tags[0].1.end < text.find("note").unwrap());
+    }
+
+    /// Indexes `text` as one file, which must not panic, and returns the
+    /// `tag_spans` of its transactions.
+    fn indexed_tag_spans(text: &str) -> Vec<Option<TagSpans>> {
+        let mut ledger = Ledger::default();
+        index_file(&mut ledger, "f", text);
+        ledger
+            .transactions
+            .into_iter()
+            .map(|t| t.tag_spans)
+            .collect()
+    }
+
+    #[test]
+    fn a_narration_beyond_the_indented_lines_has_no_tag_spans() {
+        let text = "2026-10-18 ! \"Corner Grocery\" \"Card payment\nfor the party\"\n  lentil_id: \"giro-3f9a1c2e7b4d\"\n  Assets:Bank:Giro  -42.17 EUR\n  Expenses:Uncategorized\n";
+        assert_eq!(indexed_tag_spans(text), vec![None]);
+    }
+
+    #[test]
+    fn a_transaction_that_ends_at_its_narration_has_tag_spans() {
+        let text = "2026-10-18 ! \"Shop\" \"x\"\n";
+        assert_eq!(
+            indexed_tag_spans(text),
+            vec![Some(TagSpans {
+                insert_at: text.len() - 1,
+                tags: Vec::new(),
+            })]
+        );
+    }
+
+    #[test]
+    fn other_tokens_after_the_narration_have_no_tag_spans() {
+        for rest in [
+            " \u{2713}",
+            " #a \u{fc}ber",
+            "\n  #urlaub \u{fc}ber",
+            " #a b",
+        ] {
+            let text = format!(
+                "2026-10-18 ! \"Shop\" \"x\"{rest}\n  lentil_id: \"x\"\n  Assets:Bank:Giro  -1.00 EUR\n  Expenses:Uncategorized\n"
+            );
+            assert!(
+                indexed_tag_spans(&text).iter().all(Option::is_none),
+                "{text:?}"
+            );
+        }
+    }
+
+    proptest::proptest! {
+        /// Indexing never panics, whatever follows the narration or stands on
+        /// the following lines.
+        #[test]
+        fn indexing_never_panics_on_what_follows_the_narration(
+            rest in "[ \t#^;a\"\n\r\u{fc}\u{2713}-]{0,24}",
+        ) {
+            let text = format!(
+                "2026-10-18 ! \"Shop\" \"x{rest}\n  lentil_id: \"x\"\n  Assets:Bank:Giro  -1.00 EUR\n  Expenses:Uncategorized\n"
+            );
+            indexed_tag_spans(&text);
+            indexed_tag_spans(&text.replacen("\"x", "\"x\"", 1));
+        }
     }
 
     #[test]

@@ -118,6 +118,70 @@ pub fn comment_out(text: &str, span: Range<usize>) -> Result<String, EditError> 
     Ok(out)
 }
 
+/// Inserts ` #<tag>` for each of `tags`, in order, at `offset` (spec section
+/// 10, `add-tag`); `offset` comes from [`crate::ledger::TagSpans`].
+///
+/// # Errors
+///
+/// [`EditError::Mismatch`] if `offset` is not a character boundary inside
+/// `text`.
+pub fn insert_tags(text: &str, offset: usize, tags: &[&str]) -> Result<String, EditError> {
+    let (Some(before), Some(after)) = (text.get(..offset), text.get(offset..)) else {
+        return Err(EditError::Mismatch(offset..offset));
+    };
+    let mut out =
+        String::with_capacity(text.len() + tags.iter().map(|t| t.len() + 2).sum::<usize>());
+    out.push_str(before);
+    for tag in tags {
+        out.push_str(" #");
+        out.push_str(tag);
+    }
+    out.push_str(after);
+    Ok(out)
+}
+
+/// Removes `#<tag>` at `span` with one separating blank (spec section 10,
+/// `remove-tag`): the blank before it if an earlier token stands on its line,
+/// otherwise the blank after it if there is one. A tag alone on its line is
+/// removed with the whole line and its line break, or with the line break
+/// before it if the line is the last.
+///
+/// # Errors
+///
+/// [`EditError::Mismatch`] if the text at `span` is not `#<tag>`.
+pub fn remove_tag(text: &str, span: Range<usize>, tag: &str) -> Result<String, EditError> {
+    let found = text.get(span.clone()).and_then(|t| t.strip_prefix('#'));
+    if found != Some(tag) {
+        return Err(EditError::Mismatch(span));
+    }
+    let line_start = text[..span.start].rfind('\n').map_or(0, |i| i + 1);
+    let line_end = text[span.end..]
+        .find('\n')
+        .map_or(text.len(), |i| span.end + i + 1);
+    let is_blank = |s: &str| s.trim_matches([' ', '\t', '\r', '\n']).is_empty();
+    let cut = if is_blank(&text[line_start..span.start]) && is_blank(&text[span.end..line_end]) {
+        if line_end == text.len() && !text.ends_with('\n') {
+            let before = text[..line_start]
+                .strip_suffix('\n')
+                .map_or(line_start, |t| t.strip_suffix('\r').unwrap_or(t).len());
+            before..text.len()
+        } else {
+            line_start..line_end
+        }
+    } else if !is_blank(&text[line_start..span.start]) && text[..span.start].ends_with([' ', '\t'])
+    {
+        span.start - 1..span.end
+    } else if text[span.end..].starts_with([' ', '\t']) {
+        span.start..span.end + 1
+    } else {
+        span
+    };
+    let mut out = String::with_capacity(text.len() - cut.len());
+    out.push_str(&text[..cut.start]);
+    out.push_str(&text[cut.end..]);
+    Ok(out)
+}
+
 /// Appends `line` as a new last line, adding a line break before it if the
 /// text does not end with one.
 ///
@@ -174,6 +238,65 @@ mod tests {
 
     fn offset(text: &str, needle: &str) -> usize {
         text.find(needle).unwrap()
+    }
+
+    #[test]
+    fn insert_tags_adds_each_with_one_blank() {
+        assert_eq!(
+            insert_tags("x \"N\" ; c", 5, &["a", "b"]),
+            Ok("x \"N\" #a #b ; c".to_owned())
+        );
+        assert_eq!(insert_tags("é", 1, &["a"]), Err(EditError::Mismatch(1..1)));
+        assert_eq!(insert_tags("x", 2, &["a"]), Err(EditError::Mismatch(2..2)));
+    }
+
+    /// Removes the first `#<tag>` in `text`.
+    fn remove_first(text: &str, tag: &str) -> Result<String, EditError> {
+        let at = offset(text, &format!("#{tag}"));
+        remove_tag(text, at..at + 1 + tag.len(), tag)
+    }
+
+    #[test]
+    fn remove_tag_takes_the_blank_before() {
+        assert_eq!(remove_first("\"N\" #a #b", "a"), Ok("\"N\" #b".to_owned()));
+        assert_eq!(remove_first("\"N\" #a #b", "b"), Ok("\"N\" #a".to_owned()));
+    }
+
+    #[test]
+    fn remove_tag_takes_the_blank_after_the_indent() {
+        assert_eq!(remove_first("  #two ^l2", "two"), Ok("  ^l2".to_owned()));
+        assert_eq!(remove_first("\t#two ^l2", "two"), Ok("\t^l2".to_owned()));
+    }
+
+    #[test]
+    fn a_tag_alone_on_its_line_goes_with_the_line() {
+        assert_eq!(
+            remove_first("h\n  #three\n  m\n", "three"),
+            Ok("h\n  m\n".to_owned())
+        );
+        assert_eq!(
+            remove_first("h\r\n  #three\r\n  m", "three"),
+            Ok("h\r\n  m".to_owned())
+        );
+        assert_eq!(remove_first("h\n  #three", "three"), Ok("h".to_owned()));
+        assert_eq!(
+            remove_first("h\r\n\t#three \t", "three"),
+            Ok("h".to_owned())
+        );
+    }
+
+    #[test]
+    fn remove_tag_rejects_other_text() {
+        let text = "\"N\" #other";
+        let at = offset(text, "#other");
+        assert_eq!(
+            remove_tag(text, at..at + 6, "one"),
+            Err(EditError::Mismatch(at..at + 6))
+        );
+        assert_eq!(
+            remove_tag(text, at..at + 40, "other"),
+            Err(EditError::Mismatch(at..at + 40))
+        );
     }
 
     #[test]
