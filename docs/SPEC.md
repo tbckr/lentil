@@ -29,6 +29,7 @@ main.beancount                     entry point: options and includes
 fava.beancount                     Fava options and sidebar links, written by init
 accounts.beancount                 open, close and commodity directives
 rules.toml                         suggestion rules (section 16)
+tags.toml                          tag taxonomy (section 16)
 sources/
   giro.toml                        import mapping for source "giro" (section 15)
 imports/
@@ -37,7 +38,7 @@ imports/
       20261020T071502Z.beancount   one import run (section 8)
 manual/
   k7p2q9xd/
-    2026-10.beancount              manual entries and balance snapshots (section 9)
+    2026-10.beancount              manual entries, balance snapshots and trips (section 9)
 prices/
   2026/
     20261020.beancount             exchange rates, one file per fetch (section 8)
@@ -103,7 +104,7 @@ Every transaction Lentil writes carries a stable `lentil_id`; all edits, dedupli
 
 | Key | Required | Value | Example |
 | --- | --- | --- | --- |
-| `lentil_id` | Yes, on every transaction Lentil creates | Unique, never changes, never reused | `"giro-3f9a1c2e7b4d"` |
+| `lentil_id` | Yes, on every transaction and trip event Lentil creates | Unique, never changes, never reused | `"giro-3f9a1c2e7b4d"` |
 | `lentil_ref` | No | The bank's own reference, copied verbatim | `"2026101912345"` |
 | `lentil_counterparty` | Only on imported transactions whose counterparty is not empty (section 8) | The bank's counterparty as delivered, trimmed and inner whitespace collapsed | `"CORNER GROCERY 4711"` |
 | `lentil_purpose` | Only on imported transactions whose purpose is not empty (section 8) | The bank's purpose, normalized likewise | `"Card payment"` |
@@ -115,11 +116,11 @@ Every transaction Lentil writes carries a stable `lentil_id`; all edits, dedupli
 - Otherwise the hash input is `<source-id>|<booking date>|<amount>|<currency>|<counterparty>|<purpose>|<n>`. `n` is the 0-based occurrence index among transactions with identical other fields in the same export, in the order the bank lists them.
 - Fields are normalized before hashing: dates as `YYYY-MM-DD`, amounts as plain decimals with a dot and without trailing zeros (`-64.00` as `-64`, `-64.10` as `-64.1`), so a change in the bank's number format keeps the IDs, and text trimmed with inner whitespace collapsed.
 
-**Manual transactions.** `lentil_id` = `<device-id>-` + a lowercase ULID.
+**Manual transactions and trip events.** `lentil_id` = `<device-id>-` + a lowercase ULID.
 
 **Rules.**
 
-- `lentil_id` MUST be unique among active and commented-out transactions (section 10, `dismiss`).
+- `lentil_id` MUST be unique among active and commented-out transactions and trip events (section 10, `dismiss`).
 - No client may change, add or remove `lentil_id`, `lentil_ref` or the original fields `lentil_counterparty`, `lentil_purpose` and `lentil_type`. Users rename payees and narrations freely; the original fields keep the bank's wording, for example for finding the original statement line.
 - A transaction's original text is `lentil_counterparty` and `lentil_purpose` joined by one space, a missing field counting as empty, and normalized as above. Learned suggestions key on it, while rules match each original field on its own (section 16).
 - Transactions without `lentil_id` (for example written by hand in an editor) are valid but read-only for Lentil until the admin role assigns IDs.
@@ -131,7 +132,7 @@ Review state lives only in the standard transaction flag, so any Beancount tool 
 | Flag | Meaning | Set by |
 | --- | --- | --- |
 | `!` | Open: needs review | Importers, on every transaction they write |
-| `*` | Reviewed | Editors, through `confirm` or any other edit by the user; re-applied rules leave the flag as it is (section 16); manual entries start as `*` |
+| `*` | Reviewed | Editors, through `confirm` or any other edit by the user, except that adding or removing a tag leaves the flag as it is (section 10), as re-applied rules do (section 16); manual entries start as `*` |
 
 - Importers MUST write `!`. Editors MUST NOT set `!` back once a transaction is `*`, except through an explicit user action.
 - The review queue is the set of active transactions with flag `!`, across all files.
@@ -145,7 +146,7 @@ Every client acts in one of three roles, and each role may only touch its own ar
 | Role | Used by | May create | May change | MUST NOT |
 | --- | --- | --- | --- | --- |
 | Importer | CLI import; from v1 import on Android and the Parqet import; later a bot | New run files under `imports/<source-id>/`; price files under `prices/` (v1); `status/<bot-id>.json` | Nothing that already exists | Change, move or remove existing transactions |
-| Editor | Android; CLI `rules apply`; a local web UI if built | Files under `manual/<device-id>/`, including balance snapshots (section 9); `open` directives in `accounts.beancount` | Flag, payee, narration, tags, links, metadata other than `lentil_id`, `lentil_ref` and the original fields (section 5), and the account of postings that are not on a source account | Change dates, a source posting, `lentil_id`, `lentil_ref` or an original field; move a posting onto a source account; delete transactions; write manual transactions or pads that post to a source account |
+| Editor | Android; CLI `rules apply`; a local web UI if built | Files under `manual/<device-id>/`, including balance snapshots and trip events (section 9); `open` directives in `accounts.beancount` | Flag, payee, narration, tags, links, metadata other than `lentil_id`, `lentil_ref` and the original fields (section 5), and the account of postings that are not on a source account | Change dates, a source posting, `lentil_id`, `lentil_ref` or an original field; move a posting onto a source account; delete transactions; write manual transactions or pads that post to a source account |
 | Admin | CLI (`init`, `adopt`, config commands) | Anything | Anything | Break any rule of this spec in the resulting state |
 
 - Every posting on a source account is a source posting. Editors never move a posting onto a source account, and suggestions never name one (section 16), so each side of a transfer between two source accounts stays a transaction of its own (section 8).
@@ -190,6 +191,7 @@ Each import run reads one bank export through an adapter (section 15), writes ex
 - Each transaction has exactly two postings: the source posting with the amount as reported by the bank, and a counter posting with elided amount on the suggested account, or on `fallback_account` if there is no suggestion. The opening transaction (below) has the same shape.
 - Each transaction carries `lentil_id` (section 5), `lentil_ref` if the bank provides one, and each original field that is not empty, in the order `lentil_counterparty`, `lentil_purpose`, `lentil_type`.
 - The payee is the payee of a matching rule (section 16), otherwise the counterparty; a transaction with neither has no payee. The narration is the purpose, or empty without one. The opening transaction (below) is the exception: it has no payee, its narration is fixed, and rules do not apply to it.
+- The transaction carries the tags the rules add (section 16), written in the header after the narration, in the order the rules add them. Without tags the header has none. Trips (section 9) play no part at import.
 - Transactions are ordered by booking date, then in the order the bank lists them.
 - Before writing, the importer collects every `lentil_id` in the ledger, including those of commented-out transactions, and skips transactions whose ID already exists.
 - A transaction can get a new ID when the export describes it differently, for example after a mapping change or a change in the bank's wording. If an existing transaction of the same source lies between the export's first and last booking date and the export does not reproduce its `lentil_id`, any new transaction with that transaction's booking date, amount and currency is a possible duplicate. The importer MUST NOT write it without confirmation: the CLI shows both and asks, and an unattended import skips it and reports it.
@@ -225,9 +227,25 @@ Manual entries go into files that only one device writes, so two devices can nev
 
 - Each device has a `device-id`: 8 random lowercase base32 characters, created once on first start and kept on the device.
 - Entries go to `manual/<device-id>/<YYYY-MM>.beancount`, by the entry's date, and are appended at the end of the file. The include pattern of section 3 picks up new files.
-- Manual entries carry a `lentil_id` (section 5) and start with flag `*`.
+- Manual transactions carry a `lentil_id` (section 5) and start with flag `*`. Trip events carry a `lentil_id` too and have no flag.
 - In v1, a manual transaction MUST NOT post to a source account: the import brings those transactions anyway, and Lentil cannot yet match a manual entry to the imported one. `lentil status` reports manual postings on source accounts as possible duplicates.
 - A device MUST NOT write into another device's directory. Edits to existing manual entries use the edit operations of section 10 like any other transaction.
+
+**Trips (v0.1).** A trip records its dates in the device's files, so a client can suggest the trip's tag when the trip's transactions arrive with a later import (PRD: FR-D13).
+
+```beancount
+2026-04-10 event "trip" "portugal-2026"
+  lentil_id: "k7p2q9xd-01jc8m2w9z4f7q3r5t6v8x0y1a"
+2026-04-21 event "trip" ""
+  lentil_id: "k7p2q9xd-01jcfh3k5n7p9r1s3t5v7w9y2b"
+```
+
+- `<date> event "trip" "<name>"` starts a trip and `<date> event "trip" ""` ends it. `<name>` MUST match `[a-z0-9-]+`, and the trip's tag is `trip-<name>`; a trip event whose name does not match is ignored.
+- Trip events are appended to the device's month file like other manual entries, through `start-trip` and `end-trip` (section 10). They carry a `lentil_id` (section 5).
+- Lentil uses the event type `"trip"` for trips; other event types pass through unchanged (section 14).
+- The trip of a date follows from the trip events on or before that date, ordered by date, then by file path, then by position in the file. If the latest of them starts a trip, the date lies in that trip. If it ends a trip and is dated at most three days before the date, the date still counts for the trip the preceding start event began, which covers payments that the bank books after the trip. A start event without an end event ends at the next start event, so the later trip wins.
+- An active transaction with flag `!` and a `lentil_id`, except a source's opening transaction (section 8), gets the tag of the trip its date lies in suggested, unless it already carries it. A transaction gets at most one trip tag suggested.
+- A suggestion is never written by itself. Clients MUST NOT add a suggested tag without an explicit action of the user, and confirming a transaction MUST NOT accept it.
 
 **Balance snapshots (v1).** A balance-tracked account (`[[snapshot]]` in section 4) has no transactions from a bank. Its user enters the balance once or twice a month, and the difference to the computed balance is booked to `unattributed_account`. This keeps net worth exact without importing every transaction.
 
@@ -244,7 +262,7 @@ Manual entries go into files that only one device writes, so two devices can nev
 
 ## 10. Edit operations
 
-Clients never ship text diffs; they record intents that name a transaction by ID and carry the value the user saw, so they can be re-applied safely to a newer state.
+Clients never ship text diffs; they record intents that name what they change, usually a transaction by its ID, and carry the value the user saw where the change has one, so they can be re-applied safely to a newer state.
 
 | Operation | Arguments | Precondition | Effect | Role | Release |
 | --- | --- | --- | --- | --- | --- |
@@ -254,6 +272,10 @@ Clients never ship text diffs; they record intents that name a transaction by ID
 | `dismiss` | id | Transaction is active | Transaction is commented out in place | Editor | v0.1 |
 | `open-account` | account, date | Account is not open | `<date> open <account>` appended to `accounts.beancount` | Editor, Admin | v0.1 |
 | `add-import-run` | source, file, content | File does not exist | New run file written | Importer | v0.1 |
+| `add-tag` | id, tag | Transaction is active | `#<tag>` added to the header | Editor | v0.1 |
+| `remove-tag` | id, tag | Transaction is active | `#<tag>` removed from the header | Editor | v0.1 |
+| `start-trip` | id, date, name | — | `<date> event "trip" "<name>"` with `lentil_id` `id` appended to the device's month file (section 9) | Editor | v0.1 |
+| `end-trip` | id, date | — | `<date> event "trip" ""` with `lentil_id` `id` appended to the device's month file (section 9) | Editor | v0.1 |
 | `set-narration` | id, old, new | Narration equals `old` | Narration becomes `new` | Editor | v1 |
 | `set-meta` | id, key, old, new | Key is not `lentil_id`, `lentil_ref` or an original field (section 5); value equals `old` | Value becomes `new` | Editor | v1 |
 | `add-entry` | device file, entry | File belongs to this device | Entry appended | Editor | v1 |
@@ -261,7 +283,7 @@ Clients never ship text diffs; they record intents that name a transaction by ID
 
 **Applying an intent.** For each intent, in creation order:
 
-1. Find the transaction by `lentil_id`. If it does not exist, the intent is a conflict.
+1. Find the transaction by `lentil_id`. If it does not exist, the intent is a conflict. Intents that name no transaction (`open-account`, `add-import-run`, `start-trip`, `end-trip`) skip this step and follow their precondition and the rules below.
 2. If the current value already equals the new value, the intent is done and is not applied again.
 3. If the current value equals the expected old value, apply it.
 4. Otherwise the intent is a conflict.
@@ -269,6 +291,8 @@ Clients never ship text diffs; they record intents that name a transaction by ID
 **Rules.**
 
 - Applying an intent changes only the bytes of the affected element: the flag character, the account name or the string. Everything else in the file stays byte-identical (PRD: principle 7).
+- `add-tag` and `remove-tag` carry no old value. If the tag is already present, or already absent, the intent is done under step 2, so the only conflicts are a missing or dismissed transaction. Adding inserts ` #<tag>` into the header line, before a comment on that line if there is one. Removing deletes the tag where it stands, in the header line or on a following line of the transaction that holds tags or links, together with one separating space; a tag alone on a line is deleted with its whole line. Editing tags never changes the flag (section 6).
+- `start-trip` and `end-trip` get their `lentil_id` when they are created. They are done if an event with their `lentil_id` exists, so a trip that is started, ended and started again on one day keeps all three events.
 - `dismiss` prepends ` ;  ` to every line of the transaction. It is used for duplicates, for example a transaction imported again after the bank changed its wording (section 8). Commented-out IDs still count for deduplication (section 8), so a dismissed transaction is never imported again.
 - `add-snapshot` decides whether a pad is needed when it is applied, not when it is created, so a replay on a newer state never writes an unused pad.
 - Intents are stored on the device, outside the repository, until they are pushed. A client MUST NOT drop an intent silently; conflicts are shown to the user, who re-applies or discards them.
@@ -325,6 +349,7 @@ A client validates the complete ledger after applying its intents and before com
 | A balance assertion fails | Warning |
 
 - A dismissed transaction counts as unchanged only if its comment block holds the whole transaction, every line prefixed as in section 10. Removing a transaction, or keeping only its `lentil_id` line, is a change outside the editor's write area.
+- In its own manual files an editor may append the entries of section 9: transactions with a `lentil_id`, the balance assertions and pads of snapshots, and `event "trip"` entries with a `lentil_id` and a name as in section 9. Any other directive added there, or a trip event with another name, lies outside the editor's write area.
 - If the state fetched from the remote already has blocking findings or lies outside the profile, editors and importers MUST NOT write. The client shows the findings; only the admin role can repair the repository.
 - Validation uses the client's core. The CLI additionally offers a check against the reference implementation, `bean-check` (PRD: FR-B4).
 
@@ -343,7 +368,7 @@ The v0 profile is the small part of Beancount that a repository created by `init
 | Cost annotations `{...}` | Outside | Securities with lots come in v1 (PRD: N17) |
 | Posting with elided amount | Supported | At most one per transaction |
 | `balance`, `pad`, `price` | Supported | `pad` only on balance-tracked accounts (section 9); `price` from lentil prices or written by hand |
-| `note`, `document`, `event`, `query`, `custom` | Supported | Passed through unchanged; `custom "budget"` is used after v1 |
+| `note`, `document`, `event`, `query`, `custom` | Supported | Passed through unchanged, except that `event "trip"` marks trips (section 9); `custom "budget"` is used after v1 |
 | `pushtag`, `poptag` | Outside |  |
 | Posting flags | Supported | Preserved, no meaning (section 6) |
 
@@ -420,7 +445,7 @@ column = "Saldo"                       # with from = "column"
 
 ## 16. Suggestion rules
 
-Explicit rules live in `rules.toml`, set the payee and the counter account from the original fields, and always win; learned suggestions are derived from the ledger's history and are never stored.
+Explicit rules live in `rules.toml`, set the payee and the counter account from the original fields, add tags, and always win; learned suggestions are derived from the ledger's history and are never stored, and an optional `tags.toml` lists the tags a ledger uses.
 
 ```toml
 [[rule]]
@@ -431,20 +456,50 @@ account = "Expenses:Food:Groceries"
 [[rule]]
 match = { counterparty = "(?i)^city utilities$" }
 payee = "City Utilities"
+
+[[rule]]
+match = { counterparty = "(?i)^streamflix" }
+account = "Expenses:Subscriptions"
+add_tags = ["recurring"]
+
+[[rule]]
+match = { counterparty = "(?i)^webhost annual" }
+add_tags = ["amortize-year"]
+
+[[rule]]
+match = { tags = ["amortize-year"] }
+add_tags = ["recurring"]
 ```
 
-- `match` holds the conditions: regular expressions on `counterparty`, `purpose` and `type`, which are the original fields (section 5), and optionally the ID of the one `source` the rule applies to. A rule MUST give at least one regular expression, and all of its conditions must match. A missing original field matches as the empty string.
-- Rules match only the original fields, never the payee or the narration, which users may edit. A rule therefore matches a transaction the same way at import and at any later time.
-- A rule sets `payee`, `account` or both, and MUST set at least one. `payee` is normalized like the original fields and MUST NOT be empty then. `account` MUST NOT be a source account; transfers go to the transfer account (section 8).
+- `match` holds the conditions: regular expressions on `counterparty`, `purpose` and `type`, which are the original fields (section 5); `tags`, a list of tags the transaction must all carry; and optionally the ID of the one `source` the rule applies to. A rule MUST give at least one condition among the regular expressions and `tags`, and all of its conditions must match. A missing original field matches as the empty string.
+- Rules match only the original fields and, for rules that only add tags, tags; never the payee, the narration or the account, which users may edit. A rule that sets the payee or the account therefore matches a transaction the same way at import and at any later time.
+- A rule sets `payee`, `account`, `add_tags` or several of them, and MUST set at least one. A rule with a `tags` condition MUST NOT set `payee` or `account`: users edit tags, and payee and account would otherwise change with them. `payee` is normalized like the original fields and MUST NOT be empty then. `account` MUST NOT be a source account; transfers go to the transfer account (section 8). Tags in `add_tags` and in `match` are written without `#` and MUST be valid Beancount tags; `match.tags` and `add_tags` MUST NOT be empty.
 - A client MUST reject a `rules.toml` with an unknown key or a rule without `match`, so a rule written for an earlier format never applies with a different meaning.
 - A client MUST reject a `rules.toml` in which a rule's `source` names no source of `lentil.toml`, so a mistyped ID never disables a rule silently.
 - Regular expressions use RE2 syntax without lookaround, so implementations in different languages behave the same.
-- Rules are evaluated in file order. For each field, the first matching rule that sets it wins, so a payee rule and a later account rule can both apply to one transaction (PRD: FR-C18).
-- The importer takes the payee from a rule, otherwise from the counterparty. It takes the account from a rule, otherwise from a learned suggestion, and only then uses `fallback_account`.
-- A client MAY re-apply the rules to transactions already imported (PRD: FR-C19). It acts as editor (section 7) and writes only `set-payee` and `set-account` operations (section 10), so the flag stays as it is. It considers open (`!`) and reviewed (`*`) active transactions with a `lentil_id` in the run files of configured sources, except a source's opening transaction (section 8), and matches `source` against the run file's source. It SHOULD change reviewed transactions only when the user asks for it.
-- When re-applying, a field changes only if a rule sets it to a different value, and the account only if exactly one posting of the transaction is not on a source account. A change whose operation conflicts is shown to the user and left out; the others are committed.
-- Learned suggestions are computed from reviewed (`*`) transactions. Their input is the original text (section 5) and the source account, never payee or narration, which users may edit (PRD: FR-C8). They never suggest a source account, and they need no file of their own, so any client can recompute them.
+- Rules are evaluated in file order. For the payee and the account, the first matching rule that sets the field wins, so a payee rule and a later account rule can both apply to one transaction (PRD: FR-C18).
+- The tags of all matching rules are united (PRD: FR-C20). They are evaluated to a fixed point in rounds, starting from the transaction's tags. In each round, every rule is matched against the tags at the start of the round, and the round adds the tags of the matching rules that the transaction does not carry yet, rules in file order and each rule's tags in the order of its `add_tags`. The evaluation ends after a round that adds nothing. Rules only add, so the evaluation ends, and the set of tags it yields does not depend on rule order. Rules never remove a tag.
+- A rule does not add a tag if the transaction carried another tag of the same exclusive group (below) before the evaluation. The rule still sets its payee and account and adds its other tags. Tags added during the evaluation hold no tag back, so two rules can add clashing tags; the taxonomy check reports that.
+- The importer takes the payee from a rule, otherwise from the counterparty. It takes the account from a rule, otherwise from a learned suggestion, and only then uses `fallback_account`. It writes the tags of the evaluation in the order the rounds added them (section 8).
+- A client MAY re-apply the rules to transactions already imported (PRD: FR-C19, FR-C21). It acts as editor (section 7) and writes only `set-payee`, `set-account`, `add-tag` and `remove-tag` operations (section 10), so the flag stays as it is. It considers open (`!`) and reviewed (`*`) active transactions with a `lentil_id` in the run files of configured sources, except a source's opening transaction (section 8), and matches `source` against the run file's source. It SHOULD change reviewed transactions only when the user asks for it.
+- When re-applying, a field changes only if a rule sets it to a different value, and the account only if exactly one posting of the transaction is not on a source account. Tags of the evaluation that the transaction lacks are added. A change whose operation conflicts is shown to the user and left out; the others are committed.
+- A client lists removal candidates only when the user asks for them, for example after narrowing a rule. A removal candidate is a tag on a considered transaction that appears in the `add_tags` of some rule in `rules.toml`, but that the evaluation does not yield for the transaction when it starts from the transaction's tags that appear in no rule's `add_tags`. The hold-back always uses the tags the transaction carries. Lentil cannot tell a tag a rule added from one the user added, so the client removes each candidate only after the user confirms it, through a `remove-tag` intent created at confirmation and not planned again on a newly fetched state. Tags to add are computed after the confirmed removals are applied, so a removed tag never justifies an added one.
+- Learned suggestions are computed from reviewed (`*`) transactions. Their input is the original text (section 5) and the source account, never payee or narration, which users may edit (PRD: FR-C8). They suggest only the counter account, never a source account and never tags, and they need no file of their own, so any client can recompute them.
 - In v0.1 only the admin role edits `rules.toml`. In v1 editors add rules through an `add-rule` operation (PRD: FR-C11).
+
+**Tag taxonomy (`tags.toml`).** An optional `tags.toml` at the repository root lists the tags a ledger uses, so editors can offer them and `lentil check` can find typos and clashes (PRD: FR-A8).
+
+```toml
+tags = ["recurring", "irregular", "amortize-year", "friends", "tax-relevant"]
+families = ["trip-", "share-"]
+exclusive = [["recurring", "irregular"]]
+```
+
+- `tags` lists known tags without `#`. `families` lists prefixes; a tag that starts with one is known too. `exclusive` lists groups of tags of which a transaction carries at most one. All three keys are optional. A tag counts as known only if it is listed or starts with a family prefix, so the list also fixes the spelling.
+- A `tags.toml` does not parse if it is not TOML, has an unknown key, a value of the wrong type, or a tag or prefix that is not a valid Beancount tag. Clients MUST reject such a file, as for `rules.toml`; `lentil check` reports it as an error. Only the admin role edits it.
+- Violations are not findings of section 13, so no validation before a commit computes them; `lentil check` reports them as warnings: a tag on a transaction that is not known, a transaction carrying more than one tag of an exclusive group, and a tag in `rules.toml` that is not known.
+- Re-applying the rules reads `tags.toml` for its exclusive groups and stops if the file does not parse, as for a broken `rules.toml`; without the file, no group holds a tag back. Import does not read it, because a transaction being imported carries no tags before the evaluation.
+- Editors read it to offer tags. If it is missing or does not parse, they offer the tags already used in the ledger and never block on it. When the user picks a tag of an exclusive group of which the transaction already carries another member, the editor says so and replaces that member: it writes `remove-tag` for it and `add-tag` for the pick.
 
 ## 17. Bot status file (later)
 

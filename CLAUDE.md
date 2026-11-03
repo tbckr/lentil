@@ -80,7 +80,7 @@ There is no server. A Git repository of standard Beancount files is the single s
 - **Import pipeline (§8, §15, §16):**
   1. An adapter reads the bank export. In v0 that is CSV with a declarative mapping in `sources/*.toml`. Mappings are pure data and never name commands.
   2. The adapter produces statement records.
-  3. The importer assigns IDs, removes duplicates and picks the payee and a suggested account. Rules in `rules.toml` match the original fields and set the payee, the account or both, the first matching rule per field. Without a rule, the payee is the counterparty, and the account is a suggestion learned from the counterparty and purpose of reviewed transactions, otherwise `fallback_account`.
+  3. The importer assigns IDs, removes duplicates and picks the payee and a suggested account. Rules in `rules.toml` match the original fields and set the payee, the account or both, the first matching rule per field, and add tags, those of all matching rules. Without a rule, the payee is the counterparty, and the account is a suggestion learned from the counterparty and purpose of reviewed transactions, otherwise `fallback_account`.
   4. It adds a balance assertion and writes everything to one new run file.
 
 ## Invariants that are easy to get wrong

@@ -90,7 +90,7 @@ v0.1 proves the core loop of import and mobile triage, plus tags; v1 adds captur
 | N5 | Record a cash payment or a one-off entry on an account without import | Android | v1 |
 | N6 | Glance at balances and monthly spending | Android | v1 |
 | N7 | Month-end close: open items, balance reconciliation, monthly overview | CLI, Fava | v1 |
-| N8 | Tax preparation: mark tax-relevant postings and export them per year | CLI | v1 |
+| N8 | Tax preparation: mark tax-relevant transactions and export them per year | CLI | v1 |
 | N9 | Record a transaction in a foreign currency, e.g. while travelling | All | v1 |
 | N10 | Resolve a transaction that was changed on two devices | Android | v1 |
 | N11 | Adopt an existing ledger (`adopt`) | CLI | v1 |
@@ -108,7 +108,7 @@ Every client acts in one of three roles with separate write areas, so concurrent
 | Role | Clients | Writes |
 | --- | --- | --- |
 | Importer | CLI import, `lentil prices`; from v1 import on Android and the Parqet import | New files only: import runs and price files |
-| Editor | Android; `lentil rules apply`; an own web UI if built | Flag, account, payee, narration, tags and metadata of existing transactions; new accounts; manual entries and balance snapshots in its own device's files |
+| Editor | Android; `lentil rules apply`; an own web UI if built | Flag, account, payee, narration, tags and metadata of existing transactions; new accounts; manual entries, balance snapshots and trip events in its own device's files |
 | Admin | CLI (`init`, `adopt`, configuration) | Anything, as long as the result follows the spec |
 
 Fava and rustfava only read the repository.
@@ -126,6 +126,7 @@ Every requirement has an ID and a target release; how it is implemented is defin
 | FR-A3 | Every transaction Lentil creates carries a stable ID as metadata, derived from the bank's reference or the transaction's fields for imports and generated for manual entries. | v0.1 |
 | FR-A4 | Review status uses only the standard flags: `!` for open, `*` for reviewed. | v0.1 |
 | FR-A5 | Every change is validated before it is committed; invalid states are never pushed. | v0.1 |
+| FR-A8 | An optional `tags.toml` lists known tags, tag families and mutually exclusive groups; `lentil check` warns about unknown tags and clashing tags but never blocks ([Spec section 16](SPEC.md#16-suggestion-rules)). | v0.1 |
 | FR-A6 | `adopt` takes over an existing ledger without rewriting existing entries. Only new entries get IDs; migrating old entries happens only on explicit request. | v1 |
 | FR-A7 | Every account with a balance is tracked in one of two ways, set in the config: by import (transactions from the bank, strict balance assertions) or by balance snapshots (periodic balances only; differences go to an unattributed account). An account is never both. | v1 |
 
@@ -153,6 +154,8 @@ Every requirement has an ID and a target release; how it is implemented is defin
 | FR-C8 | Imported transactions keep the bank's counterparty, purpose and booking type as separate protected metadata. Suggestions learn from counterparty and purpose, not from a payee or narration the user has edited. | v0.1 |
 | FR-C18 | Rules in `rules.toml` match the bank's counterparty, purpose and booking type and set the payee, the counter account or both; for each field, the first matching rule that sets it wins ([Spec section 16](SPEC.md#16-suggestion-rules)). | v0.1 |
 | FR-C19 | `lentil rules apply` applies the rules again to transactions already imported and commits the changed payees and counter accounts. By default it changes only open transactions; options include reviewed ones, limit it to the payee or the account, or only list the changes. It never confirms a transaction ([Spec section 16](SPEC.md#16-suggestion-rules)). | v0.1 |
+| FR-C20 | Rules in `rules.toml` also add tags. The tags of all matching rules are united, a rule may match tags if it only adds tags, and a rule never adds a tag whose exclusive rival the transaction already carries ([Spec section 16](SPEC.md#16-suggestion-rules)). | v0.1 |
+| FR-C21 | `lentil rules apply` adds the rule tags a transaction lacks, on reviewed transactions only on request, and can be limited to tags. On request it also lists tags that the rules no longer yield for a transaction, among the tags some rule adds, and removes each only after confirmation ([Spec section 16](SPEC.md#16-suggestion-rules)). | v0.1 |
 | FR-C9 | `lentil source add` drafts a mapping from a sample export (encoding, delimiter, header, date and number formats, columns) and shows the first parsed rows for confirmation. | v1 |
 | FR-C10 | Transfers between own accounts are detected, and both sides are booked against the transfer account. | v1 |
 | FR-C11 | Corrections made during triage improve future suggestions; rules live in the repository. | v1 |
@@ -173,6 +176,8 @@ Every requirement has an ID and a target release; how it is implemented is defin
 | FR-D4 | A duplicate, such as a transaction imported again after the bank changed its wording, can be dismissed; it stays in its file as a comment and is never imported again. | v0.1 |
 | FR-D5 | Triage works offline; changes are transferred on the next sync. | v0.1 |
 | FR-D6 | The UI syncs without using Git terminology. | v0.1 |
+| FR-D12 | Open transactions show their tags. A tag is added from the taxonomy or removed with one tap, picking a tag replaces its exclusive rival, and tagging never confirms a transaction. | v0.1 |
+| FR-D13 | A trip is started and ended on the phone. Open transactions from its start to three days after its end show its tag as a suggestion that one tap accepts ([Spec section 9](SPEC.md#9-manual-entries-and-balance-snapshots)). | v0.1 |
 | FR-D7 | Payee and narration can be corrected; the bank's original fields stay unchanged (FR-C8). | v1 |
 | FR-D8 | Cash payments and one-off entries on accounts without import can be recorded quickly; they go into one file per device. Entries on imported accounts are refused, because the import brings them anyway. | v1 |
 | FR-D9 | A quick overview shows balances per account and the current month's spending per category. | v1 |
@@ -187,7 +192,7 @@ Every requirement has an ID and a target release; how it is implemented is defin
 | FR-E2 | A first `lentil status` lists unreviewed transactions, failed balance assertions and import runs without a balance check. | v0.1 |
 | FR-E3 | Suggestion rules live in `rules.toml` and are edited directly; rules added from triage corrections follow with FR-C11. | v0.1 |
 | FR-E4 | `lentil status` lists open items: unreviewed transactions, failed balance assertions, accounts without a recent import, manual postings on imported accounts (possible duplicates), and the month's uncategorized and unattributed amounts. | v1 |
-| FR-E5 | `lentil export tax` exports postings marked as tax-relevant per tax year; the details are decided in v1. | v1 |
+| FR-E5 | `lentil export tax` exports transactions tagged as tax-relevant per tax year; the details are decided in v1. | v1 |
 | FR-E6 | Rare complex corrections (splitting, rebooking, several transactions at once) are made in a text editor; `lentil check` validates them before commit. | v1 |
 | FR-E7 | A local web UI served by `lentil serve` is built only if Fava plus CLI demonstrably fall short against the success criteria. If built: a static React single-page app with a typed API client whose transport can be swapped; all logic stays in the core. | Later |
 | FR-E8 | A Tauri desktop app wraps the web UI. Requires FR-E7. | Later |
@@ -234,6 +239,6 @@ v0.1 proves the core loop, and v1 makes Lentil fit for everyday use. The phases 
 
 | Phase | Content | Scenarios | Requirements |
 | --- | --- | --- | --- |
-| v0.1 | Core loop: set up a repository, import CSV exports, triage on Android, tags, read-only view in Fava | N1–N4, N15 | FR-A1–A5, FR-B1–B4, FR-C1–C8, FR-C18, FR-C19, FR-D1–D6, FR-E1–E3, FR-F1–F7 |
+| v0.1 | Core loop: set up a repository, import CSV exports, triage on Android, tags, read-only view in Fava | N1–N4, N15 | FR-A1–A5, FR-A8, FR-B1–B4, FR-C1–C8, FR-C18–C21, FR-D1–D6, FR-D12, FR-D13, FR-E1–E3, FR-F1–F7 |
 | v1 | Everyday use: capture, overview, securities portfolios, accrual, import on the phone, month-end close, taxes, foreign currencies, conflict resolution, adopting existing ledgers, drafting CSV mappings | N5–N12, N16–N18 | FR-A6, FR-A7, FR-B5, FR-C9–C12, FR-D7–D11, FR-E4–E6, FR-F8 |
 | Later | Automatic bank access, own web UI, desktop app | N13, N14 | FR-C13–C17, FR-E7, FR-E8 |
