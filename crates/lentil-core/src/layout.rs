@@ -185,7 +185,8 @@ fn placeholder_file(pattern: &str) -> String {
 }
 
 const RULES: &str = r#"# Suggestion rules (Lentil Convention Spec, section 16). A rule matches the
-# bank's original fields and sets the payee, the counter account or both.
+# bank's original fields and sets the payee, the counter account, tags or
+# several of them.
 # Rules are evaluated in file order; for each field, the first matching rule
 # that sets it wins. Without a payee from a rule, the payee is the bank's
 # counterparty. Without an account from a rule, the importer learns from
@@ -200,6 +201,16 @@ const RULES: &str = r#"# Suggestion rules (Lentil Convention Spec, section 16). 
 # match holds regular expressions on counterparty, purpose and type, at least
 # one, and optionally the source the rule is limited to. A missing field
 # matches as empty text. Regular expressions use RE2 syntax without lookaround.
+#
+# A rule can add tags too, written without #. The tags of all matching rules
+# are added, and a rule that only adds tags may also match tags, such as
+# match = { tags = ["amortize-year"] }. An optional tags.toml lists the tags
+# you use; lentil check warns about the others.
+#
+# [[rule]]
+# match = { counterparty = "(?i)^streamflix" }
+# account = "Expenses:Subscriptions"
+# add_tags = ["recurring"]
 #
 # A rule never books to a source account. Transfers between your own accounts
 # go to Assets:Transfer on both sides:
@@ -230,6 +241,7 @@ Every file has exactly one kind of writer, and fixed include patterns in `main.b
 | `fava.beancount` | Fava options and sidebar links | Admin |
 | `accounts.beancount` | `open`, `close` and `commodity` directives | Admin; editors append `open` directives |
 | `rules.toml` | Suggestion rules for imports and `lentil rules apply` | Admin |
+| `tags.toml` | Optional tag taxonomy: known tags, families and exclusive groups; `lentil init` does not write it | Admin |
 | `sources/<source-id>.toml` | CSV mapping of one source | Admin |
 | `imports/<source-id>/<YYYY>/<YYYYMMDDTHHMMSSZ>.beancount` | One import run | Importer |
 | `manual/<device-id>/<YYYY-MM>.beancount` | Manual entries of one device | Editor |
@@ -247,6 +259,22 @@ Review state lives only in the transaction flag.
 - `!` means open: importers write every transaction with `!`.
 - `*` means reviewed: confirming or correcting a transaction sets `*`, and manual entries start as `*`.
 - A duplicate is dismissed by commenting it out in place. Its `lentil_id` still counts, so it is never imported again.
+
+## Tags
+
+Tags such as `#recurring` mark transactions for evaluations across accounts.
+
+- Rules in `rules.toml` add tags with `add_tags`, at import and with `lentil rules apply`. A rule never adds a tag if the transaction carries another tag of the same exclusive group.
+- `lentil rules apply --stale-tags` lists the tags the rules no longer yield, for example after you narrowed a rule, and removes each one you confirm.
+- `tags.toml` lists the tags you use. `tags` names known tags, `families` lists prefixes whose tags count as known, and `exclusive` lists groups of which a transaction carries at most one:
+
+  ```toml
+  tags = ["recurring", "irregular", "amortize-year", "friends", "tax-relevant"]
+  families = ["trip-", "share-"]
+  exclusive = [["recurring", "irregular"]]
+  ```
+
+- `lentil check` warns about unknown tags and clashes, and never fails because of them.
 
 ## Roles
 
@@ -503,7 +531,7 @@ include "prices/*/*.beancount"
             }
         }
         let rules = crate::import::Rules::parse(&examples).unwrap();
-        assert_eq!(rules.len(), 2, "{examples}");
+        assert_eq!(rules.len(), 3, "{examples}");
     }
 
     #[test]
@@ -520,6 +548,9 @@ include "prices/*/*.beancount"
             "[[source]]",
             "lentil import",
             "fava main.beancount",
+            "tags.toml",
+            "add_tags",
+            "--stale-tags",
         ] {
             assert!(text.contains(needle), "{needle}");
         }

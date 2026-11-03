@@ -13,6 +13,7 @@ Every file has exactly one kind of writer, and fixed include patterns in `main.b
 | `fava.beancount` | Fava options and sidebar links | Admin |
 | `accounts.beancount` | `open`, `close` and `commodity` directives | Admin; editors append `open` directives |
 | `rules.toml` | Suggestion rules for imports and `lentil rules apply` | Admin |
+| `tags.toml` | Optional tag taxonomy: known tags, families and exclusive groups; `lentil init` does not write it | Admin |
 | `sources/<source-id>.toml` | CSV mapping of one source | Admin |
 | `imports/<source-id>/<YYYY>/<YYYYMMDDTHHMMSSZ>.beancount` | One import run | Importer |
 | `manual/<device-id>/<YYYY-MM>.beancount` | Manual entries of one device | Editor |
@@ -30,6 +31,22 @@ Review state lives only in the transaction flag.
 - `!` means open: importers write every transaction with `!`.
 - `*` means reviewed: confirming or correcting a transaction sets `*`, and manual entries start as `*`.
 - A duplicate is dismissed by commenting it out in place. Its `lentil_id` still counts, so it is never imported again.
+
+## Tags
+
+Tags such as `#recurring` mark transactions for evaluations across accounts.
+
+- Rules in `rules.toml` add tags with `add_tags`, at import and with `lentil rules apply`. A rule never adds a tag if the transaction carries another tag of the same exclusive group.
+- `lentil rules apply --stale-tags` lists the tags the rules no longer yield, for example after you narrowed a rule, and removes each one you confirm.
+- `tags.toml` lists the tags you use. `tags` names known tags, `families` lists prefixes whose tags count as known, and `exclusive` lists groups of which a transaction carries at most one:
+
+  ```toml
+  tags = ["recurring", "irregular", "amortize-year", "friends", "tax-relevant"]
+  families = ["trip-", "share-"]
+  exclusive = [["recurring", "irregular"]]
+  ```
+
+- `lentil check` warns about unknown tags and clashes, and never fails because of them.
 
 ## Roles
 

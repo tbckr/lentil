@@ -27,6 +27,7 @@ use lentil_core::layout::{InitOptions, init_files};
 use lentil_core::ledger;
 use lentil_core::snapshot::Snapshot;
 use lentil_core::status;
+use lentil_core::tags::{TAGS_FILE, tag_warnings};
 use lentil_core::validate::{Context, Role, validate};
 
 const UPDATE_VAR: &str = "LENTIL_UPDATE_EXAMPLE";
@@ -61,7 +62,14 @@ account = "Income:Salary"
 match = { counterparty = "(?i)^example housing co-op$" }
 payee = "Housing Co-op"
 account = "Expenses:Housing:Rent"
+add_tags = ["recurring"]
+
+[[rule]]
+match = { counterparty = "(?i)^city utilities$" }
+add_tags = ["recurring"]
 "#;
+
+const TAGS: &str = "tags = [\"recurring\", \"irregular\", \"friends\"]\nfamilies = [\"trip-\"]\nexclusive = [[\"recurring\", \"irregular\"]]\n";
 
 const MAPPING_PATH: &str = "sources/checking.toml";
 const MAPPING: &str = r#"# Fictional checking account export: UTF-8, oldest first, a running balance per row.
@@ -102,7 +110,8 @@ fn append(files: &mut Snapshot, path: &str, text: &str) {
     files.insert(path, format!("{existing}\n{text}"));
 }
 
-/// The files of `init` plus the source, its accounts, rules and mapping.
+/// The files of `init` plus the source, its accounts, rules, mapping and tag
+/// taxonomy.
 fn admin() -> Snapshot {
     let mut files = init_files(&InitOptions {
         title: "Example Ledger".into(),
@@ -112,6 +121,7 @@ fn admin() -> Snapshot {
     append(&mut files, "accounts.beancount", ACCOUNTS);
     append(&mut files, "rules.toml", RULES);
     files.insert(MAPPING_PATH, MAPPING);
+    files.insert(TAGS_FILE, TAGS);
     files
 }
 
@@ -154,8 +164,9 @@ fn id_on(plan: &ImportPlan, day: Date) -> String {
 }
 
 /// The review: confirm what a rule suggested, move two grocery payments to a
-/// new account, leave the rest open. As in the app, each account change is
-/// followed by a separate `confirm`, because any edit reviews the transaction.
+/// new account, tag one of them as shared with friends, leave the rest open.
+/// As in the app, each account change is followed by a separate `confirm`,
+/// because any edit reviews the transaction.
 fn intents(plan: &ImportPlan) -> Vec<PendingIntent> {
     let grocery = |day| Intent::SetAccount {
         id: id_on(plan, day),
@@ -175,6 +186,10 @@ fn intents(plan: &ImportPlan) -> Vec<PendingIntent> {
         grocery(date(2026, 10, 2)),
         confirm(id_on(plan, date(2026, 10, 2))),
         grocery(date(2026, 10, 9)),
+        Intent::AddTag {
+            id: id_on(plan, date(2026, 10, 9)),
+            tag: "friends".into(),
+        },
         confirm(id_on(plan, date(2026, 10, 9))),
     ]
     .into_iter()
@@ -287,6 +302,22 @@ fn example_has_three_open_transactions_and_nothing_else_to_report() {
     let flags: Vec<char> = ledger.transactions.iter().map(|t| t.flag).collect();
     assert_eq!(flags.iter().filter(|&&f| f == '*').count(), 5, "{flags:?}");
     assert_eq!(flags.iter().filter(|&&f| f == '!').count(), 3, "{flags:?}");
+}
+
+#[test]
+fn example_tags_follow_the_taxonomy() {
+    let example = example();
+    let config = config(&example);
+    let ledger = ledger::load(&example, &config.main_file);
+    assert_eq!(tag_warnings(&example, &config, &ledger), Vec::new());
+    let run = example.text(RUN_FILE).unwrap();
+    for header in [
+        "2026-10-01 * \"Housing Co-op\" \"Rent October\" #recurring\n",
+        "2026-10-06 ! \"City Utilities\" \"Electricity instalment 10/2026\" #recurring\n",
+        "2026-10-09 * \"Corner Grocery\" \"Card payment\" #friends\n",
+    ] {
+        assert!(run.contains(header), "{header}{run}");
+    }
 }
 
 #[test]

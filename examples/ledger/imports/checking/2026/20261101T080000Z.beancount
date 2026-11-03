@@ -6,7 +6,7 @@
   Assets:Bank:Checking   1204.35 EUR
   Equity:OpeningBalances
 
-2026-10-01 * "Housing Co-op" "Rent October"
+2026-10-01 * "Housing Co-op" "Rent October" #recurring
   lentil_id: "checking-7f72399e963e"
   lentil_counterparty: "Example Housing Co-op"
   lentil_purpose: "Rent October"
@@ -20,14 +20,14 @@
   Assets:Bank:Checking    -23.50 EUR
   Expenses:Food:Groceries
 
-2026-10-06 ! "City Utilities" "Electricity instalment 10/2026"
+2026-10-06 ! "City Utilities" "Electricity instalment 10/2026" #recurring
   lentil_id: "checking-fff9bdb33907"
   lentil_counterparty: "City Utilities"
   lentil_purpose: "Electricity instalment 10/2026"
   Assets:Bank:Checking    -64.00 EUR
   Expenses:Uncategorized
 
-2026-10-09 * "Corner Grocery" "Card payment"
+2026-10-09 * "Corner Grocery" "Card payment" #friends
   lentil_id: "checking-6c3e2d5b458e"
   lentil_counterparty: "Corner Grocery"
   lentil_purpose: "Card payment"
