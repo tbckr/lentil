@@ -753,6 +753,76 @@ add_tags = ["recurring"]
 }
 
 #[test]
+fn rules_apply_lists_stale_tags_and_removes_none_without_a_terminal() {
+    let env = Env::new();
+    let repo = env.repo.to_str().unwrap();
+    ok(&env.lentil(&["init", repo, "--remote", env.remote.to_str().unwrap()]));
+    let export = env.add_giro_source();
+    env.import_giro(&export);
+    env.append(
+        "rules.toml",
+        "\n[[rule]]\nmatch = { counterparty = \"^City Utilities$\" }\nadd_tags = [\"recurring\"]\n",
+    );
+    // A rule tag that no rule yields for the grocery any more.
+    let (run, content) = env.giro_run();
+    let stale = GROCERY.replacen('\n', " #recurring\n", 1);
+    std::fs::write(&run, content.replace(GROCERY, &stale)).unwrap();
+    env.admin_push("admin: utilities rule");
+    let run = run.strip_prefix(&env.repo).unwrap().display().to_string();
+    let line = |header: &str| {
+        content
+            .lines()
+            .position(|l| l == header.trim_end())
+            .unwrap()
+            + 1
+    };
+    let listed = format!(
+        "The rules no longer yield these tags (1):\n  2026-10-02 Corner Grocery | Card payment 4711  ({run}:{})\n    #recurring\n",
+        line(GROCERY)
+    );
+    let apply = |extra: &[&str]| {
+        let mut args = vec!["-C", repo, "rules", "apply"];
+        args.extend(extra);
+        env.lentil(&args)
+    };
+
+    assert_eq!(
+        ok(&apply(&["--stale-tags", "--dry-run"])),
+        format!(
+            "{listed}The rules would change these transactions (tags: 1):\n  2026-10-07 City Utilities | Electricity 10/2026  ({run}:{})\n    + #recurring\nDry run on the local files: nothing was saved.\n",
+            line(UTILITIES)
+        )
+    );
+
+    let out = ok(&apply(&["--stale-tags"]));
+    assert!(
+        out.starts_with(&format!(
+            "{listed}Kept: tags are removed only after a confirmation in a terminal, without --yes.\nThe rules changed these transactions (tags: 1):\n"
+        )),
+        "{out}"
+    );
+    let log = env.last_commit();
+    assert!(log.starts_with("editor: add-tag 1\n"), "{log}");
+    assert!(env.giro_run().1.contains(&stale));
+
+    let out = apply(&["--yes"]);
+    assert_eq!(out.status.code(), Some(2));
+
+    // Stale tags need the tags among the fields.
+    for only in ["payee", "account"] {
+        let out = apply(&["--stale-tags", "--only", only]);
+        assert_eq!(out.status.code(), Some(2), "{only}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("--stale-tags looks at tags, so it cannot be combined with --only payee or --only account"),
+            "{stderr}"
+        );
+    }
+    let out = ok(&apply(&["--stale-tags", "--only", "tags", "--dry-run"]));
+    assert!(out.starts_with(&listed), "{out}");
+}
+
+#[test]
 fn rules_apply_skips_conflicting_changes_and_commits_the_rest() {
     let env = Env::new();
     let repo = env.repo.to_str().unwrap();

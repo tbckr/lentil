@@ -13,11 +13,12 @@ mod status;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::error::ErrorKind;
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use jiff::civil::Date;
 use lentil_core::reapply::{ReapplyFields, ReapplyOptions};
 
-use crate::i18n::Lang;
+use crate::i18n::{Lang, Msg};
 
 /// Name and version for the `Lentil-Client` trailer and run headers.
 pub const CLIENT: &str = concat!("lentil-cli/", env!("CARGO_PKG_VERSION"));
@@ -114,6 +115,13 @@ enum RulesAction {
         /// without saving anything; needs no Git.
         #[arg(long)]
         dry_run: bool,
+        /// Also list tags that the rules no longer yield, among the tags some
+        /// rule adds, and ask whether to remove each.
+        #[arg(long)]
+        stale_tags: bool,
+        /// Never ask: remove no tag.
+        #[arg(long, requires = "stale_tags")]
+        yes: bool,
     },
 }
 
@@ -166,21 +174,37 @@ fn main() -> ExitCode {
                     reviewed,
                     only,
                     dry_run,
+                    stale_tags,
+                    yes,
                 },
-        } => rules::apply(
-            lang,
-            cli.repo.as_deref(),
-            ReapplyOptions {
-                reviewed,
-                fields: match only {
-                    None => ReapplyFields::All,
-                    Some(OnlyField::Payee) => ReapplyFields::PayeeOnly,
-                    Some(OnlyField::Account) => ReapplyFields::AccountOnly,
-                    Some(OnlyField::Tags) => ReapplyFields::TagsOnly,
+        } => {
+            if stale_tags && matches!(only, Some(OnlyField::Payee | OnlyField::Account)) {
+                Cli::command()
+                    .error(
+                        ErrorKind::ArgumentConflict,
+                        i18n::text(lang, Msg::StaleTagsNeedTags),
+                    )
+                    .exit();
+            }
+            rules::apply(
+                lang,
+                cli.repo.as_deref(),
+                &rules::Args {
+                    options: ReapplyOptions {
+                        reviewed,
+                        fields: match only {
+                            None => ReapplyFields::All,
+                            Some(OnlyField::Payee) => ReapplyFields::PayeeOnly,
+                            Some(OnlyField::Account) => ReapplyFields::AccountOnly,
+                            Some(OnlyField::Tags) => ReapplyFields::TagsOnly,
+                        },
+                    },
+                    dry_run,
+                    stale_tags,
+                    yes,
                 },
-            },
-            dry_run,
-        ),
+            )
+        }
         Command::Status { all } => status::run(lang, cli.repo.as_deref(), all),
         Command::Check {
             reference,

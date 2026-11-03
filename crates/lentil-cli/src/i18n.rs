@@ -90,6 +90,13 @@ pub enum Msg {
     RulesConflict,
     RulesTag,
     RulesTagConflict,
+    StaleTagsHeader,
+    StaleTag,
+    PromptRemoveTag,
+    StaleTagsKept,
+    StaleTagsNone,
+    StaleTagsNeedTags,
+    TagsRemoved,
     RulesNothing,
     RulesWouldBlock,
     RulesDryRun,
@@ -238,6 +245,27 @@ pub fn text(lang: Lang, msg: Msg) -> &'static str {
         (RulesConflict, En | De) => "    {field}: {old} → {new}: {reason}",
         (RulesTag, En | De) => "    {sign} #{tag}",
         (RulesTagConflict, En | De) => "    {sign} #{tag}: {reason}",
+        (StaleTagsHeader, En) => "The rules no longer yield these tags ({count}):",
+        (StaleTagsHeader, De) => "Diese Tags ergeben die Regeln nicht mehr ({count}):",
+        (StaleTag, En | De) => "    #{tag}",
+        (PromptRemoveTag, En) => "    Remove #{tag}? [y/N] ",
+        (PromptRemoveTag, De) => "    #{tag} entfernen? [j/N] ",
+        (StaleTagsKept, En) => {
+            "Kept: tags are removed only after a confirmation in a terminal, without --yes."
+        }
+        (StaleTagsKept, De) => {
+            "Behalten: Tags werden nur nach einer Bestätigung im Terminal entfernt, ohne --yes."
+        }
+        (StaleTagsNone, En) => "No tag to remove.",
+        (StaleTagsNone, De) => "Kein Tag zu entfernen.",
+        (StaleTagsNeedTags, En) => {
+            "--stale-tags looks at tags, so it cannot be combined with --only payee or --only account"
+        }
+        (StaleTagsNeedTags, De) => {
+            "--stale-tags betrifft Tags und lässt sich daher nicht mit --only payee oder --only account verbinden"
+        }
+        (TagsRemoved, En) => "These tags were removed ({count}):",
+        (TagsRemoved, De) => "Diese Tags wurden entfernt ({count}):",
         (RulesNothing, En) => "The rules change nothing.",
         (RulesNothing, De) => "Die Regeln ändern nichts.",
         (RulesWouldBlock, En) => {
