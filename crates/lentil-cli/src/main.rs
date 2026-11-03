@@ -96,8 +96,9 @@ enum Command {
 
 #[derive(Debug, Subcommand)]
 enum RulesAction {
-    /// Set the payee and the counter account of imported transactions from
-    /// the rules again; commits as editor and never confirms.
+    /// Set the payee, the counter account and the tags of imported
+    /// transactions from the rules again; commits as editor and never
+    /// confirms.
     ///
     /// A change that cannot be made, such as one to an account that is not
     /// open on the transaction's date, is listed and skipped. The other
@@ -121,6 +122,7 @@ enum RulesAction {
 enum OnlyField {
     Payee,
     Account,
+    Tags,
 }
 
 fn main() -> ExitCode {
@@ -171,9 +173,10 @@ fn main() -> ExitCode {
             ReapplyOptions {
                 reviewed,
                 fields: match only {
-                    None => ReapplyFields::Both,
+                    None => ReapplyFields::All,
                     Some(OnlyField::Payee) => ReapplyFields::PayeeOnly,
                     Some(OnlyField::Account) => ReapplyFields::AccountOnly,
+                    Some(OnlyField::Tags) => ReapplyFields::TagsOnly,
                 },
             },
             dry_run,

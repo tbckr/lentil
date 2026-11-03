@@ -11,6 +11,7 @@ use lentil_core::import::{Rules, RulesError};
 use lentil_core::snapshot::Snapshot;
 use lentil_core::sync::git::Git2Backend;
 use lentil_core::sync::{Author, Identity, SyncError};
+use lentil_core::tags::{Taxonomy, TaxonomyError};
 use lentil_core::validate::Role;
 
 use crate::i18n::{self, Lang, Msg};
@@ -75,6 +76,23 @@ pub fn config(lang: Lang, snapshot: &Snapshot) -> Result<Config, CliError> {
 /// The `rules.toml` of a repository state, checked against its `config`.
 pub fn rules(lang: Lang, snapshot: &Snapshot, config: &Config) -> Result<Rules, CliError> {
     Rules::load(snapshot, config).map_err(|e| rules_error(lang, &e))
+}
+
+/// The parsed `tags.toml` of `snapshot`, `None` without the file (spec
+/// section 16).
+pub fn taxonomy(lang: Lang, snapshot: &Snapshot) -> Result<Option<Taxonomy>, CliError> {
+    Taxonomy::load(snapshot)
+        .transpose()
+        .map_err(|e| taxonomy_error(lang, &e))
+}
+
+/// A rejected `tags.toml` as an error.
+pub fn taxonomy_error(lang: Lang, error: &TaxonomyError) -> CliError {
+    CliError(i18n::msg(
+        lang,
+        Msg::TagsInvalid,
+        &[("detail", &i18n::taxonomy_error(lang, error))],
+    ))
 }
 
 /// An unusable `lentil.toml` as an error.

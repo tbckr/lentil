@@ -7,6 +7,7 @@ use lentil_core::finding::{Finding, FindingCode, Severity};
 use lentil_core::import::{ImportError, InputProblem, MappingError, RulesError};
 use lentil_core::intent::ConflictCode;
 use lentil_core::sync::GitError;
+use lentil_core::tags::TaxonomyError;
 
 /// A UI language.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -51,6 +52,7 @@ pub enum Msg {
     MappingMissing,
     MappingInvalid,
     RulesInvalid,
+    TagsInvalid,
     RuleAccountNotOpen,
     ExportUnreadable,
     ReadOnly,
@@ -86,11 +88,14 @@ pub enum Msg {
     RulesSkipped,
     RulesWouldSkip,
     RulesConflict,
+    RulesTag,
+    RulesTagConflict,
     RulesNothing,
     RulesWouldBlock,
     RulesDryRun,
     FieldPayee,
     FieldAccount,
+    FieldTags,
     NoPayee,
     StatusOpen,
     StatusOpenMore,
@@ -138,6 +143,8 @@ pub fn text(lang: Lang, msg: Msg) -> &'static str {
         (MappingInvalid, De) => "Mapping-Datei {path} ist ungültig: {detail}",
         (RulesInvalid, En) => "rules.toml is invalid: {detail}",
         (RulesInvalid, De) => "rules.toml ist ungültig: {detail}",
+        (TagsInvalid, En) => "tags.toml is invalid: {detail}",
+        (TagsInvalid, De) => "tags.toml ist ungültig: {detail}",
         (RuleAccountNotOpen, En) => {
             "rules.toml: rule {rule} books to {account}, which is not open today."
         }
@@ -229,6 +236,8 @@ pub fn text(lang: Lang, msg: Msg) -> &'static str {
         (RulesWouldSkip, En) => "These changes would be skipped ({count}):",
         (RulesWouldSkip, De) => "Diese Änderungen würden übersprungen ({count}):",
         (RulesConflict, En | De) => "    {field}: {old} → {new}: {reason}",
+        (RulesTag, En | De) => "    {sign} #{tag}",
+        (RulesTagConflict, En | De) => "    {sign} #{tag}: {reason}",
         (RulesNothing, En) => "The rules change nothing.",
         (RulesNothing, De) => "Die Regeln ändern nichts.",
         (RulesWouldBlock, En) => {
@@ -243,6 +252,8 @@ pub fn text(lang: Lang, msg: Msg) -> &'static str {
         (FieldPayee, De) => "Empfänger",
         (FieldAccount, En) => "account",
         (FieldAccount, De) => "Konto",
+        (FieldTags, En) => "tags",
+        (FieldTags, De) => "Tags",
         (NoPayee, En) => "(none)",
         (NoPayee, De) => "(keiner)",
         (StatusOpen, En) => "Open transactions: {count}",
@@ -510,6 +521,18 @@ pub fn rules_error(lang: Lang, error: &RulesError) -> String {
     };
     let args: Vec<(&str, &str)> = args.iter().map(|(k, v)| (*k, v.as_str())).collect();
     fill(template, &args)
+}
+
+/// Why `tags.toml` is rejected, as text. A syntax error keeps the TOML
+/// parser's own message.
+pub fn taxonomy_error(lang: Lang, error: &TaxonomyError) -> String {
+    match (error, lang) {
+        (TaxonomyError::Syntax(detail), _) => detail.clone(),
+        (TaxonomyError::NotUtf8, Lang::En) => "the file is not UTF-8 text".to_owned(),
+        (TaxonomyError::NotUtf8, Lang::De) => "die Datei ist kein UTF-8-Text".to_owned(),
+        (TaxonomyError::InvalidTag(tag), Lang::En) => format!("{tag:?} is not a valid tag"),
+        (TaxonomyError::InvalidTag(tag), Lang::De) => format!("{tag:?} ist kein gültiger Tag"),
+    }
 }
 
 /// A rejected mapping file as text. Only the TOML parser's own message stays

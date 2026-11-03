@@ -16,11 +16,12 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use git2::Repository;
+use lentil_core::config::Config;
 use lentil_core::finding::{FindingCode, Severity};
-use lentil_core::import::RulesError;
+use lentil_core::import::{Rules, RulesError};
 use lentil_core::intent::{Conflict, ConflictCode, Intent, Outcome, PendingIntent};
 use lentil_core::ledger::{self, Ledger};
-use lentil_core::reapply::{self, Field, ReapplyError, ReapplyOptions, RuleChange};
+use lentil_core::reapply::{self, Field, Reapplied, ReapplyError, ReapplyOptions, TagRemoval};
 use lentil_core::snapshot::Snapshot;
 use lentil_core::sync::git::Git2Backend;
 use lentil_core::sync::{
@@ -1472,13 +1473,15 @@ fn with_rules(rules: &str) -> Snapshot {
 fn reapply(
     client: &mut Client,
     git: &mut dyn GitBackend,
-) -> Result<SyncOutcome<Vec<(RuleChange, Outcome)>>, ReapplyError> {
+    removals: &[TagRemoval],
+) -> Result<SyncOutcome<Reapplied>, ReapplyError> {
     reapply::sync(
         git,
         &mut client.sleeper,
         &client.identity,
         &client.author,
         &ReapplyOptions::default(),
+        removals,
     )
 }
 
@@ -1500,7 +1503,7 @@ fn rules_apply_plans_again_on_the_state_it_pushes_to() {
             a.clone_from(&remote),
             vec![Box::new(|| result_b = Some(b.sync(&mut git_b, &intents_b)))],
         );
-        reapply(&mut a, &mut git_a).unwrap()
+        reapply(&mut a, &mut git_a, &[]).unwrap()
     };
     assert!(result_b.unwrap().unwrap().commit.is_some());
 
@@ -1508,6 +1511,7 @@ fn rules_apply_plans_again_on_the_state_it_pushes_to() {
     // conflicts with B's decision.
     let changes: Vec<(&str, Field, &Outcome)> = result_a
         .result
+        .changes
         .iter()
         .map(|(c, outcome)| (c.id.as_str(), c.field, outcome))
         .collect();
@@ -1538,9 +1542,79 @@ fn rules_apply_plans_again_on_the_state_it_pushes_to() {
 
     // Everything is applied now: a second run commits nothing.
     let mut git_a = Git2Backend::open(&a.path(), Credentials::Default).unwrap();
-    let again = reapply(&mut a, &mut git_a).unwrap();
-    assert_eq!((again.result, again.commit), (Vec::new(), None));
+    let again = reapply(&mut a, &mut git_a, &[]).unwrap();
+    assert_eq!((again.result, again.commit), (Reapplied::default(), None));
     assert_eq!(remote.history().len(), 3);
+}
+
+#[test]
+fn rules_apply_removes_only_the_confirmed_candidates() {
+    let mut files = with_rules(
+        "[[rule]]\nmatch = { counterparty = \"^BOOK SHOP$\" }\nadd_tags = [\"books\"]\n",
+    );
+    let run = files.text(RUN_FILE).unwrap().replacen(
+        "\"Bakery\" \"Card payment\"\n",
+        "\"Bakery\" \"Card payment\" #books\n",
+        1,
+    );
+    files.insert(RUN_FILE, run);
+    let remote = Remote::with(&files);
+    let mut a = Client::new("aaaaaaaa", "Alice");
+    let mut b = Client::new("bbbbbbbb", "Bob");
+
+    // A asks for the candidates on the state it fetched and confirms them.
+    let state = remote.snapshot();
+    let config = Config::parse(state.text("lentil.toml").unwrap()).unwrap();
+    let rules = Rules::load(&state, &config).unwrap();
+    let candidates = reapply::removal_candidates(
+        &load(&state),
+        &config,
+        &rules,
+        None,
+        &ReapplyOptions::default(),
+    );
+    assert_eq!(
+        candidates
+            .iter()
+            .map(|c| (c.id.as_str(), c.tag.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(id(3), "books")]
+    );
+
+    // Meanwhile, B's app tags the utilities bill by hand.
+    let intents_b = [PendingIntent {
+        key: "b1".to_owned(),
+        intent: Intent::AddTag {
+            id: id(2).to_owned(),
+            tag: "books".to_owned(),
+        },
+    }];
+    let mut git_b = b.clone_from(&remote);
+    let mut result_b = None;
+    let result_a = {
+        let mut git_a = Interleaved::new(
+            a.clone_from(&remote),
+            vec![Box::new(|| result_b = Some(b.sync(&mut git_b, &intents_b)))],
+        );
+        reapply(&mut a, &mut git_a, &candidates).unwrap()
+    };
+    assert!(result_b.unwrap().unwrap().commit.is_some());
+    assert_eq!(result_a.attempts, 2);
+    assert_eq!(
+        result_a.result.removals,
+        vec![(candidates[0].clone(), Outcome::Applied)]
+    );
+
+    let history = remote.history();
+    assert_eq!(
+        history.last().unwrap().message,
+        message("editor", "add-tag 1, remove-tag 1", "aaaaaaaa")
+    );
+    let ledger = load(&remote.snapshot());
+    let tags = |n: usize| ledger.find(id(n)).unwrap().tags.clone();
+    assert_eq!(tags(3), Vec::<String>::new());
+    assert_eq!(tags(2), vec!["books".to_owned()]);
+    assert_eq!(tags(8), vec!["books".to_owned()]);
 }
 
 #[test]
@@ -1550,7 +1624,7 @@ fn rules_apply_stops_on_invalid_rules() {
     ));
     let mut a = Client::new("aaaaaaaa", "Alice");
     let mut git_a = a.clone_from(&remote);
-    let result = reapply(&mut a, &mut git_a);
+    let result = reapply(&mut a, &mut git_a, &[]);
     assert!(
         matches!(
             result,
@@ -1565,7 +1639,7 @@ fn rules_apply_stops_on_invalid_rules() {
     let remote = Remote::with(&with_rules("[[rule]]\ndesc = \"x\"\n"));
     let mut b = Client::new("bbbbbbbb", "Bob");
     let mut git_b = b.clone_from(&remote);
-    let result = reapply(&mut b, &mut git_b);
+    let result = reapply(&mut b, &mut git_b, &[]);
     assert!(
         matches!(result, Err(ReapplyError::Rules(RulesError::Syntax(_)))),
         "{result:?}"
@@ -1577,7 +1651,7 @@ fn rules_apply_stops_on_invalid_rules() {
     ));
     let mut c = Client::new("cccccccc", "Carol");
     let mut git_c = c.clone_from(&remote);
-    let result = reapply(&mut c, &mut git_c);
+    let result = reapply(&mut c, &mut git_c, &[]);
     assert!(
         matches!(
             result,

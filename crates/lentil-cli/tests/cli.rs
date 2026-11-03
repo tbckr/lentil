@@ -667,6 +667,92 @@ payee = "City Power"
 }
 
 #[test]
+fn rules_apply_adds_tags_and_respects_tags_toml() {
+    let env = Env::new();
+    let repo = env.repo.to_str().unwrap();
+    ok(&env.lentil(&["init", repo, "--remote", env.remote.to_str().unwrap()]));
+    let export = env.add_giro_source();
+    env.import_giro(&export);
+    env.append(
+        "rules.toml",
+        r#"
+[[rule]]
+match = { counterparty = "^City Utilities$" }
+add_tags = ["utilities"]
+
+[[rule]]
+match = { tags = ["utilities"] }
+add_tags = ["recurring"]
+
+[[rule]]
+match = { counterparty = "^Corner Grocery$" }
+add_tags = ["recurring"]
+"#,
+    );
+    std::fs::write(
+        env.repo.join("tags.toml"),
+        "tags = [\"recurring\", \"irregular\", \"utilities\"]\nexclusive = [[\"recurring\", \"irregular\"]]\n",
+    )
+    .unwrap();
+    // The grocery carries the rival of `recurring`, so no rule adds it.
+    let (run, content) = env.giro_run();
+    let irregular = GROCERY.replacen('\n', " #irregular\n", 1);
+    std::fs::write(&run, content.replace(GROCERY, &irregular)).unwrap();
+    let run = run.strip_prefix(&env.repo).unwrap().display().to_string();
+    let line = content
+        .lines()
+        .position(|l| l == UTILITIES.trim_end())
+        .unwrap()
+        + 1;
+    let apply = |extra: &[&str]| {
+        let mut args = vec!["-C", repo, "rules", "apply"];
+        args.extend(extra);
+        env.lentil(&args)
+    };
+
+    let out = ok(&apply(&["--dry-run"]));
+    assert_eq!(
+        out,
+        format!(
+            "The rules would change these transactions (tags: 2):\n  2026-10-07 City Utilities | Electricity 10/2026  ({run}:{line})\n    + #utilities\n    + #recurring\nDry run on the local files: nothing was saved.\n"
+        )
+    );
+
+    env.git(&env.repo, &["add", "tags.toml"]);
+    env.admin_push("admin: tag rules");
+    assert_eq!(
+        ok(&apply(&["--only", "payee"])),
+        "The rules change nothing.\n"
+    );
+
+    let out = ok(&apply(&[]));
+    assert!(
+        out.starts_with("The rules changed these transactions (tags: 2):\n"),
+        "{out}"
+    );
+    let log = env.last_commit();
+    assert!(log.starts_with("editor: add-tag 2\n"), "{log}");
+    let (_, content) = env.giro_run();
+    assert!(
+        content.contains(
+            "2026-10-07 ! \"City Utilities\" \"Electricity 10/2026\" #utilities #recurring\n"
+        ),
+        "{content}"
+    );
+    assert!(content.contains(&irregular), "{content}");
+    assert_eq!(ok(&apply(&[])), "The rules change nothing.\n");
+
+    // A broken tags.toml stops rules apply, but never the import.
+    std::fs::write(env.repo.join("tags.toml"), "tags = \"recurring\"\n").unwrap();
+    env.admin_push("admin: break tags.toml");
+    let out = apply(&[]);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("tags.toml is invalid: "), "{stderr}");
+    env.import_giro(&export);
+}
+
+#[test]
 fn rules_apply_skips_conflicting_changes_and_commits_the_rest() {
     let env = Env::new();
     let repo = env.repo.to_str().unwrap();

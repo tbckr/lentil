@@ -29,13 +29,21 @@ pub fn apply(lang: Lang, repo: Option<&Path>, options: ReapplyOptions, dry_run: 
     git.ensure_no_local_changes().map_err(git_err)?;
     let author = context::author(lang, &git)?;
     let identity = context::identity(Role::Editor)?;
-    let outcome = reapply::sync(&mut git, &mut ThreadSleeper, &identity, &author, &options)
-        .map_err(|e| match e {
-            ReapplyError::Sync(e) => context::sync_error(lang, e),
-            ReapplyError::Config(e) => context::config_error(lang, &e),
-            ReapplyError::Rules(e) => context::rules_error(lang, &e),
-        })?;
-    let skipped = report(lang, &outcome.result, false);
+    let outcome = reapply::sync(
+        &mut git,
+        &mut ThreadSleeper,
+        &identity,
+        &author,
+        &options,
+        &[],
+    )
+    .map_err(|e| match e {
+        ReapplyError::Sync(e) => context::sync_error(lang, e),
+        ReapplyError::Config(e) => context::config_error(lang, &e),
+        ReapplyError::Rules(e) => context::rules_error(lang, &e),
+        ReapplyError::Taxonomy(e) => context::taxonomy_error(lang, &e),
+    })?;
+    let skipped = report(lang, &outcome.result.changes, false);
     context::print_findings(lang, &outcome.warnings);
     Ok(exit_code(skipped))
 }
@@ -52,7 +60,8 @@ fn preview(lang: Lang, root: &Path, options: &ReapplyOptions) -> CliResult {
     }
     let config = context::config(lang, &before)?;
     let rules = context::rules(lang, &before, &config)?;
-    let applied = reapply::apply(&before, &config, &rules, options);
+    let taxonomy = context::taxonomy(lang, &before)?;
+    let applied = reapply::apply(&before, &config, &rules, taxonomy.as_ref(), options, &[]);
     let skipped = report(lang, &applied.changes, true);
     let mut blocked = false;
     if applied.snapshot != before {
@@ -110,6 +119,7 @@ fn report(lang: Lang, changes: &[(RuleChange, Outcome)], dry_run: bool) -> bool 
         let counts = [
             (Field::Payee, Msg::FieldPayee),
             (Field::Account, Msg::FieldAccount),
+            (Field::Tag, Msg::FieldTags),
         ]
         .into_iter()
         .filter_map(|(field, label)| {
@@ -165,6 +175,10 @@ fn lines(lang: Lang, changes: &[(&RuleChange, Option<&str>)]) -> Vec<String> {
         let (field, quoted) = match change.field {
             Field::Payee => (i18n::text(lang, Msg::FieldPayee), true),
             Field::Account => (i18n::text(lang, Msg::FieldAccount), false),
+            Field::Tag => {
+                lines.push(tag_line(lang, "+", &change.new, reason));
+                continue;
+            }
         };
         let shown = |value: Option<&str>| match value {
             Some(value) if quoted => format!("{value:?}"),
@@ -183,4 +197,16 @@ fn lines(lang: Lang, changes: &[(&RuleChange, Option<&str>)]) -> Vec<String> {
         });
     }
     lines
+}
+
+/// One added (`+`) or removed (`-`) tag, with the reason if it was skipped.
+fn tag_line(lang: Lang, sign: &str, tag: &str, reason: Option<&str>) -> String {
+    let mut args = vec![("sign", sign), ("tag", tag)];
+    match reason {
+        Some(reason) => {
+            args.push(("reason", reason));
+            i18n::msg(lang, Msg::RulesTagConflict, &args)
+        }
+        None => i18n::msg(lang, Msg::RulesTag, &args),
+    }
 }

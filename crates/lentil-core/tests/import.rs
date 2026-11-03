@@ -170,10 +170,10 @@ impl Repo {
         }
         let all = ReapplyOptions {
             reviewed: true,
-            fields: ReapplyFields::Both,
+            fields: ReapplyFields::All,
         };
         assert_eq!(
-            reapply::plan(&ledger, &self.config, &self.rules, &all),
+            reapply::plan(&ledger, &self.config, &self.rules, None, &all),
             Vec::new()
         );
     }
