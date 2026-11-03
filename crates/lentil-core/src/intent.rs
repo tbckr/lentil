@@ -15,6 +15,7 @@ use crate::config::Config;
 use crate::edit::{self, EditError};
 use crate::ledger::{self, Ledger, Txn};
 use crate::snapshot::Snapshot;
+use crate::tags::is_tag_name;
 
 /// One edit operation of spec section 10 (v0.1 subset).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,6 +68,22 @@ pub enum Intent {
         /// Complete content of the run file.
         content: String,
     },
+    /// Add a tag to an active transaction, written into its header. It
+    /// carries no old value: a tag already present is done (spec section 10).
+    AddTag {
+        /// `lentil_id` of the transaction.
+        id: String,
+        /// The tag, without `#`; must be a valid Beancount tag.
+        tag: String,
+    },
+    /// Remove a tag from an active transaction wherever it is written. It
+    /// carries no old value: a tag already absent is done (spec section 10).
+    RemoveTag {
+        /// `lentil_id` of the transaction.
+        id: String,
+        /// The tag, without `#`.
+        tag: String,
+    },
 }
 
 impl Intent {
@@ -80,6 +97,8 @@ impl Intent {
             Self::Dismiss { .. } => "dismiss",
             Self::OpenAccount { .. } => "open-account",
             Self::AddImportRun { .. } => "add-import-run",
+            Self::AddTag { .. } => "add-tag",
+            Self::RemoveTag { .. } => "remove-tag",
         }
     }
 
@@ -90,7 +109,9 @@ impl Intent {
             Self::Confirm { id }
             | Self::SetAccount { id, .. }
             | Self::SetPayee { id, .. }
-            | Self::Dismiss { id } => Some(id),
+            | Self::Dismiss { id }
+            | Self::AddTag { id, .. }
+            | Self::RemoveTag { id, .. } => Some(id),
             Self::OpenAccount { .. } | Self::AddImportRun { .. } => None,
         }
     }
@@ -152,6 +173,8 @@ pub enum ConflictCode {
     FileExists,
     /// The account name is invalid.
     InvalidAccount,
+    /// The tag of an `add-tag` is not a valid Beancount tag.
+    InvalidTag,
 }
 
 /// The result of replaying intents on a snapshot.
@@ -217,7 +240,7 @@ pub fn summary(intents: &[PendingIntent], outcomes: &[(String, Outcome)]) -> Str
 }
 
 /// Number of v0.1 operations.
-const OP_COUNT: usize = 6;
+const OP_COUNT: usize = 8;
 
 impl Intent {
     /// Position of the operation in the table of spec section 10.
@@ -229,6 +252,8 @@ impl Intent {
             Self::Dismiss { .. } => 3,
             Self::OpenAccount { .. } => 4,
             Self::AddImportRun { .. } => 5,
+            Self::AddTag { .. } => 6,
+            Self::RemoveTag { .. } => 7,
         }
     }
 }
@@ -279,6 +304,9 @@ struct TxnState {
     payee: Option<String>,
     /// Account of each posting, in file order.
     accounts: Vec<String>,
+    /// Tags without duplicates: the parsed ones in file order, then the
+    /// added ones in the order they were added.
+    tags: Vec<String>,
     dismissed: bool,
     /// Intents whose outcome depends on this state: applied, or found already
     /// applied because of an earlier intent.
@@ -291,6 +319,12 @@ impl TxnState {
             flag: txn.flag,
             payee: txn.payee.clone(),
             accounts: txn.postings.iter().map(|p| p.account.clone()).collect(),
+            tags: txn.tags.iter().fold(Vec::new(), |mut tags, tag| {
+                if !tags.contains(tag) {
+                    tags.push(tag.clone());
+                }
+                tags
+            }),
             dismissed: false,
             intents: Vec::new(),
         }
@@ -355,6 +389,8 @@ impl<'a> Replay<'a> {
             Intent::Dismiss { id } => self.dismiss(index, id),
             Intent::OpenAccount { account, date } => self.open_account(index, account, *date),
             Intent::AddImportRun { file, content, .. } => self.add_import_run(file, content),
+            Intent::AddTag { id, tag } => self.add_tag(index, id, tag),
+            Intent::RemoveTag { id, tag } => self.remove_tag(index, id, tag),
         }
     }
 
@@ -491,6 +527,65 @@ impl<'a> Replay<'a> {
         }
         let state = self.state_mut(i);
         state.payee = Some(new.to_owned());
+        state.intents.push(index);
+        Outcome::Applied
+    }
+
+    /// Whether transaction `i` carries `tag` at this point of the replay.
+    fn has_tag(&self, i: usize, tag: &str) -> bool {
+        match self.touched.get(&i) {
+            Some(state) => state.tags.iter().any(|t| t == tag),
+            None => self.ledger.transactions[i].tags.iter().any(|t| t == tag),
+        }
+    }
+
+    /// Whether the tags of `txn` can be edited byte-precisely: their
+    /// positions are known and lie inside the transaction.
+    fn tags_editable(&self, txn: &Txn) -> bool {
+        self.text(txn).is_some()
+            && txn.tag_spans.as_ref().is_some_and(|spans| {
+                within(&(spans.insert_at..spans.insert_at), &txn.span)
+                    && spans.tags.iter().all(|(_, span)| within(span, &txn.span))
+            })
+    }
+
+    /// `add-tag` (spec section 10): done if the tag is present, otherwise it
+    /// goes into the header.
+    fn add_tag(&mut self, index: usize, id: &str, tag: &str) -> Outcome {
+        if !is_tag_name(tag) {
+            return conflict(ConflictCode::InvalidTag);
+        }
+        let i = match self.active(id) {
+            Ok(i) => i,
+            Err(outcome) => return outcome,
+        };
+        if self.has_tag(i, tag) {
+            return self.already_applied(i, index);
+        }
+        if !self.tags_editable(&self.ledger.transactions[i]) {
+            return conflict(ConflictCode::NotEditable);
+        }
+        let state = self.state_mut(i);
+        state.tags.push(tag.to_owned());
+        state.intents.push(index);
+        Outcome::Applied
+    }
+
+    /// `remove-tag` (spec section 10): done if the tag is absent, otherwise
+    /// every occurrence is removed.
+    fn remove_tag(&mut self, index: usize, id: &str, tag: &str) -> Outcome {
+        let i = match self.active(id) {
+            Ok(i) => i,
+            Err(outcome) => return outcome,
+        };
+        if !self.has_tag(i, tag) {
+            return self.already_applied(i, index);
+        }
+        if !self.tags_editable(&self.ledger.transactions[i]) {
+            return conflict(ConflictCode::NotEditable);
+        }
+        let state = self.state_mut(i);
+        state.tags.retain(|t| t != tag);
         state.intents.push(index);
         Outcome::Applied
     }
@@ -699,13 +794,24 @@ enum Element<'s> {
         old: Option<&'s str>,
         new: &'s str,
     },
+    /// Tags added, in the order they were added, inserted at `offset`.
+    Tags {
+        offset: usize,
+        tags: Vec<&'s str>,
+    },
+    /// One written occurrence of a removed tag.
+    RemoveTag {
+        span: Range<usize>,
+        tag: &'s str,
+    },
 }
 
 impl Element<'_> {
     fn start(&self) -> usize {
         match self {
             Self::Flag { offset, .. } => *offset,
-            Self::Account { span, .. } => span.start,
+            Self::Account { span, .. } | Self::RemoveTag { span, .. } => span.start,
+            Self::Tags { offset, .. } => *offset,
             Self::Payee {
                 payee_span,
                 narration_span,
@@ -747,6 +853,28 @@ fn render(text: &str, txn: &Txn, state: &TxnState) -> Result<Option<String>, Edi
             });
         }
     }
+    let added: Vec<&str> = state
+        .tags
+        .iter()
+        .filter(|tag| !txn.tags.contains(tag))
+        .map(String::as_str)
+        .collect();
+    let removed = |tag: &String| !state.tags.contains(tag);
+    if !added.is_empty() || txn.tags.iter().any(removed) {
+        let spans = txn.tag_spans.as_ref().ok_or_else(mismatch)?;
+        if !added.is_empty() {
+            elements.push(Element::Tags {
+                offset: spans.insert_at,
+                tags: added,
+            });
+        }
+        for (tag, span) in spans.tags.iter().filter(|(tag, _)| removed(tag)) {
+            elements.push(Element::RemoveTag {
+                span: span.clone(),
+                tag,
+            });
+        }
+    }
     if elements.is_empty() && !state.dismissed {
         return Ok(None);
     }
@@ -779,6 +907,10 @@ fn render(text: &str, txn: &Txn, state: &TxnState) -> Result<Option<String>, Edi
                     old,
                     new,
                 )?
+            }
+            Element::Tags { tags, .. } => edit::insert_tags(&body, relative, &tags)?,
+            Element::RemoveTag { span, tag } => {
+                edit::remove_tag(&body, relative..relative + span.len(), tag)?
             }
         };
     }
@@ -1009,6 +1141,8 @@ include "imports/*/*/*.beancount"
             (dismiss(CAFE), "dismiss", Some(CAFE)),
             (open("Expenses:Fresh", "2026-01-01"), "open-account", None),
             (run_file("x", "y"), "add-import-run", None),
+            (add_tag(GROCERY, "a"), "add-tag", Some(GROCERY)),
+            (remove_tag(BAKERY, "food"), "remove-tag", Some(BAKERY)),
         ];
         for (intent, name, id) in cases {
             assert_eq!((intent.op_name(), intent.transaction_id()), (name, id));
@@ -1922,6 +2056,232 @@ include "imports/*/*/*.beancount"
         assert_eq!(summary(&[], &[]), "");
     }
 
+    fn add_tag(id: &str, tag: &str) -> Intent {
+        Intent::AddTag {
+            id: id.into(),
+            tag: tag.into(),
+        }
+    }
+
+    fn remove_tag(id: &str, tag: &str) -> Intent {
+        Intent::RemoveTag {
+            id: id.into(),
+            tag: tag.into(),
+        }
+    }
+
+    const GROCERY_HEADER: &str = "2026-10-18 ! \"Corner Grocery\" \"Card payment\"\n";
+
+    /// [`RUN`] with the grocery header line replaced by `header`, which may
+    /// add tag lines after it.
+    fn grocery_run(header: &str) -> String {
+        changed(RUN, GROCERY_HEADER, header)
+    }
+
+    fn with_run(run: &str) -> Snapshot {
+        Snapshot::from_files([
+            ("main.beancount", MAIN),
+            ("accounts.beancount", ACCOUNTS),
+            (RUN_FILE, run),
+        ])
+    }
+
+    /// Replays `intents` on `run`, checks the outcomes and that the result
+    /// reloads, and returns the new run file.
+    fn tag_replay(run: &str, intents: &[Intent], expected: &[Outcome]) -> String {
+        let (after, outcomes) = replay_on(&with_run(run), intents);
+        assert_eq!(outcomes, expected);
+        reload(&after);
+        after.text(RUN_FILE).unwrap().to_owned()
+    }
+
+    #[test]
+    fn add_tag_inserts_into_the_header_and_keeps_the_flag() {
+        let run = grocery_run("2026-10-18 ! \"Corner Grocery\" \"Card payment\" ; note\n");
+        let intents = [add_tag(GROCERY, "recurring")];
+        let result = replay(&with_run(&run), &config(), &pending(&intents));
+        assert_eq!(result.outcomes, vec![("k0".to_owned(), Applied)]);
+        assert_eq!(
+            result.snapshot.text(RUN_FILE).unwrap(),
+            changed(
+                &run,
+                "\"Card payment\" ; note",
+                "\"Card payment\" #recurring ; note"
+            )
+        );
+        let grocery = reload(&result.snapshot).find(GROCERY).unwrap().clone();
+        assert_eq!(
+            (grocery.flag, grocery.tags),
+            ('!', vec!["recurring".into()])
+        );
+        assert_eq!(summary(&pending(&intents), &result.outcomes), "add-tag 1");
+    }
+
+    #[test]
+    fn tag_intents_in_order() {
+        let run = grocery_run("2026-10-18 ! \"Corner Grocery\" \"Card payment\" #c\n");
+        let intents = [
+            add_tag(GROCERY, "a"),
+            add_tag(GROCERY, "b"),
+            remove_tag(GROCERY, "c"),
+        ];
+        let result = replay(&with_run(&run), &config(), &pending(&intents));
+        assert_eq!(
+            result.snapshot.text(RUN_FILE).unwrap(),
+            changed(&run, "\"Card payment\" #c", "\"Card payment\" #a #b")
+        );
+        assert_eq!(
+            summary(&pending(&intents), &result.outcomes),
+            "add-tag 2, remove-tag 1"
+        );
+    }
+
+    #[test]
+    fn add_tag_is_done_when_present_anywhere() {
+        for header in [
+            "2026-10-18 ! \"Corner Grocery\" \"Card payment\" #recurring\n",
+            "2026-10-18 ! \"Corner Grocery\" \"Card payment\"\n  #recurring\n",
+        ] {
+            let run = grocery_run(header);
+            let after = tag_replay(&run, &[add_tag(GROCERY, "recurring")], &[AlreadyApplied]);
+            assert_eq!(after, run, "{header}");
+        }
+    }
+
+    #[test]
+    fn remove_tag_deletes_it_where_it_stands() {
+        let run =
+            grocery_run("2026-10-18 ! \"Corner Grocery\" \"Card payment\" #a #b\n  #c\n  #d ^l\n");
+        assert_eq!(
+            tag_replay(&run, &[remove_tag(GROCERY, "a")], &[Applied]),
+            changed(&run, "\"Card payment\" #a #b", "\"Card payment\" #b")
+        );
+        assert_eq!(
+            tag_replay(&run, &[remove_tag(GROCERY, "c")], &[Applied]),
+            changed(&run, "  #c\n", "")
+        );
+        assert_eq!(
+            tag_replay(&run, &[remove_tag(GROCERY, "d")], &[Applied]),
+            changed(&run, "  #d ^l\n", "  ^l\n")
+        );
+        assert_eq!(
+            tag_replay(RUN, &[remove_tag(BAKERY, "food")], &[Applied]),
+            changed(RUN, "\"Bread\" #food", "\"Bread\"")
+        );
+        assert_eq!(
+            tag_replay(&run, &[remove_tag(GROCERY, "x")], &[AlreadyApplied]),
+            run
+        );
+    }
+
+    #[test]
+    fn remove_tag_removes_every_occurrence() {
+        let run = grocery_run("2026-10-18 ! \"Corner Grocery\" \"Card payment\" #a #a\n  #a ^l\n");
+        let after = tag_replay(&run, &[remove_tag(GROCERY, "a")], &[Applied]);
+        assert_eq!(
+            after,
+            changed(
+                &run,
+                "\"Card payment\" #a #a\n  #a ^l\n",
+                "\"Card payment\"\n  ^l\n"
+            )
+        );
+        assert!(!after.contains("#a"));
+    }
+
+    #[test]
+    fn tag_intents_conflict_on_missing_or_dismissed_transactions() {
+        for intent in [add_tag, remove_tag] {
+            let (after, outcomes) = replay_on(
+                &snapshot(),
+                &[
+                    intent(UTILITIES, "food"),
+                    intent("giro-000000000000", "food"),
+                ],
+            );
+            assert_eq!(
+                outcomes,
+                vec![
+                    conflict(ConflictCode::TransactionDismissed),
+                    conflict(ConflictCode::TransactionNotFound)
+                ]
+            );
+            assert_eq!(after, snapshot());
+        }
+    }
+
+    #[test]
+    fn add_tag_rejects_an_invalid_tag() {
+        for id in [GROCERY, "giro-000000000000"] {
+            let (after, outcomes) = replay_on(&snapshot(), &[add_tag(id, "a b")]);
+            assert_eq!(outcomes, vec![conflict(ConflictCode::InvalidTag)]);
+            assert_eq!(after, snapshot());
+        }
+    }
+
+    #[test]
+    fn tags_that_cannot_be_located_are_not_editable() {
+        let run = changed(
+            RUN,
+            GROCERY_BLOCK,
+            &format!("pushtag #trip\n{GROCERY_BLOCK}\npoptag #trip"),
+        );
+        let (after, outcomes) = replay_on(
+            &with_run(&run),
+            &[add_tag(GROCERY, "x"), remove_tag(GROCERY, "trip")],
+        );
+        assert_eq!(
+            outcomes,
+            vec![
+                conflict(ConflictCode::NotEditable),
+                conflict(ConflictCode::NotEditable)
+            ]
+        );
+        assert_eq!(after, with_run(&run));
+
+        // A tag edit that cannot be made never takes another edit of the
+        // same transaction down with it.
+        let (after, outcomes) =
+            replay_on(&with_run(&run), &[add_tag(GROCERY, "x"), confirm(GROCERY)]);
+        assert_eq!(outcomes, vec![conflict(ConflictCode::NotEditable), Applied]);
+        assert_eq!(reload(&after).find(GROCERY).unwrap().flag, '*');
+    }
+
+    #[test]
+    fn tags_whose_positions_lie_outside_the_transaction_are_not_editable() {
+        let snapshot = snapshot();
+        let mut ledger = reload(&snapshot);
+        let grocery = ledger
+            .transactions
+            .iter_mut()
+            .find(|t| t.id.as_deref() == Some(GROCERY))
+            .unwrap();
+        grocery.tag_spans.as_mut().unwrap().insert_at = grocery.span.end + 5;
+        let (after, outcomes) = replay_with(
+            &snapshot,
+            &ledger,
+            &[add_tag(GROCERY, "x"), confirm(GROCERY)],
+        );
+        assert_eq!(outcomes, vec![conflict(ConflictCode::NotEditable), Applied]);
+        assert_eq!(
+            reload(&after).find(GROCERY).unwrap().tags,
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn tag_intents_serialize_with_their_op_names() {
+        for (intent, op) in [
+            (add_tag(GROCERY, "recurring"), "\"op\":\"add-tag\""),
+            (remove_tag(GROCERY, "recurring"), "\"op\":\"remove-tag\""),
+        ] {
+            let json = serde_json::to_string(&intent).unwrap();
+            assert!(json.contains(op), "{json}");
+            assert!(json.contains("\"tag\":\"recurring\""), "{json}");
+            assert_eq!(serde_json::from_str::<Intent>(&json).unwrap(), intent);
+        }
+    }
+
     #[test]
     fn summary_matches_a_replay() {
         let intents = pending(&[
@@ -1944,6 +2304,7 @@ include "imports/*/*/*.beancount"
 #[cfg(test)]
 mod props {
     use std::cmp::Reverse;
+    use std::collections::BTreeSet;
 
     use proptest::prelude::*;
 
@@ -2499,6 +2860,223 @@ mapping = "sources/giro.toml"
             let second = replay(&first.snapshot, &config, &plan.intents);
             for (key, outcome) in &second.outcomes {
                 prop_assert!(*outcome != Outcome::Applied, "{} applied twice", key);
+            }
+            prop_assert_eq!(&second.snapshot, &first.snapshot);
+        }
+    }
+
+    const TAGS: [&str; 4] = ["a", "b", "c", "trip-x"];
+    const TAG_ID: &str = "giro-000000000001";
+
+    /// Tags written somewhere in the transaction: a subset of [`TAGS`] and
+    /// whether a link follows them.
+    #[derive(Clone, Debug)]
+    struct GenTagLine {
+        tags: Vec<bool>,
+        link: bool,
+    }
+
+    #[derive(Clone, Debug)]
+    struct GenTagged {
+        crlf: bool,
+        /// Separate tags and links by a tab instead of a space, and indent
+        /// tag lines by one.
+        tabs: bool,
+        header: GenTagLine,
+        /// A tag line right after the header.
+        line: Option<GenTagLine>,
+        /// A tag line after the postings.
+        late: Option<GenTagLine>,
+        /// 0: no comment on the header, 1: ` ; note`, 2: `;note` right after
+        /// the last token.
+        comment: u8,
+        /// Whether the file goes on after the transaction; otherwise it ends
+        /// with the transaction's last line, without a line break.
+        tail: bool,
+        /// Add (`true`) or remove, and an index into [`TAGS`].
+        ops: Vec<(bool, usize)>,
+        /// Where a `set-payee` goes among the ops, if anywhere.
+        payee: Option<usize>,
+    }
+
+    fn gen_tag_line() -> impl Strategy<Value = GenTagLine> {
+        (prop::collection::vec(any::<bool>(), 4), any::<bool>())
+            .prop_map(|(tags, link)| GenTagLine { tags, link })
+    }
+
+    fn gen_tagged() -> impl Strategy<Value = GenTagged> {
+        (
+            (any::<bool>(), any::<bool>(), gen_tag_line()),
+            prop::option::of(gen_tag_line()),
+            prop::option::of(gen_tag_line()),
+            (0..3u8, any::<bool>()),
+            prop::collection::vec((any::<bool>(), 0..TAGS.len()), 0..8),
+            prop::option::of(0..9usize),
+        )
+            .prop_map(
+                |((crlf, tabs, header), line, late, (comment, tail), ops, payee)| GenTagged {
+                    crlf,
+                    tabs,
+                    header,
+                    line,
+                    late,
+                    comment,
+                    tail,
+                    payee: payee.map(|p| p.min(ops.len())),
+                    ops,
+                },
+            )
+    }
+
+    /// The tags and the link of `line`, each after `sep`.
+    fn tag_tokens(line: &GenTagLine, sep: &str, link: &str) -> String {
+        let mut text: String = TAGS
+            .iter()
+            .zip(&line.tags)
+            .filter(|(_, on)| **on)
+            .map(|(tag, _)| format!("{sep}#{tag}"))
+            .collect();
+        if line.link {
+            text.push_str(&format!("{sep}^{link}"));
+        }
+        text
+    }
+
+    /// A tag line with the tokens of `line`, or `None` if it has none.
+    fn tag_line(line: Option<&GenTagLine>, indent: &str, sep: &str, link: &str) -> Option<String> {
+        let tokens = tag_tokens(line?, sep, link);
+        let tokens = tokens.strip_prefix(sep)?;
+        Some(format!("{indent}{tokens}"))
+    }
+
+    /// The run file of `g`, with one transaction after a head and, with
+    /// [`GenTagged::tail`], before a tail.
+    fn tagged_run(g: &GenTagged) -> String {
+        let eol = if g.crlf { "\r\n" } else { "\n" };
+        let (sep, indent) = if g.tabs { ("\t", "\t") } else { (" ", "  ") };
+        let mut header = format!(
+            "2026-10-18 ! \"Shop\" \"x\"{}",
+            tag_tokens(&g.header, sep, "l1")
+        );
+        header.push_str(match g.comment {
+            1 => " ; note",
+            2 => ";note",
+            _ => "",
+        });
+        let mut lines = vec!["; head".to_owned(), String::new(), header];
+        lines.extend(tag_line(g.line.as_ref(), indent, sep, "l2"));
+        lines.extend([
+            format!("  lentil_id: \"{TAG_ID}\""),
+            "  Assets:Bank:Giro  -1.00 EUR".to_owned(),
+            "  Expenses:Uncategorized".to_owned(),
+        ]);
+        lines.extend(tag_line(g.late.as_ref(), indent, sep, "l3"));
+        if g.tail {
+            lines.extend([String::new(), "; tail".to_owned(), String::new()]);
+        }
+        lines.join(eol)
+    }
+
+    fn is_tag_line(line: &str) -> bool {
+        line.trim_start().starts_with(['#', '^'])
+    }
+
+    /// The lines of a transaction's text other than its header and its tag
+    /// and link lines, byte for byte apart from the line break, which a
+    /// removed last line takes from the line before it.
+    fn other_lines(block: &str) -> Vec<&str> {
+        block.lines().skip(1).filter(|l| !is_tag_line(l)).collect()
+    }
+
+    /// Everything of a transaction's text but its tags: the header up to the
+    /// narration byte for byte, then the links and other tokens of the header
+    /// and of the tag lines in order, and the header's comment byte for byte.
+    fn without_tags(block: &str) -> (String, Vec<String>, Option<String>) {
+        let header = block.lines().next().unwrap();
+        let at = header.find("\"x\"").unwrap() + 3;
+        let (prefix, rest) = header.split_at(at);
+        let (code, comment) = match rest.find(';') {
+            Some(i) => (&rest[..i], Some(rest[i..].to_owned())),
+            None => (rest, None),
+        };
+        let tokens = std::iter::once(code)
+            .chain(block.lines().skip(1).filter(|l| is_tag_line(l)))
+            .flat_map(str::split_whitespace)
+            .filter(|t| !t.starts_with('#'))
+            .map(str::to_owned)
+            .collect();
+        (prefix.to_owned(), tokens, comment)
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+
+        /// Tag intents, mixed with a `set-payee`, reach the intended tags in
+        /// every position, separator, comment and line ending, change nothing
+        /// but the tags and the payee, and are done on a second replay.
+        #[test]
+        fn tag_replay_reaches_the_intended_tags_and_is_idempotent(g in gen_tagged()) {
+            let config = Config::parse(CONFIG).unwrap();
+            let run = tagged_run(&g);
+            let file = "imports/giro/2026/20261020T071502Z.beancount";
+            let snapshot = Snapshot::from_files([
+                ("main.beancount", MAIN),
+                ("accounts.beancount", "2020-01-01 open Assets:Bank:Giro EUR\n2020-01-01 open Expenses:Uncategorized\n"),
+                (file, run.as_str()),
+            ]);
+            let original = ledger::load(&snapshot, "main.beancount");
+            prop_assert!(original.errors.is_empty(), "{:?}\n{}", original.errors, run);
+            let before = original.find(TAG_ID).unwrap().clone();
+
+            let mut model: BTreeSet<&str> = before.tags.iter().map(String::as_str).collect();
+            let mut expected = Vec::new();
+            let mut intents: Vec<Intent> = Vec::new();
+            for (k, &(add, t)) in g.ops.iter().enumerate() {
+                if g.payee == Some(k) {
+                    intents.push(Intent::SetPayee { id: TAG_ID.into(), old: Some("Shop".into()), new: "Market".into() });
+                    expected.push(Outcome::Applied);
+                }
+                let tag = TAGS[t];
+                let changed = if add { model.insert(tag) } else { model.remove(tag) };
+                expected.push(if changed { Outcome::Applied } else { Outcome::AlreadyApplied });
+                let (id, tag) = (TAG_ID.to_owned(), tag.to_owned());
+                intents.push(if add { Intent::AddTag { id, tag } } else { Intent::RemoveTag { id, tag } });
+            }
+            if g.payee == Some(g.ops.len()) {
+                intents.push(Intent::SetPayee { id: TAG_ID.into(), old: Some("Shop".into()), new: "Market".into() });
+                expected.push(Outcome::Applied);
+            }
+            let intents: Vec<PendingIntent> = intents.into_iter().enumerate()
+                .map(|(k, intent)| PendingIntent { key: format!("k{k}"), intent })
+                .collect();
+
+            let first = replay(&snapshot, &config, &intents);
+            let outcomes: Vec<Outcome> = first.outcomes.iter().map(|(_, o)| o.clone()).collect();
+            prop_assert_eq!(outcomes, expected);
+            let text = first.snapshot.text(file).unwrap();
+            let reloaded = ledger::load(&first.snapshot, "main.beancount");
+            prop_assert!(reloaded.errors.is_empty(), "{:?}\n{}", reloaded.errors, text);
+            let after = reloaded.find(TAG_ID).unwrap();
+            let tags: BTreeSet<&str> = after.tags.iter().map(String::as_str).collect();
+            prop_assert_eq!(tags, model, "{}", text);
+            prop_assert_eq!(after.flag, '!');
+            let payee = if g.payee.is_some() { "Market" } else { "Shop" };
+            prop_assert_eq!(after.payee.as_deref(), Some(payee));
+            prop_assert_eq!(&text[..after.span.start], &run[..before.span.start]);
+            prop_assert_eq!(&text[after.span.end..], &run[before.span.end..]);
+            let (old, new) = (&run[before.span.clone()], &text[after.span.clone()]);
+            prop_assert_eq!(other_lines(new), other_lines(old));
+            let breaks = if g.crlf { text.matches("\r\n").count() } else { 0 };
+            prop_assert_eq!(text.matches('\r').count(), breaks);
+            let (prefix, tokens, comment) = without_tags(old);
+            prop_assert_eq!(without_tags(new), (prefix.replacen("Shop", payee, 1), tokens, comment), "{}", text);
+
+            let second = replay(&first.snapshot, &config, &intents);
+            let once = g.ops.iter().map(|(_, t)| t).collect::<BTreeSet<_>>().len() == g.ops.len();
+            if once {
+                for (key, outcome) in &second.outcomes {
+                    prop_assert_eq!(outcome, &Outcome::AlreadyApplied, "{}", key);
+                }
             }
             prop_assert_eq!(&second.snapshot, &first.snapshot);
         }

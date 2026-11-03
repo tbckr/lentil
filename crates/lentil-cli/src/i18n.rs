@@ -668,6 +668,8 @@ pub fn conflict(lang: Lang, code: ConflictCode) -> &'static str {
         (FileExists, De) => "die Datei existiert bereits",
         (InvalidAccount, En) => "the account name is invalid",
         (InvalidAccount, De) => "der Kontoname ist ungültig",
+        (InvalidTag, En) => "the tag is not a valid tag",
+        (InvalidTag, De) => "der Tag ist kein gültiger Tag",
     }
 }
 

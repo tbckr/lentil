@@ -261,6 +261,7 @@ pub fn conflict_code_name(code: ConflictCode) -> &'static str {
         ConflictCode::NotEditable => "NotEditable",
         ConflictCode::FileExists => "FileExists",
         ConflictCode::InvalidAccount => "InvalidAccount",
+        ConflictCode::InvalidTag => "InvalidTag",
     }
 }
 
@@ -450,6 +451,7 @@ mod tests {
             ConflictCode::NotEditable,
             ConflictCode::FileExists,
             ConflictCode::InvalidAccount,
+            ConflictCode::InvalidTag,
         ] {
             assert_eq!(conflict_code_name(code), format!("{code:?}"));
         }
