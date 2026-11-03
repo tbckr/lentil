@@ -17,6 +17,7 @@ pub mod reapply;
 pub mod snapshot;
 pub mod status;
 pub mod sync;
+pub mod tags;
 pub mod validate;
 
 /// Name and version of this core, for `Lentil-Client` trailers of embedding clients.
