@@ -459,13 +459,28 @@ pub fn rules_error(lang: Lang, error: &RulesError) -> String {
             vec![("pattern", format!("{pattern:?}"))],
         ),
         NoCondition(rule) => (
-            "rule {rule} has no regular expression in match",
-            "Regel {rule} hat keinen regulären Ausdruck in match",
+            "rule {rule} has neither a regular expression nor tags in match",
+            "Regel {rule} hat in match weder einen regulären Ausdruck noch Tags",
             vec![("rule", rule.to_string())],
         ),
         NoOutput(rule) => (
-            "rule {rule} sets neither payee nor account",
-            "Regel {rule} setzt weder payee noch account",
+            "rule {rule} sets no payee, account or add_tags",
+            "Regel {rule} setzt weder payee noch account noch add_tags",
+            vec![("rule", rule.to_string())],
+        ),
+        EmptyTags(rule) => (
+            "rule {rule} has an empty list of tags",
+            "Regel {rule} hat eine leere Liste von Tags",
+            vec![("rule", rule.to_string())],
+        ),
+        InvalidTag { rule, tag } => (
+            "rule {rule} has the tag {tag}, which is not a valid tag",
+            "Regel {rule} hat den Tag {tag}, der kein gültiger Tag ist",
+            vec![("rule", rule.to_string()), ("tag", format!("{tag:?}"))],
+        ),
+        TagMatchSetsField(rule) => (
+            "rule {rule} matches tags, so it may only add tags",
+            "Regel {rule} prüft Tags und darf daher nur Tags hinzufügen",
             vec![("rule", rule.to_string())],
         ),
         EmptyPayee(rule) => (
@@ -745,7 +760,31 @@ mod tests {
                 Msg::RulesInvalid,
                 &[("detail", &rules_error(Lang::De, &RulesError::NoOutput(2)))]
             ),
-            "rules.toml ist ungültig: Regel 2 setzt weder payee noch account"
+            "rules.toml ist ungültig: Regel 2 setzt weder payee noch account noch add_tags"
+        );
+        let invalid = RulesError::InvalidTag {
+            rule: 2,
+            tag: "#x".into(),
+        };
+        assert_eq!(
+            rules_error(Lang::En, &invalid),
+            "rule 2 has the tag \"#x\", which is not a valid tag"
+        );
+        assert_eq!(
+            rules_error(Lang::De, &invalid),
+            "Regel 2 hat den Tag \"#x\", der kein gültiger Tag ist"
+        );
+        assert_eq!(
+            rules_error(Lang::En, &RulesError::EmptyTags(3)),
+            "rule 3 has an empty list of tags"
+        );
+        assert_eq!(
+            rules_error(Lang::En, &RulesError::TagMatchSetsField(2)),
+            "rule 2 matches tags, so it may only add tags"
+        );
+        assert_eq!(
+            rules_error(Lang::De, &RulesError::TagMatchSetsField(2)),
+            "Regel 2 prüft Tags und darf daher nur Tags hinzufügen"
         );
         assert_eq!(
             rules_error(Lang::En, &RulesError::Regex("(?<=x)".into())),

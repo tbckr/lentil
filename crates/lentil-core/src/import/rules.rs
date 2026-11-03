@@ -1,4 +1,5 @@
-//! Suggestion rules from `rules.toml` and learned suggestions (spec section 16).
+//! Suggestion rules from `rules.toml`, which set the payee and the account and
+//! add tags, and learned suggestions (spec section 16).
 
 use std::collections::BTreeMap;
 
@@ -11,6 +12,7 @@ use crate::config::Config;
 use crate::id;
 use crate::ledger::{Ledger, Txn};
 use crate::snapshot::Snapshot;
+use crate::tags::is_tag_name;
 
 /// Path of the rules file, relative to the repository root.
 pub const RULES_FILE: &str = "rules.toml";
@@ -22,15 +24,19 @@ pub struct Rules {
 }
 
 /// One `[[rule]]`: every condition of its `match` must match, and it sets
-/// the payee, the account or both.
+/// the payee, the account, adds tags or several of them.
 #[derive(Clone, Debug)]
 struct Rule {
     source: Option<String>,
     counterparty: Option<Regex>,
     purpose: Option<Regex>,
     booking_type: Option<Regex>,
+    /// `match.tags`: tags the transaction must all carry; empty if absent.
+    tags: Vec<String>,
     payee: Option<String>,
     account: Option<String>,
+    /// `add_tags`; empty if absent.
+    add_tags: Vec<String>,
 }
 
 impl Rule {
@@ -109,14 +115,31 @@ pub enum RulesError {
     /// A regular expression does not compile.
     #[error("invalid regular expression {0:?}")]
     Regex(String),
-    /// A rule's `match` has no regular expression (`counterparty`, `purpose`
-    /// or `type`). Carries the rule's 1-based position in the file.
-    #[error("rule {0} has no regular expression in match")]
+    /// A rule's `match` has neither a regular expression (`counterparty`,
+    /// `purpose` or `type`) nor `tags`. Carries the rule's 1-based position in
+    /// the file.
+    #[error("rule {0} has neither a regular expression nor tags in match")]
     NoCondition(usize),
-    /// A rule sets neither `payee` nor `account`. Carries the rule's 1-based
-    /// position in the file.
-    #[error("rule {0} sets neither payee nor account")]
+    /// A rule sets no `payee`, `account` or `add_tags`. Carries the rule's
+    /// 1-based position in the file.
+    #[error("rule {0} sets no payee, account or tags")]
     NoOutput(usize),
+    /// A rule's `match.tags` or `add_tags` is an empty list. Carries the
+    /// rule's 1-based position in the file.
+    #[error("rule {0} has an empty list of tags")]
+    EmptyTags(usize),
+    /// A tag in `match.tags` or `add_tags` is not a valid Beancount tag.
+    #[error("rule {rule} has the invalid tag {tag:?}")]
+    InvalidTag {
+        /// The rule's 1-based position in the file.
+        rule: usize,
+        /// The tag as written.
+        tag: String,
+    },
+    /// A rule with a `tags` condition sets the payee or the account (spec
+    /// section 16). Carries the rule's 1-based position in the file.
+    #[error("rule {0} matches tags, so it may only add tags")]
+    TagMatchSetsField(usize),
     /// A rule's `payee` is empty after normalization. Carries the rule's
     /// 1-based position in the file.
     #[error("rule {0} has an empty payee")]
@@ -153,6 +176,7 @@ struct RawRule {
     conditions: RawMatch,
     payee: Option<String>,
     account: Option<String>,
+    add_tags: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -163,6 +187,7 @@ struct RawMatch {
     purpose: Option<String>,
     #[serde(rename = "type")]
     booking_type: Option<String>,
+    tags: Option<Vec<String>>,
 }
 
 fn compile(pattern: Option<String>) -> Result<Option<Regex>, RulesError> {
@@ -208,12 +233,37 @@ impl Rules {
                     counterparty,
                     purpose,
                     booking_type,
+                    tags,
                 } = r.conditions;
-                if counterparty.is_none() && purpose.is_none() && booking_type.is_none() {
+                if counterparty.is_none()
+                    && purpose.is_none()
+                    && booking_type.is_none()
+                    && tags.is_none()
+                {
                     return Err(RulesError::NoCondition(position));
                 }
-                if r.payee.is_none() && r.account.is_none() {
+                if r.payee.is_none() && r.account.is_none() && r.add_tags.is_none() {
                     return Err(RulesError::NoOutput(position));
+                }
+                if [&tags, &r.add_tags]
+                    .into_iter()
+                    .any(|list| list.as_ref().is_some_and(Vec::is_empty))
+                {
+                    return Err(RulesError::EmptyTags(position));
+                }
+                if let Some(bad) = tags
+                    .iter()
+                    .chain(&r.add_tags)
+                    .flatten()
+                    .find(|t| !is_tag_name(t))
+                {
+                    return Err(RulesError::InvalidTag {
+                        rule: position,
+                        tag: bad.clone(),
+                    });
+                }
+                if tags.is_some() && (r.payee.is_some() || r.account.is_some()) {
+                    return Err(RulesError::TagMatchSetsField(position));
                 }
                 let payee = r.payee.map(|p| id::normalize_text(&p));
                 if payee.as_deref() == Some("") {
@@ -227,8 +277,10 @@ impl Rules {
                     counterparty: compile(counterparty)?,
                     purpose: compile(purpose)?,
                     booking_type: compile(booking_type)?,
+                    tags: tags.unwrap_or_default(),
                     payee,
                     account: r.account,
+                    add_tags: r.add_tags.unwrap_or_default(),
                 })
             })
             .collect::<Result<_, _>>()?;
@@ -292,6 +344,34 @@ impl Rules {
             .filter_map(|(i, r)| Some((i + 1, r.account.as_deref()?)))
     }
 
+    /// Whether some rule lists `tag` in its `add_tags`.
+    #[must_use]
+    pub fn adds(&self, tag: &str) -> bool {
+        self.rules
+            .iter()
+            .any(|r| r.add_tags.iter().any(|t| t == tag))
+    }
+
+    /// The 1-based position of each rule and each distinct tag it names, in
+    /// file order: those of `match.tags` first, then those of `add_tags`.
+    pub fn tag_names(&self) -> impl Iterator<Item = (usize, &str)> {
+        self.rules.iter().enumerate().flat_map(|(i, r)| {
+            let mut seen: Vec<&str> = Vec::new();
+            r.tags
+                .iter()
+                .chain(&r.add_tags)
+                .map(String::as_str)
+                .filter(move |t| {
+                    let new = !seen.contains(t);
+                    if new {
+                        seen.push(t);
+                    }
+                    new
+                })
+                .map(move |t| (i + 1, t))
+        })
+    }
+
     /// Number of rules.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -317,6 +397,50 @@ impl Rules {
         RuleMatch {
             payee: matching.clone().find_map(|r| r.payee.as_deref()),
             account: matching.find_map(|r| r.account.as_deref()),
+        }
+    }
+
+    /// The tags the rules add to a transaction of `source` with these
+    /// original fields that carries the tags `start`, in the order the
+    /// evaluation adds them (spec section 16).
+    ///
+    /// The tags of all matching rules are united, evaluated to a fixed point
+    /// in rounds: each round matches every rule against the tags at its
+    /// start and adds their tags that are not carried yet, rules in file
+    /// order and each rule's tags in `add_tags` order. A tag of `start` is
+    /// never returned, and neither is a tag for which `held_back` is true.
+    #[must_use]
+    pub fn tags<'r>(
+        &'r self,
+        source: &str,
+        original: &Original<'_>,
+        start: &[&str],
+        held_back: impl Fn(&str) -> bool,
+    ) -> Vec<&'r str> {
+        let matching: Vec<&Rule> = self
+            .rules
+            .iter()
+            .filter(|r| !r.add_tags.is_empty() && r.matches(source, original))
+            .collect();
+        let mut carried: Vec<&str> = start.to_vec();
+        let mut added: Vec<&'r str> = Vec::new();
+        loop {
+            let mut round: Vec<&'r str> = Vec::new();
+            for rule in matching
+                .iter()
+                .filter(|r| r.tags.iter().all(|t| carried.contains(&t.as_str())))
+            {
+                for tag in rule.add_tags.iter().map(String::as_str) {
+                    if !carried.contains(&tag) && !round.contains(&tag) && !held_back(tag) {
+                        round.push(tag);
+                    }
+                }
+            }
+            if round.is_empty() {
+                return added;
+            }
+            carried.extend(&round);
+            added.extend(round);
         }
     }
 }
@@ -451,6 +575,192 @@ account = "Expenses:Food:Other"
 
     fn found<'r>(payee: Option<&'r str>, account: Option<&'r str>) -> RuleMatch<'r> {
         RuleMatch { payee, account }
+    }
+
+    const TAG_RULES: &str = r#"
+[[rule]]
+match = { counterparty = "(?i)^streamflix" }
+account = "Expenses:Subscriptions"
+add_tags = ["recurring"]
+
+[[rule]]
+match = { counterparty = "(?i)streamflix" }
+add_tags = ["entertainment", "recurring"]
+"#;
+
+    fn none(_: &str) -> bool {
+        false
+    }
+
+    #[test]
+    fn tags_of_all_matching_rules_are_united() {
+        let rules = Rules::parse(TAG_RULES).unwrap();
+        let streamflix = original("STREAMFLIX 0815", "", "");
+        assert_eq!(
+            rules.tags("giro", &streamflix, &[], none),
+            vec!["recurring", "entertainment"]
+        );
+        assert_eq!(
+            rules.suggest("giro", &streamflix).account,
+            Some("Expenses:Subscriptions")
+        );
+        assert_eq!(
+            rules.tags("giro", &streamflix, &["recurring"], none),
+            vec!["entertainment"]
+        );
+        assert_eq!(
+            Rules::parse(RULES).unwrap().tags(
+                "giro",
+                &original("CORNER GROCERY", "", ""),
+                &[],
+                none
+            ),
+            Vec::<&str>::new()
+        );
+    }
+
+    #[test]
+    fn tag_rules_chain_to_a_fixed_point_whatever_their_order() {
+        let chain = "[[rule]]\nmatch = { tags = [\"amortize-year\"] }\nadd_tags = [\"recurring\"]\n\n[[rule]]\nmatch = { counterparty = \"(?i)^webhost annual\" }\nadd_tags = [\"amortize-year\"]\n";
+        let webhost = original("WEBHOST ANNUAL", "", "");
+        assert_eq!(
+            Rules::parse(chain)
+                .unwrap()
+                .tags("giro", &webhost, &[], none),
+            vec!["amortize-year", "recurring"]
+        );
+        let three = "[[rule]]\nmatch = { tags = [\"b\"] }\nadd_tags = [\"c\"]\n\n[[rule]]\nmatch = { tags = [\"a\"] }\nadd_tags = [\"b\"]\n\n[[rule]]\nmatch = { purpose = \"x\" }\nadd_tags = [\"a\"]\n";
+        assert_eq!(
+            Rules::parse(three)
+                .unwrap()
+                .tags("giro", &original("", "x", ""), &[], none),
+            vec!["a", "b", "c"]
+        );
+        assert_eq!(
+            Rules::parse(chain).unwrap().tags(
+                "giro",
+                &original("OTHER", "", ""),
+                &["amortize-year"],
+                none
+            ),
+            vec!["recurring"]
+        );
+    }
+
+    #[test]
+    fn a_round_adds_rules_in_file_order_and_tags_in_add_tags_order() {
+        let rules = "[[rule]]\nmatch = { purpose = \"x\" }\nadd_tags = [\"b\", \"a\"]\n\n[[rule]]\nmatch = { purpose = \"x\" }\nadd_tags = [\"c\", \"a\"]\n";
+        assert_eq!(
+            Rules::parse(rules)
+                .unwrap()
+                .tags("giro", &original("", "x", ""), &[], none),
+            vec!["b", "a", "c"]
+        );
+    }
+
+    #[test]
+    fn a_tag_condition_needs_every_listed_tag_and_the_source() {
+        let rules = Rules::parse(
+            "[[rule]]\nmatch = { source = \"giro\", tags = [\"a\", \"b\"] }\nadd_tags = [\"c\"]\n",
+        )
+        .unwrap();
+        let any = original("", "", "");
+        assert_eq!(rules.tags("giro", &any, &["a"], none), Vec::<&str>::new());
+        assert_eq!(rules.tags("giro", &any, &["b", "a"], none), vec!["c"]);
+        assert_eq!(
+            rules.tags("card", &any, &["a", "b"], none),
+            Vec::<&str>::new()
+        );
+    }
+
+    #[test]
+    fn a_held_back_tag_is_skipped_and_the_rule_adds_its_other_tags() {
+        let rules = Rules::parse(&format!(
+            "{TAG_RULES}\n[[rule]]\nmatch = {{ tags = [\"recurring\"] }}\nadd_tags = [\"subscription\"]\n"
+        ))
+        .unwrap();
+        let held = |t: &str| t == "recurring";
+        assert_eq!(
+            rules.tags("giro", &original("STREAMFLIX", "", ""), &[], held),
+            vec!["entertainment"]
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_tag_rules() {
+        let cases = [
+            (
+                "match = { tags = [] }\nadd_tags = [\"x\"]",
+                RulesError::EmptyTags(1),
+            ),
+            (
+                "match = { purpose = \"x\" }\nadd_tags = []",
+                RulesError::EmptyTags(1),
+            ),
+            (
+                "match = { purpose = \"x\" }\nadd_tags = [\"#x\"]",
+                RulesError::InvalidTag {
+                    rule: 1,
+                    tag: "#x".into(),
+                },
+            ),
+            (
+                "match = { tags = [\"a b\"] }\nadd_tags = [\"x\"]",
+                RulesError::InvalidTag {
+                    rule: 1,
+                    tag: "a b".into(),
+                },
+            ),
+            (
+                "match = { tags = [\"a\"] }\naccount = \"Expenses:A\"",
+                RulesError::TagMatchSetsField(1),
+            ),
+            (
+                "match = { tags = [\"a\"], purpose = \"x\" }\npayee = \"P\"",
+                RulesError::TagMatchSetsField(1),
+            ),
+            (
+                "match = { source = \"giro\" }\nadd_tags = [\"b\"]",
+                RulesError::NoCondition(1),
+            ),
+            ("match = { purpose = \"x\" }", RulesError::NoOutput(1)),
+        ];
+        for (rule, error) in cases {
+            assert_eq!(
+                Rules::parse(&format!("[[rule]]\n{rule}\n")).unwrap_err(),
+                error,
+                "{rule}"
+            );
+        }
+        assert!(matches!(
+            Rules::parse("[[rule]]\nmatch = { purpose = \"x\" }\nadd_tags = \"x\"\n"),
+            Err(RulesError::Syntax(_))
+        ));
+        assert_eq!(
+            Rules::parse("[[rule]]\nmatch = { purpose = \"x\" }\nadd_tags = [\"a\"]\n\n[[rule]]\nmatch = { purpose = \"y\" }\nadd_tags = [\"b\", \"c;\"]\n")
+                .unwrap_err(),
+            RulesError::InvalidTag {
+                rule: 2,
+                tag: "c;".into()
+            }
+        );
+        assert_eq!(
+            Rules::parse("[[rule]]\nmatch = { tags = [\"a\"] }\nadd_tags = [\"b\"]\n")
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn adds_and_tag_names_list_the_tags_rules_name() {
+        let rules = Rules::parse("[[rule]]\nmatch = { purpose = \"x\" }\nadd_tags = [\"a\", \"b\"]\n\n[[rule]]\nmatch = { tags = [\"a\"] }\nadd_tags = [\"c\", \"a\"]\n").unwrap();
+        assert!(rules.adds("a") && rules.adds("c"));
+        assert!(!rules.adds("z"));
+        assert_eq!(
+            rules.tag_names().collect::<Vec<_>>(),
+            vec![(1, "a"), (1, "b"), (2, "a"), (2, "c")]
+        );
     }
 
     #[test]
