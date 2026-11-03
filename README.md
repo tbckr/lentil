@@ -9,12 +9,13 @@ Lentil makes [Beancount](https://github.com/beancount/beancount/) practical for 
 
 Lentil cuts the work per transaction down to one confirmation, without taking your data out of your hands.
 
+- **Mobile-first.** What you do often happens on your phone, one gesture at a time: confirming and correcting transactions, tagging them, and from v1 on importing bank exports, recording cash and seeing your net worth. The CLI sets up the repository, imports CSV exports and handles what is rare.
 - **Review means confirming.** Every imported transaction arrives open, with flag `!` and a suggested counter account from your rules or from transactions you reviewed before. Confirming sets `*`. The goal is under 15 minutes of review per month.
 - **No server, no lock-in.** The single source of truth is a Git repository on any remote you choose. Everything Lentil writes is standard Beancount, which Fava, `bean-check` and your text editor read as well.
 - **Exact balances.** Every import run checks the bank's balance with zero tolerance. A gap is reported, never hidden or corrected automatically.
 - **Your files stay as they are.** A change touches only the affected characters, such as a flag or an account name. Lentil never reformats a file and keeps your comments.
 - **Several devices, no merge conflicts.** Each client writes only to its own area of the repository and re-applies its changes to the latest state, so the history stays linear. A real conflict is shown to you, never dropped.
-- **Private by default.** No telemetry. Lentil talks only to your Git remote, and from v1 on to the ECB for exchange rates.
+- **Private by default.** No telemetry. Lentil talks only to your Git remote, and from v1 on to the ECB for exchange rates and to portfolio services you connect, starting with Parqet.
 
 ## Who it is for
 
@@ -40,12 +41,12 @@ Three clients share one Git repository, and each of them does one job.
 
 ## Status
 
-The v0.1 draft covers the core loop of import and mobile triage; the features for everyday use follow in v1.
+The v0.1 draft covers the core loop of import and mobile triage; tags complete v0.1, and the features for everyday use follow in v1.
 
 | Release | Content |
 | --- | --- |
 | v0.1 (draft) | `lentil init`, `import`, `rules apply`, `status` and `check`; the Android app confirms transactions, changes the counter account, opens a missing account and dismisses duplicates; Fava as the read-only view |
-| v1 | Cash and one-off entries on Android, a balance overview, month-end close, tax export, foreign currencies, conflict resolution in the app, adopting an existing ledger, drafting a CSV mapping from a sample export |
+| v1 | Cash and one-off entries on Android, a balance overview, importing bank exports on the phone, securities portfolios with their buys and sells from Parqet, spreading and shifting payments across months, month-end close, tax export, foreign currencies, conflict resolution in the app, adopting an existing ledger, drafting a CSV mapping from a sample export |
 | Later | Automatic bank access via FinTS, an own web UI, a desktop app |
 
 The CLI and the app speak English and German; the CLI follows `LANG`.
@@ -224,7 +225,7 @@ adb install app/build/outputs/apk/debug/app-debug.apk
 
 Feature requests are filtered through these non-goals; the reasons are in the [PRD](docs/PRD.md#non-goals-for-v1).
 
-- Budgets; investments with lots and cost basis; receipts from a document archive (after v1)
+- Budgets; receipts from a document archive (after v1)
 - Matching manual entries with later imports; third-party plugins and importers (after v1)
 - Own web UI, desktop app and automatic bank access via FinTS (later)
 - iOS; several people or households; end-to-end encrypted remote; commercial bank aggregators (open)

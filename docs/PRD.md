@@ -4,7 +4,7 @@
 
 Lentil makes [Beancount](https://github.com/beancount/beancount/) practical for everyday use: a Git repository of standard Beancount files is the single source of truth, and several interchangeable clients work on it following a shared convention. In Lentil, review means confirming suggestions, not editing text.
 
-- **Clients:** CSV import through the CLI, Android app for quick triage, Fava plus CLI for month-end close and reporting, an own web UI only if needed.
+- **Clients:** the CLI sets up the repository, imports CSV exports and handles rare tasks such as taxes; the Android app triages and tags, and from v1 on also imports and captures; Fava or rustfava is the read-only desktop view; an own web UI only if needed.
 - **Language:** everything in the repository is written in English, including this PRD.
 
 ## Problem
@@ -31,17 +31,18 @@ Not a target group: people who cannot or will not use a Git remote. A client can
 
 ## Principles
 
-Nine principles apply to every decision; a feature that breaks one of them is not built.
+Ten principles apply to every decision; a feature that breaks one of them is not built.
 
 1. **The Git repository is the single source of truth.** No central logic and no central state apart from a replaceable, dumb Git remote.
 2. **Standard Beancount.** Everything Lentil writes is valid Beancount and readable by other tools such as Fava. No proprietary add-on format.
-3. **Computable locally everywhere, identical everywhere.** All clients use the same core. Anything outside the supported profile is shown read-only, never computed wrongly.
+3. **Computable locally everywhere, identical everywhere.** All clients use the same core. Anything outside the supported profile is shown read-only, never computed wrongly. The core is rustledger, used as it is; Lentil builds the convention and the clients around it. A plugin belongs to the profile only if rustledger runs it natively and its Python original exists for Fava; anything else Lentil writes into the files as standard Beancount.
 4. **Git visible during setup and in emergencies, invisible in daily use.** No everyday step requires a commit, a merge or text-level conflict resolution.
 5. **Review means confirming.** Every transaction arrives with a suggestion; the goal is one gesture per transaction.
 6. **Convention before client.** The convention is documented in its own spec. Every client that follows it is a first-class client.
 7. **Minimal changes.** Clients change only the affected characters of a file; formatting and comments are preserved.
-8. **Privacy by default.** No telemetry, and no network traffic except to the Git remote and the ECB for exchange rates; bank access may follow later.
+8. **Privacy by default.** No telemetry, and no network traffic except to the Git remote, the ECB for exchange rates and portfolio services the user connects with their own account, starting with Parqet; bank access may follow later.
 9. **Net worth exact, categories approximate but visible.** Balances are checked with zero tolerance. A category may stay open as `Expenses:Uncategorized` or `Expenses:Unattributed`, as long as `lentil status` shows how much is still open.
+10. **Mobile-first.** What users do often works on the phone with one gesture: import, triage, tags, capture and a glance at net worth. What is rare, such as writing rules by hand, maintaining the list of tags or setting up a repository, may stay at the desktop.
 
 ## Goals and success criteria
 
@@ -63,7 +64,6 @@ The non-goals also appear in the README; they filter feature requests from the c
 | Non-goal | Reason | Earliest |
 | --- | --- | --- |
 | Budgets | Product goal, but not part of v1; will use [Fava's `custom "budget"` format](https://beancount.io/docs/Tips/budgets) | After v1 |
-| Investments with lots and cost basis | Booking is the most complex part of the core | After v1 |
 | Receipts from a document archive | Valuable, but not needed for the core goals | After v1 |
 | Own web UI | Fava plus CLI may be enough; built only when the success criteria show a gap. Saves TypeScript, npm and the security work of a local web server in v1 | Later |
 | Automatic bank access (FinTS) | Needs a product registration with the Deutsche Kreditwirtschaft, renewal of strong authentication every 180 days, a second runtime and a bot container; CSV exports cover the need for now | Later |
@@ -72,13 +72,13 @@ The non-goals also appear in the README; they filter feature requests from the c
 | iOS | Android first; a GPL core complicates the App Store | Open |
 | Several people or households | v1 supports a single user; the data model must not rule out several | Open |
 | End-to-end encrypted remote | v1 relies on a Git remote the user trusts | Open |
-| Commercial bank aggregators | Contracts and cost; CSV exports are enough | Open |
-| Third-party plugins and importers | v1 computes only the defined profile. Later, foreign code runs only in a WASM sandbox without access to files, network or credentials, as rustledger already does for Python plugins | After v1 |
+| Commercial bank aggregators | Contracts and cost; CSV exports are enough. A portfolio service the user connects with their own account, such as Parqet, does not count | Open |
+| Third-party plugins and importers | v1 computes only the defined profile. Plugins that rustledger runs natively and that exist as Python originals may join it (principle 3). Other foreign code runs only later, in a WASM sandbox without access to files, network or credentials, as rustledger already does for Python plugins | After v1 |
 | Hosted service | Contradicts principle 1 | Never |
 
 ## Usage scenarios
 
-v0 proves the core loop of import and mobile triage; capture, month-end close and taxes follow in v1. Fava or rustfava serves as the read-only desktop view throughout; month-end close and taxes run as CLI commands.
+v0.1 proves the core loop of import and mobile triage, plus tags; v1 adds capture, securities portfolios, accrual, import on the phone, month-end close and taxes. Fava or rustfava serves as the read-only desktop view throughout; month-end close and taxes run as CLI commands.
 
 | ID | Scenario | Client | Release |
 | --- | --- | --- | --- |
@@ -86,6 +86,7 @@ v0 proves the core loop of import and mobile triage; capture, month-end close an
 | N2 | Import a bank's CSV export, entering the bank balance if the CSV has none | CLI | v0.1 |
 | N3 | Confirm or correct open transactions on the go | Android | v0.1 |
 | N4 | Connect the Android app to an existing repository | Android | v0.1 |
+| N15 | Tag transactions for evaluations across accounts, by rule and by hand on the phone | Android, CLI | v0.1 |
 | N5 | Record a cash payment or a one-off entry on an account without import | Android | v1 |
 | N6 | Glance at balances and monthly spending | Android | v1 |
 | N7 | Month-end close: open items, balance reconciliation, monthly overview | CLI, Fava | v1 |
@@ -94,6 +95,9 @@ v0 proves the core loop of import and mobile triage; capture, month-end close an
 | N10 | Resolve a transaction that was changed on two devices | Android | v1 |
 | N11 | Adopt an existing ledger (`adopt`) | CLI | v1 |
 | N12 | Record current balances of accounts without import, such as a payment service or a retirement account | Android | v1 |
+| N16 | Import a bank export on the phone by sharing the file with the app | Android | v1 |
+| N17 | Follow a securities portfolio with its individual buys and sells from Parqet and see its current value | Android, CLI | v1 |
+| N18 | Spread an annual payment over its months, or count a payment in the month it belongs to | Android | v1 |
 | N13 | Fetch accounts automatically via FinTS | Bot | Later |
 | N14 | Renew strong authentication for automatic bank access every 180 days | Bot, CLI | Later |
 
@@ -103,8 +107,8 @@ Every client acts in one of three roles with separate write areas, so concurrent
 
 | Role | Clients | Writes |
 | --- | --- | --- |
-| Importer | CLI import, `lentil prices` | New files only: import runs and price files |
-| Editor | Android; `lentil rules apply`; an own web UI if built | Flag, account, payee, narration and metadata of existing transactions; new accounts; manual entries and balance snapshots in its own device's files |
+| Importer | CLI import, `lentil prices`; from v1 import on Android and the Parqet import | New files only: import runs and price files |
+| Editor | Android; `lentil rules apply`; an own web UI if built | Flag, account, payee, narration, tags and metadata of existing transactions; new accounts; manual entries and balance snapshots in its own device's files |
 | Admin | CLI (`init`, `adopt`, configuration) | Anything, as long as the result follows the spec |
 
 Fava and rustfava only read the repository.
@@ -209,8 +213,8 @@ Correct numbers come before everything else; a client that is unsure shows nothi
 | --- | --- |
 | Correctness | All clients produce identical balances. On real ledgers, tested locally and never in CI, there is no deviation from the reference implementation. |
 | Data ownership | Everything in the repository is readable and usable without Lentil; no lock-in. |
-| Privacy | No telemetry. Network traffic only to the Git remote and the ECB for exchange rates. |
-| Security | Credentials (the Git token now, bank credentials later) never live in the repository; on Android they are kept in the system keystore. Importers only create new files in their own areas, and validation before push enforces this. |
+| Privacy | No telemetry. Network traffic only to the Git remote, the ECB for exchange rates and portfolio services the user connects, starting with Parqet. |
+| Security | Credentials (the Git token now, Parqet tokens in v1, bank credentials later) never live in the repository; on Android they are kept in the system keystore. Importers only create new files in their own areas, and validation before push enforces this. |
 | Local web UI | If built: binds only to 127.0.0.1. Requires a random access token generated at each start. Rejects requests whose Host header is not the local address (DNS rebinding). Sends no CORS headers and protects every write against cross-site requests. |
 | Traceability | Every change is a commit naming client, device and a readable description. |
 | Format preservation | Changes touch only the affected element, such as a flag, an account name or a string; the rest of the file stays byte-identical, and files are never reformatted. |
@@ -230,6 +234,6 @@ v0.1 proves the core loop, and v1 makes Lentil fit for everyday use. The phases 
 
 | Phase | Content | Scenarios | Requirements |
 | --- | --- | --- | --- |
-| v0.1 | Core loop: set up a repository, import CSV exports, triage on Android, read-only view in Fava | N1–N4 | FR-A1–A5, FR-B1–B4, FR-C1–C8, FR-C18, FR-C19, FR-D1–D6, FR-E1–E3, FR-F1–F7 |
-| v1 | Everyday use: capture, overview, month-end close, taxes, foreign currencies, conflict resolution, adopting existing ledgers, drafting CSV mappings | N5–N12 | FR-A6, FR-A7, FR-B5, FR-C9–C12, FR-D7–D11, FR-E4–E6, FR-F8 |
+| v0.1 | Core loop: set up a repository, import CSV exports, triage on Android, tags, read-only view in Fava | N1–N4, N15 | FR-A1–A5, FR-B1–B4, FR-C1–C8, FR-C18, FR-C19, FR-D1–D6, FR-E1–E3, FR-F1–F7 |
+| v1 | Everyday use: capture, overview, securities portfolios, accrual, import on the phone, month-end close, taxes, foreign currencies, conflict resolution, adopting existing ledgers, drafting CSV mappings | N5–N12, N16–N18 | FR-A6, FR-A7, FR-B5, FR-C9–C12, FR-D7–D11, FR-E4–E6, FR-F8 |
 | Later | Automatic bank access, own web UI, desktop app | N13, N14 | FR-C13–C17, FR-E7, FR-E8 |

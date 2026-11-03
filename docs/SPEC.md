@@ -144,7 +144,7 @@ Every client acts in one of three roles, and each role may only touch its own ar
 
 | Role | Used by | May create | May change | MUST NOT |
 | --- | --- | --- | --- | --- |
-| Importer | CLI import; later a bot | New run files under `imports/<source-id>/`; price files under `prices/` (v1); `status/<bot-id>.json` | Nothing that already exists | Change, move or remove existing transactions |
+| Importer | CLI import; from v1 import on Android and the Parqet import; later a bot | New run files under `imports/<source-id>/`; price files under `prices/` (v1); `status/<bot-id>.json` | Nothing that already exists | Change, move or remove existing transactions |
 | Editor | Android; CLI `rules apply`; a local web UI if built | Files under `manual/<device-id>/`, including balance snapshots (section 9); `open` directives in `accounts.beancount` | Flag, payee, narration, tags, links, metadata other than `lentil_id`, `lentil_ref` and the original fields (section 5), and the account of postings that are not on a source account | Change dates, a source posting, `lentil_id`, `lentil_ref` or an original field; move a posting onto a source account; delete transactions; write manual transactions or pads that post to a source account |
 | Admin | CLI (`init`, `adopt`, config commands) | Anything | Anything | Break any rule of this spec in the resulting state |
 
@@ -340,7 +340,7 @@ The v0 profile is the small part of Beancount that a repository created by `init
 | `open`, `close`, `commodity` | Supported |  |
 | Transactions with flag, payee, narration, tags, links, metadata | Supported |  |
 | Amounts in any currency, price annotations `@` and `@@` | Supported | Needed for foreign currencies (v1) |
-| Cost annotations `{...}` | Outside | Investments come after v1 |
+| Cost annotations `{...}` | Outside | Securities with lots come in v1 (PRD: N17) |
 | Posting with elided amount | Supported | At most one per transaction |
 | `balance`, `pad`, `price` | Supported | `pad` only on balance-tracked accounts (section 9); `price` from lentil prices or written by hand |
 | `note`, `document`, `event`, `query`, `custom` | Supported | Passed through unchanged; `custom "budget"` is used after v1 |
