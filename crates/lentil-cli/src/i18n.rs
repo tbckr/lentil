@@ -762,6 +762,8 @@ pub fn conflict(lang: Lang, code: ConflictCode) -> &'static str {
         (InvalidAccount, De) => "der Kontoname ist ungültig",
         (InvalidTag, En) => "the tag is not a valid tag",
         (InvalidTag, De) => "der Tag ist kein gültiger Tag",
+        (InvalidTrip, En) => "the trip's name or ID is invalid",
+        (InvalidTrip, De) => "Name oder ID der Reise sind ungültig",
     }
 }
 

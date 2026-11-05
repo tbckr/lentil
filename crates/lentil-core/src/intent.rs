@@ -5,7 +5,7 @@
 //! value already equals the new value it is done, if it equals the old value it
 //! is applied, otherwise it is a conflict.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
 
 use jiff::civil::Date;
@@ -13,9 +13,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
 use crate::edit::{self, EditError};
-use crate::ledger::{self, Ledger, Txn};
+use crate::id::manual_device;
+use crate::ledger::{self, Ledger, META_ID, Txn};
 use crate::snapshot::Snapshot;
-use crate::tags::is_tag_name;
+use crate::tags::{is_plain_name, is_tag_name};
+use crate::trips::TRIP_EVENT;
 
 /// One edit operation of spec section 10 (v0.1 subset).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -84,6 +86,27 @@ pub enum Intent {
         /// The tag, without `#`.
         tag: String,
     },
+    /// Append `<date> event "trip" "<name>"` with `lentil_id` `id` to the
+    /// device's month file (spec section 9); done if an event with the
+    /// `lentil_id` exists.
+    StartTrip {
+        /// `lentil_id` of the event, `<device-id>-<ulid>`; its device part
+        /// names the directory.
+        id: String,
+        /// Start date; it also picks the month file.
+        date: Date,
+        /// The trip's name, matching `[a-z0-9-]+`.
+        name: String,
+    },
+    /// Append `<date> event "trip" ""` with `lentil_id` `id` to the device's
+    /// month file (spec section 9); done if an event with the `lentil_id`
+    /// exists.
+    EndTrip {
+        /// `lentil_id` of the event, `<device-id>-<ulid>`.
+        id: String,
+        /// End date; it also picks the month file.
+        date: Date,
+    },
 }
 
 impl Intent {
@@ -99,6 +122,8 @@ impl Intent {
             Self::AddImportRun { .. } => "add-import-run",
             Self::AddTag { .. } => "add-tag",
             Self::RemoveTag { .. } => "remove-tag",
+            Self::StartTrip { .. } => "start-trip",
+            Self::EndTrip { .. } => "end-trip",
         }
     }
 
@@ -112,7 +137,10 @@ impl Intent {
             | Self::Dismiss { id }
             | Self::AddTag { id, .. }
             | Self::RemoveTag { id, .. } => Some(id),
-            Self::OpenAccount { .. } | Self::AddImportRun { .. } => None,
+            Self::OpenAccount { .. }
+            | Self::AddImportRun { .. }
+            | Self::StartTrip { .. }
+            | Self::EndTrip { .. } => None,
         }
     }
 }
@@ -175,6 +203,10 @@ pub enum ConflictCode {
     InvalidAccount,
     /// The tag of an `add-tag` is not a valid Beancount tag.
     InvalidTag,
+    /// The `lentil_id` of a `start-trip` or `end-trip` is not
+    /// `<device-id>-<ulid>` or names another device than the one that
+    /// syncs, or the name of a `start-trip` does not match `[a-z0-9-]+`.
+    InvalidTrip,
 }
 
 /// The result of replaying intents on a snapshot.
@@ -199,8 +231,32 @@ pub struct ReplayResult {
 /// and editor intents never share a replay.
 #[must_use]
 pub fn replay(snapshot: &Snapshot, config: &Config, intents: &[PendingIntent]) -> ReplayResult {
+    replay_with_device(snapshot, config, intents, None)
+}
+
+/// Like [`replay`], for the device `device` that commits the result: a trip
+/// intent whose `lentil_id` names another device is a
+/// [`ConflictCode::InvalidTrip`] conflict, because its event would land
+/// outside this device's write area (spec section 7).
+#[must_use]
+pub fn replay_for_device(
+    snapshot: &Snapshot,
+    config: &Config,
+    intents: &[PendingIntent],
+    device: &str,
+) -> ReplayResult {
+    replay_with_device(snapshot, config, intents, Some(device))
+}
+
+fn replay_with_device(
+    snapshot: &Snapshot,
+    config: &Config,
+    intents: &[PendingIntent],
+    device: Option<&str>,
+) -> ReplayResult {
     let ledger = ledger::load(snapshot, &config.main_file);
     let mut replay = Replay::new(snapshot, config, &ledger);
+    replay.device = device;
     let mut outcomes: Vec<(String, Outcome)> = intents
         .iter()
         .enumerate()
@@ -240,7 +296,7 @@ pub fn summary(intents: &[PendingIntent], outcomes: &[(String, Outcome)]) -> Str
 }
 
 /// Number of v0.1 operations.
-const OP_COUNT: usize = 8;
+const OP_COUNT: usize = 10;
 
 impl Intent {
     /// Position of the operation in the table of spec section 10.
@@ -254,6 +310,8 @@ impl Intent {
             Self::AddImportRun { .. } => 5,
             Self::AddTag { .. } => 6,
             Self::RemoveTag { .. } => 7,
+            Self::StartTrip { .. } => 8,
+            Self::EndTrip { .. } => 9,
         }
     }
 }
@@ -279,6 +337,8 @@ fn is_valid_account(account: &str) -> bool {
 /// The state of one replay: the ledger as loaded, plus the virtual effect of
 /// the intents applied so far.
 struct Replay<'a> {
+    /// The device that commits the result, if known.
+    device: Option<&'a str>,
     snapshot: &'a Snapshot,
     config: &'a Config,
     ledger: &'a Ledger,
@@ -295,6 +355,11 @@ struct Replay<'a> {
     open_lines: Vec<(usize, String)>,
     /// Run files written by earlier intents.
     new_files: BTreeMap<String, String>,
+    /// Trip events to append, in intent order: the intent, the month file
+    /// and the event's two lines.
+    trips: Vec<(usize, String, [String; 2])>,
+    /// `lentil_id`s of the trip events in [`Self::trips`].
+    trip_ids: HashSet<String>,
 }
 
 /// The virtual state of one transaction during a replay.
@@ -363,6 +428,7 @@ impl<'a> Replay<'a> {
             .filter_map(|file| Some((file.as_str(), snapshot.text(file)?)))
             .collect();
         Self {
+            device: None,
             snapshot,
             config,
             ledger,
@@ -372,6 +438,8 @@ impl<'a> Replay<'a> {
             opened: HashMap::new(),
             open_lines: Vec::new(),
             new_files: BTreeMap::new(),
+            trips: Vec::new(),
+            trip_ids: HashSet::new(),
         }
     }
 
@@ -391,6 +459,8 @@ impl<'a> Replay<'a> {
             Intent::AddImportRun { file, content, .. } => self.add_import_run(file, content),
             Intent::AddTag { id, tag } => self.add_tag(index, id, tag),
             Intent::RemoveTag { id, tag } => self.remove_tag(index, id, tag),
+            Intent::StartTrip { id, date, name } => self.trip(index, id, *date, Some(name)),
+            Intent::EndTrip { id, date } => self.trip(index, id, *date, None),
         }
     }
 
@@ -661,6 +731,47 @@ impl<'a> Replay<'a> {
         }
     }
 
+    /// Records a trip event: a start with `name`, an end without (spec
+    /// section 9). It goes to the month file of its date in the directory of
+    /// the device that `id` names.
+    fn trip(&mut self, index: usize, id: &str, date: Date, name: Option<&str>) -> Outcome {
+        let Some(device) = manual_device(id) else {
+            return conflict(ConflictCode::InvalidTrip);
+        };
+        if self.device.is_some_and(|own| own != device) {
+            return conflict(ConflictCode::InvalidTrip);
+        }
+        if name.is_some_and(|name| !is_plain_name(name)) {
+            return conflict(ConflictCode::InvalidTrip);
+        }
+        let exists = self
+            .ledger
+            .trip_events
+            .iter()
+            .any(|e| e.id.as_deref() == Some(id));
+        if exists || self.trip_ids.contains(id) {
+            return Outcome::AlreadyApplied;
+        }
+        let file = format!(
+            "manual/{device}/{:04}-{:02}.beancount",
+            date.year(),
+            date.month()
+        );
+        if self.snapshot.contains(&file) && self.snapshot.text(&file).is_none() {
+            return conflict(ConflictCode::NotEditable);
+        }
+        let lines = [
+            format!(
+                "{date} event \"{TRIP_EVENT}\" \"{}\"",
+                name.unwrap_or_default()
+            ),
+            format!("  {META_ID}: \"{id}\""),
+        ];
+        self.trip_ids.insert(id.to_owned());
+        self.trips.push((index, file, lines));
+        Outcome::Applied
+    }
+
     /// Writes the virtual state into a copy of the snapshot.
     ///
     /// Per file, each touched transaction is rendered on its own (element
@@ -721,6 +832,19 @@ impl<'a> Replay<'a> {
                     let indices: Vec<usize> = self.open_lines.iter().map(|(i, _)| *i).collect();
                     not_editable(outcomes, &indices);
                 }
+            }
+        }
+
+        for (index, file, lines) in &self.trips {
+            match out.get(file).map(std::str::from_utf8).transpose() {
+                Ok(text) => {
+                    let mut text = text.unwrap_or_default().to_owned();
+                    for line in lines {
+                        text = edit::append_line(&text, line);
+                    }
+                    out.insert(file, text);
+                }
+                Err(_) => not_editable(outcomes, &[*index]),
             }
         }
         out
@@ -2297,6 +2421,236 @@ include "imports/*/*/*.beancount"
             "confirm 2, set-account 1"
         );
     }
+
+    const TRIP_A: &str = "k7p2q9xd-01jc8m2w9z4f7q3r5t6v8x0y1a";
+    const TRIP_B: &str = "k7p2q9xd-01jcfh3k5n7p9r1s3t5v7w9y2b";
+    const TRIP_C: &str = "k7p2q9xd-01jd0000000000000000000000";
+    const APRIL: &str = "manual/k7p2q9xd/2026-04.beancount";
+
+    fn start_trip(id: &str, day: &str, name: &str) -> Intent {
+        Intent::StartTrip {
+            id: id.into(),
+            date: date(day),
+            name: name.into(),
+        }
+    }
+
+    fn end_trip(id: &str, day: &str) -> Intent {
+        Intent::EndTrip {
+            id: id.into(),
+            date: date(day),
+        }
+    }
+
+    /// [`snapshot`] with the include of the manual files.
+    fn trip_snapshot() -> Snapshot {
+        let mut files = snapshot();
+        files.insert(
+            "main.beancount",
+            format!("{MAIN}include \"manual/*/*.beancount\"\n"),
+        );
+        files
+    }
+
+    /// The two lines of a trip event, with `eol` after each.
+    fn trip_lines(day: &str, value: &str, id: &str, eol: &str) -> String {
+        format!("{day} event \"trip\" \"{value}\"{eol}  lentil_id: \"{id}\"{eol}")
+    }
+
+    #[test]
+    fn start_and_end_trip_append_events_to_the_month_file() {
+        let before = trip_snapshot();
+        let intents = [
+            start_trip(TRIP_A, "2026-04-10", "portugal-2026"),
+            end_trip(TRIP_B, "2026-04-21"),
+        ];
+        let (after, outcomes) = replay_on(&before, &intents);
+        assert_eq!(outcomes, vec![Applied, Applied]);
+        assert_eq!(
+            after.text(APRIL).unwrap(),
+            "2026-04-10 event \"trip\" \"portugal-2026\"\n  lentil_id: \"k7p2q9xd-01jc8m2w9z4f7q3r5t6v8x0y1a\"\n2026-04-21 event \"trip\" \"\"\n  lentil_id: \"k7p2q9xd-01jcfh3k5n7p9r1s3t5v7w9y2b\"\n"
+        );
+        let mut rest = after.clone();
+        rest.remove(APRIL);
+        assert_eq!(rest, before);
+
+        let (again, outcomes) = replay_on(&after, &intents);
+        assert_eq!(outcomes, vec![AlreadyApplied, AlreadyApplied]);
+        assert_eq!(again, after);
+    }
+
+    #[test]
+    fn trip_events_go_to_the_month_of_their_date() {
+        let (after, outcomes) = replay_on(
+            &trip_snapshot(),
+            &[
+                start_trip(TRIP_A, "2026-04-28", "lisbon"),
+                end_trip(TRIP_B, "2026-05-02"),
+            ],
+        );
+        assert_eq!(outcomes, vec![Applied, Applied]);
+        assert_eq!(
+            after.text(APRIL).unwrap(),
+            trip_lines("2026-04-28", "lisbon", TRIP_A, "\n")
+        );
+        assert_eq!(
+            after.text("manual/k7p2q9xd/2026-05.beancount").unwrap(),
+            trip_lines("2026-05-02", "", TRIP_B, "\n")
+        );
+    }
+
+    #[test]
+    fn a_trip_appends_after_existing_entries_byte_for_byte() {
+        let entry = "2026-04-01 * \"Kiosk\" \"Paper\"\n  lentil_id: \"k7p2q9xd-01jb2m3n4p5q6r7s8t9v0w1x2y\"\n  Assets:Bank:Giro  -1.00 EUR\n  Expenses:Uncategorized";
+        let crlf = format!("{}\r\n", entry.replace('\n', "\r\n"));
+        for (old, eol, separator) in [(entry.to_owned(), "\n", "\n"), (crlf, "\r\n", "")] {
+            let mut before = trip_snapshot();
+            before.insert(APRIL, old.as_str());
+            let (after, outcomes) =
+                replay_on(&before, &[start_trip(TRIP_A, "2026-04-10", "lisbon")]);
+            assert_eq!(outcomes, vec![Applied]);
+            assert_eq!(
+                after.text(APRIL).unwrap(),
+                format!(
+                    "{old}{separator}{}",
+                    trip_lines("2026-04-10", "lisbon", TRIP_A, eol)
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn a_trip_started_ended_and_started_again_on_one_day_keeps_three_events() {
+        let (after, outcomes) = replay_on(
+            &trip_snapshot(),
+            &[
+                start_trip(TRIP_A, "2026-04-10", "lisbon"),
+                end_trip(TRIP_B, "2026-04-10"),
+                start_trip(TRIP_C, "2026-04-10", "lisbon"),
+            ],
+        );
+        assert_eq!(outcomes, vec![Applied, Applied, Applied]);
+        assert_eq!(
+            after.text(APRIL).unwrap(),
+            [
+                trip_lines("2026-04-10", "lisbon", TRIP_A, "\n"),
+                trip_lines("2026-04-10", "", TRIP_B, "\n"),
+                trip_lines("2026-04-10", "lisbon", TRIP_C, "\n"),
+            ]
+            .concat()
+        );
+        assert_eq!(reload(&after).trip_events.len(), 3);
+    }
+
+    #[test]
+    fn trip_intents_with_invalid_names_or_ids_conflict() {
+        let before = trip_snapshot();
+        let invalid = conflict(ConflictCode::InvalidTrip);
+        for name in ["Portugal", "", "a b", "ä", "x\"y"] {
+            let (after, outcomes) = replay_on(&before, &[start_trip(TRIP_A, "2026-04-10", name)]);
+            assert_eq!(outcomes, vec![invalid.clone()], "{name:?}");
+            assert_eq!(after, before);
+        }
+        for id in ["giro-3f9a1c2e7b4d", "../../x-01jc8m2w9z4f7q3r5t6v8x0y1a"] {
+            let (after, outcomes) = replay_on(
+                &before,
+                &[
+                    start_trip(id, "2026-04-10", "lisbon"),
+                    end_trip(id, "2026-04-21"),
+                ],
+            );
+            assert_eq!(outcomes, vec![invalid.clone(), invalid.clone()], "{id}");
+            assert_eq!(after, before);
+        }
+    }
+
+    #[test]
+    fn a_trip_leaves_a_non_utf8_month_file_alone() {
+        let mut before = trip_snapshot();
+        before.insert(APRIL, b"\xff\n".to_vec());
+        let (after, outcomes) = replay_on(&before, &[start_trip(TRIP_A, "2026-04-10", "lisbon")]);
+        assert_eq!(outcomes, vec![conflict(ConflictCode::NotEditable)]);
+        assert_eq!(after, before);
+    }
+
+    #[test]
+    fn trip_intents_serialize_with_their_op_names() {
+        for (intent, op) in [
+            (
+                start_trip(TRIP_A, "2026-04-10", "lisbon"),
+                "\"op\":\"start-trip\"",
+            ),
+            (end_trip(TRIP_B, "2026-04-10"), "\"op\":\"end-trip\""),
+        ] {
+            let json = serde_json::to_string(&intent).unwrap();
+            assert!(json.contains(op), "{json}");
+            assert!(json.contains("\"date\":\"2026-04-10\""), "{json}");
+            assert_eq!(serde_json::from_str::<Intent>(&json).unwrap(), intent);
+            assert_eq!(intent.transaction_id(), None);
+        }
+        let json = serde_json::to_string(&start_trip(TRIP_A, "2026-04-10", "lisbon")).unwrap();
+        assert!(json.contains("\"name\":\"lisbon\""), "{json}");
+    }
+
+    #[test]
+    fn summary_counts_trips_after_tags() {
+        let intents = [
+            start_trip(TRIP_A, "2026-04-10", "lisbon"),
+            add_tag(GROCERY, "x"),
+            end_trip(TRIP_B, "2026-04-21"),
+        ];
+        let pending = pending(&intents);
+        let result = replay(&trip_snapshot(), &config(), &pending);
+        assert!(result.outcomes.iter().all(|(_, o)| *o == Applied));
+        assert_eq!(
+            summary(&pending, &result.outcomes),
+            "add-tag 1, start-trip 1, end-trip 1"
+        );
+    }
+
+    #[test]
+    fn a_trip_of_another_device_conflicts_on_this_device() {
+        let before = trip_snapshot();
+        let intents = pending(&[start_trip(TRIP_A, "2026-04-10", "lisbon")]);
+        let result = replay_for_device(&before, &config(), &intents, "zz9x8w7v");
+        assert_eq!(
+            result.outcomes,
+            vec![("k0".to_owned(), conflict(ConflictCode::InvalidTrip))]
+        );
+        assert_eq!(result.snapshot, before);
+
+        let result = replay_for_device(&before, &config(), &intents, "k7p2q9xd");
+        assert_eq!(result.outcomes, vec![("k0".to_owned(), Applied)]);
+    }
+
+    #[test]
+    fn a_trip_appends_after_an_edit_in_the_same_month_file() {
+        let manual = "k7p2q9xd-01jb2m3n4p5q6r7s8t9v0w1x2y";
+        let entry = format!(
+            "2026-04-01 ! \"Kiosk\" \"Paper\"\n  lentil_id: \"{manual}\"\n  Assets:Bank:Giro  -1.00 EUR\n  Expenses:Uncategorized\n"
+        );
+        let mut before = trip_snapshot();
+        before.insert(APRIL, entry.as_str());
+        let (after, outcomes) = replay_on(
+            &before,
+            &[
+                confirm(manual),
+                start_trip(TRIP_A, "2026-04-10", "lisbon"),
+                add_tag(manual, "x"),
+            ],
+        );
+        assert_eq!(outcomes, vec![Applied, Applied, Applied]);
+        let edited = entry
+            .replace(" ! ", " * ")
+            .replace("\"Paper\"\n", "\"Paper\" #x\n");
+        assert_eq!(
+            after.text(APRIL).unwrap(),
+            format!(
+                "{edited}{}",
+                trip_lines("2026-04-10", "lisbon", TRIP_A, "\n")
+            )
+        );
+    }
 }
 
 /// Property-based tests: random ledgers in varied formatting, and random
@@ -3077,6 +3431,101 @@ mapping = "sources/giro.toml"
                 for (key, outcome) in &second.outcomes {
                     prop_assert_eq!(outcome, &Outcome::AlreadyApplied, "{}", key);
                 }
+            }
+            prop_assert_eq!(&second.snapshot, &first.snapshot);
+        }
+    }
+
+    const TRIP_IDS: [&str; 3] = [
+        "k7p2q9xd-01jc8m2w9z4f7q3r5t6v8x0y1a",
+        "k7p2q9xd-01jcfh3k5n7p9r1s3t5v7w9y2b",
+        "k7p2q9xd-01jd0000000000000000000000",
+    ];
+
+    /// A trip intent: which ID, which month (April to June), which day, and
+    /// the name of a start or `None` for an end.
+    type TripOp = (usize, u8, u8, Option<String>);
+
+    fn gen_trip_op() -> impl Strategy<Value = TripOp> {
+        (
+            0..TRIP_IDS.len(),
+            4u8..=6,
+            1u8..=28,
+            prop::option::of("[a-z0-9-]{1,6}"),
+        )
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+
+        /// Trip intents only append their events to the month files of
+        /// their dates, once per ID, keep the line endings and every other
+        /// byte, and a second replay finds them done.
+        #[test]
+        fn trip_replay_only_appends_and_is_idempotent(
+            crlf in any::<bool>(),
+            final_break in any::<bool>(),
+            april in prop::option::of(prop::collection::vec("(; [a-z ]{0,8})?", 0..4)),
+            ops in prop::collection::vec(gen_trip_op(), 0..6),
+        ) {
+            let eol = if crlf { "\r\n" } else { "\n" };
+            let mut before = Snapshot::from_files([
+                ("main.beancount", format!("{MAIN}include \"manual/*/*.beancount\"\n")),
+                ("accounts.beancount", format!("2020-01-01 open {SOURCE} EUR\n")),
+            ]);
+            let file = |month: u8| format!("manual/k7p2q9xd/2026-{month:02}.beancount");
+            if let Some(lines) = &april {
+                let mut text = lines.join(eol);
+                if final_break {
+                    text.push_str(eol);
+                }
+                before.insert(file(4), text);
+            }
+            let intents: Vec<PendingIntent> = ops
+                .iter()
+                .enumerate()
+                .map(|(i, (id, month, day, name))| {
+                    let id = TRIP_IDS[*id].to_owned();
+                    let date = Date::new(2026, i8::try_from(*month).unwrap(), i8::try_from(*day).unwrap()).unwrap();
+                    let intent = match name {
+                        Some(name) => Intent::StartTrip { id, date, name: name.clone() },
+                        None => Intent::EndTrip { id, date },
+                    };
+                    PendingIntent { key: format!("k{i}"), intent }
+                })
+                .collect();
+            let config = Config::parse(CONFIG).unwrap();
+            let first = replay(&before, &config, &intents);
+
+            // The model: the first intent of each ID appends its two lines.
+            let mut seen = BTreeSet::new();
+            let mut expected = before.clone();
+            let mut outcomes = Vec::new();
+            for (i, (id, month, day, name)) in ops.iter().enumerate() {
+                let outcome = if seen.insert(*id) {
+                    let path = file(*month);
+                    let mut text = expected.text(&path).unwrap_or_default().to_owned();
+                    let value = name.as_deref().unwrap_or_default();
+                    text = edit::append_line(&text, &format!("2026-{month:02}-{day:02} event \"trip\" \"{value}\""));
+                    text = edit::append_line(&text, &format!("  lentil_id: \"{}\"", TRIP_IDS[*id]));
+                    expected.insert(&path, text);
+                    Outcome::Applied
+                } else {
+                    Outcome::AlreadyApplied
+                };
+                outcomes.push((format!("k{i}"), outcome));
+            }
+            prop_assert_eq!(&first.outcomes, &outcomes);
+            prop_assert_eq!(&first.snapshot, &expected);
+            if let Some(old) = before.text(&file(4)) {
+                prop_assert!(first.snapshot.text(&file(4)).unwrap().starts_with(old));
+            }
+            let reloaded = ledger::load(&first.snapshot, "main.beancount");
+            prop_assert_eq!(reloaded.trip_events.len(), seen.len());
+
+            let second = replay(&first.snapshot, &config, &intents);
+            for (key, outcome) in &second.outcomes {
+                prop_assert_eq!(outcome, &Outcome::AlreadyApplied, "{}", key);
             }
             prop_assert_eq!(&second.snapshot, &first.snapshot);
         }

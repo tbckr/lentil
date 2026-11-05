@@ -384,7 +384,7 @@ where
             // check: without a configuration there is nothing to replay on.
             Err(finding) => return Work::Nothing(Err(SyncError::ReadOnly(vec![finding]))),
         };
-        let replayed = intent::replay(before, &config, intents);
+        let replayed = intent::replay_for_device(before, &config, intents, &identity.device);
         if replayed.snapshot == *before {
             Work::Nothing(Ok(replayed.outcomes))
         } else {
