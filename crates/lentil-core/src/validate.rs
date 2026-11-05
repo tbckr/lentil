@@ -21,6 +21,8 @@ use crate::finding::{Finding, FindingCode, Severity};
 use crate::layout::{ACCOUNTS_FILE, FAVA_FILE, MAIN_INCLUDES, PLACEHOLDERS};
 use crate::ledger::{self, ConstructKind, Ledger, META_ID, PROTECTED_META};
 use crate::snapshot::{Change, Snapshot, glob_match, is_load_cache};
+use crate::tags::is_plain_name;
+use crate::trips::TRIP_EVENT;
 
 /// The role a client acts in for one commit (spec section 7).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -662,6 +664,9 @@ pub mod reason {
     pub const UNITS: &str = "units";
     /// A transaction was removed without being commented out.
     pub const REMOVED: &str = "removed";
+    /// A trip event an editor added has a value that is neither empty nor a
+    /// trip name.
+    pub const TRIP_NAME: &str = "trip-name";
 }
 
 fn check_write_areas(
@@ -835,8 +840,9 @@ impl Areas<'_, '_> {
     }
 
     /// A directive an editor adds to its own manual files (spec section 9):
-    /// transactions with `lentil_id`, balance assertions with zero tolerance
-    /// and pads.
+    /// transactions with `lentil_id`, balance assertions with zero tolerance,
+    /// pads, and trip events with `lentil_id` whose value is empty or a trip
+    /// name.
     fn check_new_entry(&mut self, path: &str, text: &str, d: &rustledger_core::Spanned<Directive>) {
         let line = line_of(text, d.span.start);
         match &d.value {
@@ -851,6 +857,14 @@ impl Areas<'_, '_> {
                 }
             }
             Directive::Pad(_) => {}
+            Directive::Event(e) if e.event_type == TRIP_EVENT => {
+                if meta_str(&e.meta, META_ID).is_none() {
+                    self.outside(path, Some(line), reason::MISSING_ID);
+                }
+                if !(e.value.is_empty() || is_plain_name(&e.value)) {
+                    self.outside(path, Some(line), reason::TRIP_NAME);
+                }
+            }
             _ => self.outside(path, Some(line), reason::DIRECTIVE),
         }
     }
@@ -2659,6 +2673,90 @@ txn-free comment lines are fine too
             args(&v, FindingCode::OutsideWriteArea, "reason"),
             ["directive"]
         );
+    }
+
+    const TRIP_EVENTS: &str = "2026-04-10 event \"trip\" \"portugal-2026\"\n  lentil_id: \"k7p2q9xd-01jc8m2w9z4f7q3r5t6v8x0y1a\"\n2026-04-21 event \"trip\" \"\"\n  lentil_id: \"k7p2q9xd-01jcfh3k5n7p9r1s3t5v7w9y2b\"\n";
+
+    #[test]
+    fn editor_may_append_trip_events_to_its_own_month_files() {
+        let path = "manual/k7p2q9xd/2026-04.beancount";
+        assert_clean(&editor(&inserted(&base(), path, TRIP_EVENTS)));
+        assert_clean(&editor(&appended(
+            &base(),
+            MANUAL,
+            &format!("\n{TRIP_EVENTS}"),
+        )));
+    }
+
+    #[test]
+    fn editor_trip_events_carry_ids_and_valid_names() {
+        let path = "manual/k7p2q9xd/2026-04.beancount";
+        let id = "  lentil_id: \"k7p2q9xd-01jc8m2w9z4f7q3r5t6v8x0y1a\"\n";
+        for (entry, reason) in [
+            (
+                "2026-04-10 event \"trip\" \"lisbon\"\n".to_owned(),
+                "missing-lentil-id",
+            ),
+            (
+                format!("2026-04-10 event \"trip\" \"Lisbon\"\n{id}"),
+                "trip-name",
+            ),
+            (
+                format!("2026-04-10 event \"location\" \"Lisbon\"\n{id}"),
+                "directive",
+            ),
+        ] {
+            let v = editor(&inserted(&base(), path, entry.as_str()));
+            assert_eq!(
+                args(&v, FindingCode::OutsideWriteArea, "reason"),
+                [reason],
+                "{entry}"
+            );
+            let v = editor(&appended(&base(), MANUAL, &format!("\n{entry}")));
+            assert_eq!(
+                args(&v, FindingCode::OutsideWriteArea, "reason"),
+                [reason],
+                "{entry}"
+            );
+        }
+        let start = format!("\n2026-09-14 event \"trip\" \"lisbon\"\n{id}");
+        let v = editor(&appended(&base(), OTHER_MANUAL, &start));
+        assert_eq!(
+            args(&v, FindingCode::OutsideWriteArea, "reason"),
+            ["directive"]
+        );
+    }
+
+    #[test]
+    fn replayed_trips_are_valid_for_the_editor() {
+        use crate::intent::{Intent, Outcome, PendingIntent, replay};
+        let before = base();
+        let config = Config::parse(CONFIG).unwrap();
+        let intents: Vec<PendingIntent> = [
+            Intent::StartTrip {
+                id: "k7p2q9xd-01jc8m2w9z4f7q3r5t6v8x0y1a".into(),
+                date: "2026-11-02".parse().unwrap(),
+                name: "lisbon".into(),
+            },
+            Intent::EndTrip {
+                id: "k7p2q9xd-01jcfh3k5n7p9r1s3t5v7w9y2b".into(),
+                date: "2026-11-05".parse().unwrap(),
+            },
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(i, intent)| PendingIntent {
+            key: i.to_string(),
+            intent,
+        })
+        .collect();
+        let result = replay(&before, &config, &intents);
+        assert!(
+            result.outcomes.iter().all(|(_, o)| *o == Outcome::Applied),
+            "{:?}",
+            result.outcomes
+        );
+        assert_clean(&as_role(Role::Editor, &before, &result.snapshot));
     }
 
     #[test]

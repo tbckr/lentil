@@ -1135,6 +1135,146 @@ fn three_writers_interleaved_lose_nothing() {
     assert_eq!(remote.history().len(), 4);
 }
 
+/// A `start-trip` with `name`, or an `end-trip` without.
+fn trip(key: &str, id: &str, day: &str, name: Option<&str>) -> PendingIntent {
+    let date = day.parse().unwrap();
+    let intent = match name {
+        Some(name) => Intent::StartTrip {
+            id: id.to_owned(),
+            date,
+            name: name.to_owned(),
+        },
+        None => Intent::EndTrip {
+            id: id.to_owned(),
+            date,
+        },
+    };
+    PendingIntent {
+        key: key.to_owned(),
+        intent,
+    }
+}
+
+#[test]
+fn trips_of_racing_devices_are_recorded_once_each() {
+    let remote = Remote::with(&fixture());
+    let mut a = Client::new("aaaaaaaa", "Alice");
+    let mut b = Client::new("bbbbbbbb", "Bob");
+    let start_a = "aaaaaaaa-01jc8m2w9z4f7q3r5t6v8x0y1a";
+    let end_a = "aaaaaaaa-01jcfh3k5n7p9r1s3t5v7w9y2b";
+    let start_b = "bbbbbbbb-01jd0000000000000000000000";
+    let intents_a = [
+        trip("a1", start_a, "2026-10-24", Some("lakeside")),
+        trip("a2", end_a, "2026-11-02", None),
+    ];
+    let intents_b = [trip("b1", start_b, "2026-10-25", Some("city"))];
+
+    // B pushes while A is between fetch and push.
+    let mut git_b = b.clone_from(&remote);
+    let git_a = a.clone_from(&remote);
+    let mut result_b = None;
+    let (result_a, pushes_a) = {
+        let mut git_a = Interleaved::new(
+            git_a,
+            vec![Box::new(|| {
+                result_b = Some(b.sync(&mut git_b, &intents_b));
+            })],
+        );
+        let result_a = a.sync(&mut git_a, &intents_a);
+        let pushes_a = git_a.pushes.clone();
+        drop(git_a);
+        (result_a, pushes_a)
+    };
+    let result_a = result_a.unwrap();
+    let result_b = result_b.unwrap().unwrap();
+    assert_eq!(
+        outcomes(&result_a),
+        vec![("a1", &Outcome::Applied), ("a2", &Outcome::Applied)]
+    );
+    assert_eq!(outcomes(&result_b), vec![("b1", &Outcome::Applied)]);
+    assert_eq!(pushes_a, vec![PushOutcome::Rejected, PushOutcome::Pushed]);
+
+    // Each event exactly once, in its device's month file.
+    let event = |day: &str, value: &str, id: &str| {
+        format!("{day} event \"trip\" \"{value}\"\n  lentil_id: \"{id}\"\n")
+    };
+    let state = remote.snapshot();
+    for (path, text) in [
+        (
+            "manual/aaaaaaaa/2026-10.beancount",
+            event("2026-10-24", "lakeside", start_a),
+        ),
+        (
+            "manual/aaaaaaaa/2026-11.beancount",
+            event("2026-11-02", "", end_a),
+        ),
+        (
+            "manual/bbbbbbbb/2026-10.beancount",
+            event("2026-10-25", "city", start_b),
+        ),
+    ] {
+        assert_eq!(state.text(path), Some(text.as_str()), "{path}");
+    }
+    assert_eq!(load(&state).trip_events.len(), 3);
+
+    // One linear chain: seed, B, A.
+    let history = remote.history();
+    assert_eq!(history.len(), 3);
+    assert_eq!(
+        history[1].message,
+        message("editor", "start-trip 1", "bbbbbbbb")
+    );
+    assert_eq!(
+        history[2].message,
+        message("editor", "start-trip 1, end-trip 1", "aaaaaaaa")
+    );
+
+    // Replaying A's intents again finds them done.
+    let mut git_a = Git2Backend::open(&a.path(), Credentials::Default).unwrap();
+    let again = a.sync(&mut git_a, &intents_a).unwrap();
+    assert_eq!(
+        outcomes(&again),
+        vec![
+            ("a1", &Outcome::AlreadyApplied),
+            ("a2", &Outcome::AlreadyApplied)
+        ]
+    );
+    assert_eq!(again.commit, None);
+    assert_eq!(remote.history().len(), 3);
+}
+
+#[test]
+fn a_trip_of_another_device_is_a_conflict_not_a_blocked_sync() {
+    let remote = Remote::with(&fixture());
+    let mut b = Client::new("bbbbbbbb", "Bob");
+    let mut git_b = b.clone_from(&remote);
+    let intents = [
+        trip(
+            "b1",
+            "aaaaaaaa-01jc8m2w9z4f7q3r5t6v8x0y1a",
+            "2026-10-24",
+            Some("lakeside"),
+        ),
+        confirm("b2", 1),
+    ];
+    let result = b.sync(&mut git_b, &intents).unwrap();
+    assert_eq!(
+        outcomes(&result),
+        vec![
+            (
+                "b1",
+                &Outcome::Conflict(Conflict {
+                    code: ConflictCode::InvalidTrip,
+                    current: None,
+                })
+            ),
+            ("b2", &Outcome::Applied),
+        ]
+    );
+    assert!(result.commit.is_some());
+    assert!(load(&remote.snapshot()).trip_events.is_empty());
+}
+
 #[test]
 fn a_conflict_is_reported_and_the_other_intents_still_apply() {
     let remote = Remote::with(&fixture());
