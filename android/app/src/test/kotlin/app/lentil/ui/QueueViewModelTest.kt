@@ -6,8 +6,12 @@ import app.lentil.data.Intent
 import app.lentil.data.IntentOutcome
 import app.lentil.data.IntentState
 import app.lentil.data.LedgerError
+import app.lentil.data.QueueEntry
 import app.lentil.data.StoredConflict
 import app.lentil.data.StoredIntent
+import app.lentil.data.TagChoice
+import app.lentil.data.TagChoices
+import app.lentil.data.TagSource
 import app.lentil.data.usableOn
 import java.time.Clock
 import java.time.Instant
@@ -17,6 +21,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -343,5 +348,271 @@ class QueueViewModelTest {
             assertEquals(findings, vm.state.value.readOnly)
             assertEquals(null, vm.state.value.loadError)
             assertEquals(false, vm.state.value.loading)
+        }
+
+    private val tagged = entry("giro-3f9a1c2e7b4d", tags = listOf("friends"))
+    private val suggested = entry("giro-3f9a1c2e7b4d", suggested = "trip-lisbon")
+
+    @Test
+    fun `removing a tag keeps the transaction open`() =
+        runTest(main.dispatcher) {
+            ledger.syncError = LedgerError.Network
+            ledger.queue = listOf(tagged, older)
+            val vm = viewModel()
+            advanceUntilIdle()
+
+            vm.removeTag(tagged, "friends")
+            advanceUntilIdle()
+
+            assertEquals(
+                listOf(
+                    StoredIntent("key-1", Intent.RemoveTag(tagged.id!!, "friends"), tagged.label)
+                ),
+                store.state.pending,
+            )
+            assertTrue(tagged in vm.state.value.items)
+        }
+
+    @Test
+    fun `picking a tag records the core's intents in order and never confirms`() =
+        runTest(main.dispatcher) {
+            ledger.syncError = LedgerError.Network
+            ledger.picks = { id, tag ->
+                listOf(Intent.RemoveTag(id, "recurring"), Intent.AddTag(id, tag))
+            }
+            val vm = viewModel()
+            advanceUntilIdle()
+
+            vm.pickTag(grocery, "irregular")
+            advanceUntilIdle()
+
+            assertEquals(listOf(grocery.id!! to "irregular"), ledger.picked)
+            assertEquals(
+                listOf(
+                    Intent.RemoveTag(grocery.id!!, "recurring"),
+                    Intent.AddTag(grocery.id!!, "irregular"),
+                ),
+                store.state.pending.map { it.intent },
+            )
+            assertTrue(grocery in vm.state.value.items)
+            assertNull(vm.state.value.tagPicker)
+        }
+
+    @Test
+    fun `the tag picker shows the core's choices`() =
+        runTest(main.dispatcher) {
+            ledger.syncError = LedgerError.Network
+            ledger.choices =
+                TagChoices(
+                    listOf(TagChoice("irregular", listOf("recurring"))),
+                    listOf("share-"),
+                    TagSource.Missing,
+                )
+            val vm = viewModel()
+            advanceUntilIdle()
+
+            vm.openTagPicker(grocery)
+            advanceUntilIdle()
+            assertEquals(TagPicker(grocery, ledger.choices), vm.state.value.tagPicker)
+
+            vm.closeTagPicker()
+            assertNull(vm.state.value.tagPicker)
+        }
+
+    @Test
+    fun `accepting the suggestion picks the suggested tag`() =
+        runTest(main.dispatcher) {
+            ledger.syncError = LedgerError.Network
+            ledger.queue = listOf(suggested)
+            val vm = viewModel()
+            advanceUntilIdle()
+
+            vm.acceptSuggestion(suggested)
+            advanceUntilIdle()
+
+            assertEquals(listOf(suggested.id!! to "trip-lisbon"), ledger.picked)
+            assertEquals(
+                listOf(Intent.AddTag(suggested.id!!, "trip-lisbon")),
+                store.state.pending.map { it.intent },
+            )
+        }
+
+    @Test
+    fun `confirming never accepts the suggestion`() =
+        runTest(main.dispatcher) {
+            ledger.syncError = LedgerError.Network
+            ledger.queue = listOf(suggested)
+            val vm = viewModel()
+            advanceUntilIdle()
+
+            vm.confirm(suggested)
+            advanceUntilIdle()
+
+            assertEquals(
+                listOf(Intent.Confirm(suggested.id!!)),
+                store.state.pending.map { it.intent },
+            )
+            assertTrue(ledger.picked.isEmpty())
+        }
+
+    @Test
+    fun `a read-only ledger or a transaction without ID takes no tag edits`() =
+        runTest(main.dispatcher) {
+            ledger.syncError = LedgerError.Network
+            val withoutId = entry(null, tags = listOf("friends"), suggested = "trip-lisbon")
+            ledger.queue = listOf(suggested, withoutId)
+            val vm = viewModel()
+            advanceUntilIdle()
+
+            vm.removeTag(withoutId, "friends")
+            vm.pickTag(withoutId, "solo")
+            vm.acceptSuggestion(withoutId)
+            vm.openTagPicker(withoutId)
+            advanceUntilIdle()
+            assertEquals(emptyList<StoredIntent>(), store.state.pending)
+            assertNull(vm.state.value.tagPicker)
+
+            ledger.readOnly = listOf(Finding("ConfigInvalid", true, null, null, emptyMap()))
+            val readOnly = viewModel()
+            advanceUntilIdle()
+
+            readOnly.removeTag(suggested, "friends")
+            readOnly.pickTag(suggested, "solo")
+            readOnly.acceptSuggestion(suggested)
+            readOnly.openTagPicker(suggested)
+            advanceUntilIdle()
+            assertEquals(emptyList<StoredIntent>(), store.state.pending)
+            assertTrue(ledger.picked.isEmpty())
+            assertNull(readOnly.state.value.tagPicker)
+        }
+
+    @Test
+    fun `removing a tag hides it at once and a second tap records nothing`() =
+        runTest(main.dispatcher) {
+            ledger.syncError = LedgerError.Network
+            ledger.queue = listOf(tagged)
+            val vm = viewModel()
+            advanceUntilIdle()
+
+            vm.removeTag(tagged, "friends")
+            assertEquals(emptyList<String>(), vm.state.value.items.single().tags)
+            vm.removeTag(tagged, "friends")
+            advanceUntilIdle()
+
+            assertEquals(
+                listOf(Intent.RemoveTag(tagged.id!!, "friends")),
+                store.state.pending.map { it.intent },
+            )
+        }
+
+    @Test
+    fun `accepting a suggestion twice picks it once`() =
+        runTest(main.dispatcher) {
+            ledger.syncError = LedgerError.Network
+            ledger.queue = listOf(suggested)
+            val vm = viewModel()
+            advanceUntilIdle()
+
+            vm.acceptSuggestion(suggested)
+            assertNull(vm.state.value.items.single().suggestedTag)
+            vm.acceptSuggestion(suggested)
+            advanceUntilIdle()
+
+            assertEquals(listOf(suggested.id!! to "trip-lisbon"), ledger.picked)
+        }
+
+    @Test
+    fun `confirming or dismissing hides a transaction whose tags changed since it was shown`() =
+        runTest(main.dispatcher) {
+            ledger.syncError = LedgerError.Network
+            val vm = viewModel()
+            advanceUntilIdle()
+
+            ledger.queue = listOf(grocery, older).map { it.copy(tags = listOf("friends")) }
+            vm.sync()
+            advanceUntilIdle()
+            vm.confirm(grocery)
+            vm.dismiss(older)
+
+            assertEquals(emptyList<QueueEntry>(), vm.state.value.items)
+        }
+
+    @Test
+    fun `a reload shows the open tag picker's transaction as it is now`() =
+        runTest(main.dispatcher) {
+            ledger.syncError = LedgerError.Network
+            val vm = viewModel()
+            advanceUntilIdle()
+            vm.openTagPicker(grocery)
+            advanceUntilIdle()
+
+            val now = grocery.copy(tags = listOf("friends"))
+            ledger.queue = listOf(now, older)
+            vm.sync()
+            advanceUntilIdle()
+
+            assertEquals(now, vm.state.value.tagPicker?.entry)
+        }
+
+    @Test
+    fun `the tag picker closes once its transaction leaves the queue or edits stop`() =
+        runTest(main.dispatcher) {
+            ledger.syncError = LedgerError.Network
+            val vm = viewModel()
+            advanceUntilIdle()
+
+            vm.openTagPicker(grocery)
+            advanceUntilIdle()
+            ledger.queue = listOf(older)
+            vm.sync()
+            advanceUntilIdle()
+            assertNull(vm.state.value.tagPicker)
+
+            vm.openTagPicker(older)
+            advanceUntilIdle()
+            ledger.readOnly = listOf(Finding("ConfigInvalid", true, null, null, emptyMap()))
+            vm.sync()
+            advanceUntilIdle()
+            assertNull(vm.state.value.tagPicker)
+
+            ledger.readOnly = emptyList()
+            vm.sync()
+            advanceUntilIdle()
+            vm.openTagPicker(older)
+            advanceUntilIdle()
+            ledger.loadError = LedgerError.Io("disk full")
+            vm.sync()
+            advanceUntilIdle()
+            assertNull(vm.state.value.tagPicker)
+        }
+
+    @Test
+    fun `a tag picker that fails to open shows the error`() =
+        runTest(main.dispatcher) {
+            ledger.syncError = LedgerError.Network
+            val vm = viewModel()
+            advanceUntilIdle()
+
+            ledger.loadError = LedgerError.Io("disk full")
+            vm.openTagPicker(grocery)
+            advanceUntilIdle()
+
+            assertNull(vm.state.value.tagPicker)
+            assertEquals(LedgerError.Io("disk full"), vm.state.value.loadError)
+        }
+
+    @Test
+    fun `a pick that fails shows the error and records nothing`() =
+        runTest(main.dispatcher) {
+            ledger.syncError = LedgerError.Network
+            val vm = viewModel()
+            advanceUntilIdle()
+
+            ledger.loadError = LedgerError.Other("broken")
+            vm.pickTag(grocery, "friends")
+            advanceUntilIdle()
+
+            assertEquals(LedgerError.Other("broken"), vm.state.value.loadError)
+            assertEquals(emptyList<StoredIntent>(), store.state.pending)
         }
 }

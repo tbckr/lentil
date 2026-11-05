@@ -18,6 +18,7 @@ import app.lentil.data.SecretStore
 import app.lentil.data.SettingsStore
 import app.lentil.data.StoredConflict
 import app.lentil.data.StoredIntent
+import app.lentil.data.TagChoices
 import java.time.Clock
 import java.time.LocalDate
 import java.util.UUID
@@ -45,10 +46,15 @@ data class QueueUiState(
     val conflicts: List<StoredConflict> = emptyList(),
     val sync: SyncStatus = SyncStatus.Idle,
     val loadError: LedgerError? = null,
+    /** The open tag picker, `null` while none is open. */
+    val tagPicker: TagPicker? = null,
 ) {
     val writable: Boolean
         get() = readOnly.isEmpty()
 }
+
+/** The tag picker for [entry], with the [choices] the core computed for it (PRD: FR-D12). */
+data class TagPicker(val entry: QueueEntry, val choices: TagChoices)
 
 /** The last sync, in the user's terms rather than Git's (PRD: FR-D6). */
 sealed interface SyncStatus {
@@ -109,14 +115,14 @@ class QueueViewModel(
 
     fun confirm(entry: QueueEntry) {
         val id = editableId(entry) ?: return
-        mutableState.update { state -> state.copy(items = state.items - entry) }
-        record(entry, Intent.Confirm(id))
+        mutableState.update { state -> state.copy(items = state.items.without(id)) }
+        record(entry.label, listOf(Intent.Confirm(id)))
     }
 
     fun dismiss(entry: QueueEntry) {
         val id = editableId(entry) ?: return
-        mutableState.update { state -> state.copy(items = state.items - entry) }
-        record(entry, Intent.Dismiss(id))
+        mutableState.update { state -> state.copy(items = state.items.without(id)) }
+        record(entry.label, listOf(Intent.Dismiss(id)))
     }
 
     /**
@@ -125,7 +131,7 @@ class QueueViewModel(
      */
     fun changeAccount(entry: QueueEntry, account: String) {
         val change = accountChange(entry, account) ?: return
-        record(entry, change, Intent.Confirm(change.id))
+        record(entry.label, listOf(change, Intent.Confirm(change.id)))
     }
 
     /**
@@ -140,7 +146,59 @@ class QueueViewModel(
                 accounts = (state.accounts + LedgerAccount(account, date)).sortedBy { it.name }
             )
         }
-        record(entry, Intent.OpenAccount(account, date), change, Intent.Confirm(change.id))
+        record(
+            entry.label,
+            listOf(Intent.OpenAccount(account, date), change, Intent.Confirm(change.id)),
+        )
+    }
+
+    /** Removes [tag] from [entry]; tagging leaves the transaction open (spec section 6). */
+    fun removeTag(entry: QueueEntry, tag: String) {
+        val id = editableId(entry) ?: return
+        if (shown(id)?.tags?.contains(tag) != true) return
+        change(id) { it.copy(tags = it.tags - tag) }
+        record(entry.label, listOf(Intent.RemoveTag(id, tag)))
+    }
+
+    /** Opens the tag picker for [entry] with the choices the core computes. */
+    fun openTagPicker(entry: QueueEntry) {
+        val id = editableId(entry) ?: return
+        viewModelScope.launch {
+            try {
+                val choices = ledger.tagChoices(intentState.pending, id)
+                mutableState.update { it.copy(tagPicker = TagPicker(entry, choices)) }
+            } catch (e: LedgerException) {
+                mutableState.update { it.copy(loadError = e.error) }
+            }
+        }
+    }
+
+    fun closeTagPicker() {
+        mutableState.update { it.copy(tagPicker = null) }
+    }
+
+    /**
+     * Adds [tag] to [entry] with the intents the core computes: it removes the tag's exclusive
+     * rivals first. Tagging leaves the transaction open.
+     */
+    fun pickTag(entry: QueueEntry, tag: String) {
+        val id = editableId(entry) ?: return
+        closeTagPicker()
+        viewModelScope.launch {
+            try {
+                record(entry.label, ledger.pickTag(intentState.pending, id, tag))
+            } catch (e: LedgerException) {
+                mutableState.update { it.copy(loadError = e.error) }
+            }
+        }
+    }
+
+    /** Accepts the trip tag suggested for [entry]; nothing else ever writes it (spec section 9). */
+    fun acceptSuggestion(entry: QueueEntry) {
+        val id = editableId(entry) ?: return
+        val tag = shown(id)?.suggestedTag ?: return
+        change(id) { it.copy(suggestedTag = null) }
+        pickTag(entry, tag)
     }
 
     fun discardConflict(key: String) {
@@ -195,6 +253,16 @@ class QueueViewModel(
     private fun editableId(entry: QueueEntry): String? =
         entry.id.takeIf { mutableState.value.writable }
 
+    /** The transaction [id] as the queue shows it now; `null` once it left the queue. */
+    private fun shown(id: String): QueueEntry? = mutableState.value.items.find { it.id == id }
+
+    /** Shows [edit] of the transaction [id] at once; the next reload shows the core's result. */
+    private fun change(id: String, edit: (QueueEntry) -> QueueEntry) {
+        mutableState.update { state ->
+            state.copy(items = state.items.map { if (it.id == id) edit(it) else it })
+        }
+    }
+
     private fun accountChange(entry: QueueEntry, account: String): Intent.SetAccount? {
         val id = editableId(entry) ?: return null
         val posting = entry.counterPosting
@@ -202,13 +270,13 @@ class QueueViewModel(
         if (posting == null || old == null || account == old) return null
         settings.rememberAccount(account)
         mutableState.update { state ->
-            state.copy(items = state.items - entry, recentAccounts = settings.recentAccounts())
+            state.copy(items = state.items.without(id), recentAccounts = settings.recentAccounts())
         }
         return Intent.SetAccount(id = id, posting = posting, old = old, new = account)
     }
 
-    private fun record(entry: QueueEntry, vararg new: Intent) {
-        intentState = intentState.add(new.map { StoredIntent(newKey(), it, entry.label) })
+    private fun record(label: String, new: List<Intent>) {
+        intentState = intentState.add(new.map { StoredIntent(newKey(), it, label) })
         publishIntents()
         viewModelScope.launch {
             persist()
@@ -245,6 +313,7 @@ class QueueViewModel(
                         defaultOpenDate = view.defaultOpenDate,
                         readOnly = view.readOnly,
                         loadError = null,
+                        tagPicker = it.tagPicker?.within(view.queue, view.readOnly.isEmpty()),
                     )
                 }
             } catch (e: LedgerException) {
@@ -255,12 +324,23 @@ class QueueViewModel(
                         items = emptyList(),
                         readOnly = (error as? LedgerError.ReadOnly)?.findings.orEmpty(),
                         loadError = error.takeUnless { error is LedgerError.ReadOnly },
+                        tagPicker = null,
                     )
                 }
             }
         }
     }
 }
+
+/**
+ * The queue without the transaction [id]. It matches by ID, because a reload may have changed the
+ * transaction's other fields, such as its tags, since the screen showed it.
+ */
+private fun List<QueueEntry>.without(id: String): List<QueueEntry> = filterNot { it.id == id }
+
+/** The picker for its transaction as [queue] shows it now; `null` once it left or edits stopped. */
+private fun TagPicker.within(queue: List<QueueEntry>, writable: Boolean): TagPicker? =
+    queue.find { it.id == entry.id }?.takeIf { writable }?.let { copy(entry = it) }
 
 private fun LedgerError.toSyncStatus(): SyncStatus =
     when (this) {
