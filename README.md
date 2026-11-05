@@ -200,7 +200,7 @@ After a change in a text editor, `lentil check` validates the repository, and `l
 
 - [`imports/checking/2026/20261101T080000Z.beancount`](examples/ledger/imports/checking/2026/20261101T080000Z.beancount) is the import run: the opening balance, reviewed transactions with `*`, open ones with `!` and the balance assertion.
 - The review left an account change behind, and the `open` directive it needed at the end of `accounts.beancount`.
-- [`manual/k7p2q9xd/2026-10.beancount`](examples/ledger/manual/k7p2q9xd/2026-10.beancount) holds a trip the phone recorded: two `event "trip"` entries. The open transaction right after the trip gets `#trip-lakeside` suggested.
+- [`manual/k7p2q9xd/2026-10.beancount`](examples/ledger/manual/k7p2q9xd/2026-10.beancount) holds a trip the phone recorded: two `event "trip"` entries. The open transaction right after the trip gets `#trip-lakeside` suggested in the app.
 - [`examples/checking.csv`](examples/checking.csv) is the bank export it came from, and `sources/checking.toml` its mapping.
 - `fava examples/ledger/main.beancount` shows it in Fava, as does `just fava` in the development shell. `lentil status`, `lentil check` and `lentil rules apply --dry-run` work in the directory too. `lentil import` and `lentil rules apply` without `--dry-run` do not, because the ledger is not a Git repository of its own.
 
@@ -210,6 +210,8 @@ The app is the triage client: it shows a queue of open transactions, newest firs
 
 - It changes a counter account through search and recently used accounts, and opens a missing account directly. Changing the account confirms the transaction.
 - It dismisses a duplicate, for example a transaction imported again after the bank changed its wording. The transaction stays in its file as a comment and is never imported again.
+- It shows the tags of each transaction. A tag's × removes it, and "Add tag" picks one from `tags.toml`, or from the tags the ledger already uses while `tags.toml` is missing or unreadable. Picking a tag replaces the other member of its exclusive group in `tags.toml`, and tagging never confirms a transaction.
+- It records trips: start one in the menu when you leave and end it when you are back. Open transactions dated from the start to three days after the end get the trip's tag suggested, and one tap accepts it.
 - It works offline, keeps your changes on the device and syncs them later, without Git terms in its UI.
 - It needs Android 13 or newer on an arm64 device, and a remote it can reach over HTTPS with a user name and an access token. The token stays in the device's keystore.
 

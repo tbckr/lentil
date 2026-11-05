@@ -275,6 +275,8 @@ Tags such as `#recurring` mark transactions for evaluations across accounts.
   ```
 
 - `lentil check` warns about unknown tags and clashes, and never fails because of them.
+- The Android app shows each open transaction's tags and removes one or adds one from `tags.toml`. While `tags.toml` is missing or unreadable, it offers the tags the ledger already uses. Picking a tag replaces the other member of its exclusive group, and tagging never confirms a transaction.
+- A trip started and ended in the app is written as two `event "trip"` entries into `manual/<device-id>/`. Open transactions dated from the start to three days after the end get `#trip-<name>` suggested. List `trip-` under `families` so `lentil check` knows these tags.
 
 ## Roles
 
