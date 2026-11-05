@@ -60,6 +60,10 @@
     <string name="intent_set_account">Konto auf %1$s setzen</string>
     <string name="intent_dismiss">Als Duplikat verwerfen</string>
     <string name="intent_open_account">Konto %1$s eröffnen</string>
+    <string name="intent_add_tag">Schlagwort #%1$s hinzufügen</string>
+    <string name="intent_remove_tag">Schlagwort #%1$s entfernen</string>
+    <string name="intent_start_trip">Reise %1$s starten</string>
+    <string name="intent_end_trip">Reise beenden</string>
 
     <string name="conflict_transaction_not_found">Die Buchung gibt es nicht mehr.</string>
     <string name="conflict_transaction_dismissed">Die Buchung wurde auf einem anderen Gerät verworfen.</string>
@@ -71,6 +75,8 @@
     <string name="conflict_not_editable">Die Buchung ist in einer Form geschrieben, die die App nicht bearbeiten kann.</string>
     <string name="conflict_file_exists">Die Datei existiert bereits.</string>
     <string name="conflict_invalid_account">Der Kontoname ist ungültig.</string>
+    <string name="conflict_invalid_tag">Das Schlagwort ist ungültig.</string>
+    <string name="conflict_invalid_trip">Name oder ID der Reise sind ungültig.</string>
     <string name="conflict_unknown">Unbekannter Konflikt: %1$s</string>
     <string name="unknown_value">unbekannt</string>
 
@@ -109,6 +115,7 @@
     <string name="reason_date">das Datum</string>
     <string name="reason_units">ein Betrag, Kostenwert oder Preis</string>
     <string name="reason_removed">eine entfernte statt auskommentierte Buchung</string>
+    <string name="reason_trip_name">ein Reise-Eintrag mit ungültigem Namen</string>
     <string name="construct_option">eine andere Option als title und operating_currency</string>
     <string name="construct_include">ein Include außerhalb von main.beancount</string>
     <string name="construct_plugin">ein Plugin</string>

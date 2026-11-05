@@ -66,6 +66,10 @@
     <string name="intent_set_account">Set account to %1$s</string>
     <string name="intent_dismiss">Dismiss as duplicate</string>
     <string name="intent_open_account">Open account %1$s</string>
+    <string name="intent_add_tag">Add tag #%1$s</string>
+    <string name="intent_remove_tag">Remove tag #%1$s</string>
+    <string name="intent_start_trip">Start trip %1$s</string>
+    <string name="intent_end_trip">End trip</string>
 
     <!-- Conflict codes of the core -->
     <string name="conflict_transaction_not_found">The transaction no longer exists.</string>
@@ -78,6 +82,8 @@
     <string name="conflict_not_editable">The transaction is written in a form the app can\'t edit.</string>
     <string name="conflict_file_exists">The file already exists.</string>
     <string name="conflict_invalid_account">The account name isn\'t valid.</string>
+    <string name="conflict_invalid_tag">The tag isn\'t valid.</string>
+    <string name="conflict_invalid_trip">The trip\'s name or ID isn\'t valid.</string>
     <string name="conflict_unknown">Unknown conflict: %1$s</string>
     <string name="unknown_value">unknown</string>
 
@@ -118,6 +124,7 @@
     <string name="reason_date">the date</string>
     <string name="reason_units">an amount, cost or price</string>
     <string name="reason_removed">a transaction removed instead of commented out</string>
+    <string name="reason_trip_name">a trip event whose name isn\'t valid</string>
     <!-- Values of the construct argument -->
     <string name="construct_option">an option other than title and operating_currency</string>
     <string name="construct_include">an include outside main.beancount</string>

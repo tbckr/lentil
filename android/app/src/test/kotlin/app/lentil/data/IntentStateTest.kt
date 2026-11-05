@@ -64,9 +64,24 @@ class IntentStateTest {
                 ),
                 "d",
             )
+        val tags =
+            listOf(
+                StoredIntent("e", Intent.AddTag("giro-3f9a1c2e7b4d", "friends"), "e"),
+                StoredIntent("f", Intent.RemoveTag("giro-3f9a1c2e7b4d", "recurring"), "f"),
+                StoredIntent(
+                    "g",
+                    Intent.StartTrip("k7p2q9xd-01jc8m2w9z4f7q3r5t6v8x0y1a", "2026-10-30", "lisbon"),
+                    "g",
+                ),
+                StoredIntent(
+                    "h",
+                    Intent.EndTrip("k7p2q9xd-01jcfh3k5n7p9r1s3t5v7w9y2b", "2026-11-02"),
+                    "h",
+                ),
+            )
         val state =
             IntentState(
-                pending = listOf(a, b, c, set),
+                pending = listOf(a, b, c, set) + tags,
                 conflicts = listOf(StoredConflict(a, "AccountChanged", "X:Y")),
             )
 
@@ -78,6 +93,10 @@ class IntentStateTest {
                 "\"op\":\"dismiss\"",
                 "\"op\":\"open-account\"",
                 "\"op\":\"set-account\"",
+                "\"op\":\"add-tag\"",
+                "\"op\":\"remove-tag\"",
+                "\"op\":\"start-trip\"",
+                "\"op\":\"end-trip\"",
             )
             .forEach { assertTrue("missing $it in $json", json.contains(it)) }
         assertEquals(state, store.read())

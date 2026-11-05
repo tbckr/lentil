@@ -22,6 +22,24 @@ sealed interface Intent {
     @Serializable
     @SerialName("open-account")
     data class OpenAccount(val account: String, val date: String) : Intent
+
+    /** Add [tag], without `#`, to transaction [id]; it leaves the flag as it is. */
+    @Serializable @SerialName("add-tag") data class AddTag(val id: String, val tag: String) : Intent
+
+    /** Remove [tag], without `#`, from transaction [id]; it leaves the flag as it is. */
+    @Serializable
+    @SerialName("remove-tag")
+    data class RemoveTag(val id: String, val tag: String) : Intent
+
+    /** Start the trip [name] on [date] (`YYYY-MM-DD`), as the event with `lentil_id` [id]. */
+    @Serializable
+    @SerialName("start-trip")
+    data class StartTrip(val id: String, val date: String, val name: String) : Intent
+
+    /** End the running trip on [date] (`YYYY-MM-DD`), as the event with `lentil_id` [id]. */
+    @Serializable
+    @SerialName("end-trip")
+    data class EndTrip(val id: String, val date: String) : Intent
 }
 
 /**

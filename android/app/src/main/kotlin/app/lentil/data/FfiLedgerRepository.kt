@@ -126,6 +126,10 @@ private fun StoredIntent.toFfi(): FfiPendingIntent =
                     )
                 is Intent.Dismiss -> FfiIntent.Dismiss(intent.id)
                 is Intent.OpenAccount -> FfiIntent.OpenAccount(intent.account, intent.date)
+                is Intent.AddTag -> FfiIntent.AddTag(intent.id, intent.tag)
+                is Intent.RemoveTag -> FfiIntent.RemoveTag(intent.id, intent.tag)
+                is Intent.StartTrip -> FfiIntent.StartTrip(intent.id, intent.date, intent.name)
+                is Intent.EndTrip -> FfiIntent.EndTrip(intent.id, intent.date)
             },
     )
 

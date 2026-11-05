@@ -73,6 +73,7 @@ private val codedArgs =
                 "date" to R.string.reason_date,
                 "units" to R.string.reason_units,
                 "removed" to R.string.reason_removed,
+                "trip-name" to R.string.reason_trip_name,
             ),
         "construct" to
             mapOf(
@@ -99,6 +100,8 @@ private val conflictMessages =
         "NotEditable" to R.string.conflict_not_editable,
         "FileExists" to R.string.conflict_file_exists,
         "InvalidAccount" to R.string.conflict_invalid_account,
+        "InvalidTag" to R.string.conflict_invalid_tag,
+        "InvalidTrip" to R.string.conflict_invalid_trip,
     )
 
 @Composable
@@ -140,6 +143,10 @@ fun intentText(intent: Intent): String =
         is Intent.SetAccount -> stringResource(R.string.intent_set_account, intent.new)
         is Intent.Dismiss -> stringResource(R.string.intent_dismiss)
         is Intent.OpenAccount -> stringResource(R.string.intent_open_account, intent.account)
+        is Intent.AddTag -> stringResource(R.string.intent_add_tag, intent.tag)
+        is Intent.RemoveTag -> stringResource(R.string.intent_remove_tag, intent.tag)
+        is Intent.StartTrip -> stringResource(R.string.intent_start_trip, intent.name)
+        is Intent.EndTrip -> stringResource(R.string.intent_end_trip)
     }
 
 @Composable
