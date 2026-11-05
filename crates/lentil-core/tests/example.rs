@@ -28,6 +28,7 @@ use lentil_core::ledger;
 use lentil_core::snapshot::Snapshot;
 use lentil_core::status;
 use lentil_core::tags::{TAGS_FILE, tag_warnings};
+use lentil_core::trips::Trips;
 use lentil_core::validate::{Context, Role, validate};
 
 const UPDATE_VAR: &str = "LENTIL_UPDATE_EXAMPLE";
@@ -89,6 +90,10 @@ column = "Balance"
 "#;
 
 const RUN_FILE: &str = "imports/checking/2026/20261101T080000Z.beancount";
+/// The trip's file, and the IDs of its events: those of spec section 9.
+const TRIP_FILE: &str = "manual/k7p2q9xd/2026-10.beancount";
+const TRIP_START: &str = "k7p2q9xd-01jc8m2w9z4f7q3r5t6v8x0y1a";
+const TRIP_END: &str = "k7p2q9xd-01jcfh3k5n7p9r1s3t5v7w9y2b";
 const UNCATEGORIZED: &str = "Expenses:Uncategorized";
 const GROCERIES: &str = "Expenses:Food:Groceries";
 
@@ -166,7 +171,8 @@ fn id_on(plan: &ImportPlan, day: Date) -> String {
 /// The review: confirm what a rule suggested, move two grocery payments to a
 /// new account, tag one of them as shared with friends, leave the rest open.
 /// As in the app, each account change is followed by a separate `confirm`,
-/// because any edit reviews the transaction.
+/// because any edit reviews the transaction. Before them come a trip to the
+/// lakeside recorded on the phone before the import, which the review syncs.
 fn intents(plan: &ImportPlan) -> Vec<PendingIntent> {
     let grocery = |day| Intent::SetAccount {
         id: id_on(plan, day),
@@ -176,6 +182,15 @@ fn intents(plan: &ImportPlan) -> Vec<PendingIntent> {
     };
     let confirm = |id: String| Intent::Confirm { id };
     [
+        Intent::StartTrip {
+            id: TRIP_START.into(),
+            date: date(2026, 10, 24),
+            name: "lakeside".into(),
+        },
+        Intent::EndTrip {
+            id: TRIP_END.into(),
+            date: date(2026, 10, 26),
+        },
         confirm(opening_id("checking")),
         confirm(id_on(plan, date(2026, 10, 1))),
         confirm(id_on(plan, date(2026, 10, 15))),
@@ -318,6 +333,36 @@ fn example_tags_follow_the_taxonomy() {
     ] {
         assert!(run.contains(header), "{header}{run}");
     }
+}
+
+#[test]
+fn example_suggests_the_trip_tag_after_the_trip() {
+    let example = example();
+    let config = config(&example);
+    let ledger = ledger::load(&example, &config.main_file);
+    assert_eq!(
+        example.text(TRIP_FILE).unwrap(),
+        format!(
+            "2026-10-24 event \"trip\" \"lakeside\"\n  lentil_id: \"{TRIP_START}\"\n2026-10-26 event \"trip\" \"\"\n  lentil_id: \"{TRIP_END}\"\n"
+        )
+    );
+    assert_eq!(ledger.trip_events.len(), 2);
+    let trips = Trips::new(&ledger.trip_events);
+    assert_eq!(trips.running(), None);
+    let suggested: Vec<(Date, Option<String>)> = ledger
+        .open_queue()
+        .into_iter()
+        .map(|txn| (txn.date, trips.suggestion(&config, txn)))
+        .collect();
+    // One day after the trip, five days after it, and before it.
+    assert_eq!(
+        suggested,
+        vec![
+            (date(2026, 10, 31), None),
+            (date(2026, 10, 27), Some("trip-lakeside".to_owned())),
+            (date(2026, 10, 6), None),
+        ]
+    );
 }
 
 #[test]

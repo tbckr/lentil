@@ -200,6 +200,7 @@ After a change in a text editor, `lentil check` validates the repository, and `l
 
 - [`imports/checking/2026/20261101T080000Z.beancount`](examples/ledger/imports/checking/2026/20261101T080000Z.beancount) is the import run: the opening balance, reviewed transactions with `*`, open ones with `!` and the balance assertion.
 - The review left an account change behind, and the `open` directive it needed at the end of `accounts.beancount`.
+- [`manual/k7p2q9xd/2026-10.beancount`](examples/ledger/manual/k7p2q9xd/2026-10.beancount) holds a trip the phone recorded: two `event "trip"` entries. The open transaction right after the trip gets `#trip-lakeside` suggested.
 - [`examples/checking.csv`](examples/checking.csv) is the bank export it came from, and `sources/checking.toml` its mapping.
 - `fava examples/ledger/main.beancount` shows it in Fava, as does `just fava` in the development shell. `lentil status`, `lentil check` and `lentil rules apply --dry-run` work in the directory too. `lentil import` and `lentil rules apply` without `--dry-run` do not, because the ledger is not a Git repository of its own.
 
