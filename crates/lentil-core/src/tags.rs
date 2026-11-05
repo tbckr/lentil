@@ -8,6 +8,7 @@ use thiserror::Error;
 
 use crate::config::Config;
 use crate::import::Rules;
+use crate::intent::Intent;
 use crate::ledger::Ledger;
 use crate::snapshot::Snapshot;
 
@@ -142,6 +143,24 @@ impl Taxonomy {
             .any(|group| carried.iter().any(|c| c != tag && group.contains(c)))
     }
 
+    /// The tags of `carried`, other than `tag`, that share an exclusive group
+    /// with `tag`: the tags picking `tag` replaces. In `carried` order,
+    /// without duplicates.
+    #[must_use]
+    pub fn rivals<'c>(&self, tag: &str, carried: &'c [String]) -> Vec<&'c str> {
+        let mut rivals: Vec<&str> = Vec::new();
+        for c in carried {
+            let shares = self
+                .exclusive
+                .iter()
+                .any(|group| group.iter().any(|m| m == tag) && group.contains(c));
+            if c != tag && shares && !rivals.contains(&c.as_str()) {
+                rivals.push(c);
+            }
+        }
+        rivals
+    }
+
     /// For each exclusive group in file order, the members `carried` holds, in
     /// group order; only groups of which `carried` holds two or more members.
     #[must_use]
@@ -158,6 +177,128 @@ impl Taxonomy {
             .filter(|members| members.len() > 1)
             .collect()
     }
+}
+
+/// Where the tag picker's choices come from (PRD: FR-D12); the app shows a
+/// hint unless they come from the taxonomy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChoiceSource {
+    /// `tags.toml` parsed.
+    Taxonomy,
+    /// There is no `tags.toml`; the choices are the tags the ledger uses.
+    Missing,
+    /// `tags.toml` does not parse; the choices are the tags the ledger uses.
+    Invalid,
+}
+
+/// A tag the picker offers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TagChoice {
+    /// The tag, without `#`.
+    pub tag: String,
+    /// The tags of the transaction that picking it removes: the other members
+    /// of its exclusive groups.
+    pub replaces: Vec<String>,
+}
+
+/// What the tag picker offers for one transaction.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TagChoices {
+    /// Tags the transaction does not carry yet, sorted.
+    pub tags: Vec<TagChoice>,
+    /// Family prefixes, in file order: the user types the rest of the tag.
+    pub families: Vec<String>,
+    /// Where the choices come from.
+    pub source: ChoiceSource,
+}
+
+/// The tag picker's choices for a transaction that carries `carried` (PRD:
+/// FR-D12). With a parsed taxonomy, its tags and families, each tag with the
+/// rivals it replaces. Without one, the tags of the ledger's active
+/// transactions, with no replacements and no families.
+#[must_use]
+pub fn tag_choices(
+    taxonomy: Option<&Result<Taxonomy, TaxonomyError>>,
+    ledger: &Ledger,
+    carried: &[String],
+) -> TagChoices {
+    let fresh = |tag: &&str| !carried.iter().any(|c| c == tag);
+    match taxonomy {
+        Some(Ok(taxonomy)) => TagChoices {
+            tags: taxonomy
+                .tags
+                .iter()
+                .map(String::as_str)
+                .filter(fresh)
+                .map(|tag| TagChoice {
+                    tag: tag.to_owned(),
+                    replaces: taxonomy
+                        .rivals(tag, carried)
+                        .into_iter()
+                        .map(str::to_owned)
+                        .collect(),
+                })
+                .collect(),
+            // A family listed twice is offered once.
+            families: taxonomy
+                .families
+                .iter()
+                .fold(Vec::new(), |mut families, f| {
+                    if !families.contains(f) {
+                        families.push(f.clone());
+                    }
+                    families
+                }),
+            source: ChoiceSource::Taxonomy,
+        },
+        _ => {
+            let used: BTreeSet<&str> = ledger
+                .transactions
+                .iter()
+                .flat_map(|txn| txn.tags.iter().map(String::as_str))
+                .collect();
+            TagChoices {
+                tags: used
+                    .into_iter()
+                    .filter(fresh)
+                    .map(|tag| TagChoice {
+                        tag: tag.to_owned(),
+                        replaces: Vec::new(),
+                    })
+                    .collect(),
+                families: Vec::new(),
+                source: if taxonomy.is_some() {
+                    ChoiceSource::Invalid
+                } else {
+                    ChoiceSource::Missing
+                },
+            }
+        }
+    }
+}
+
+/// The intents of picking `tag` for transaction `id`, which carries
+/// `carried`: a `remove-tag` for each rival it replaces, then the `add-tag`.
+/// Without a taxonomy nothing is replaced.
+#[must_use]
+pub fn pick_tag(
+    taxonomy: Option<&Taxonomy>,
+    id: &str,
+    tag: &str,
+    carried: &[String],
+) -> Vec<Intent> {
+    let rivals = taxonomy.map(|t| t.rivals(tag, carried)).unwrap_or_default();
+    rivals
+        .into_iter()
+        .map(|rival| Intent::RemoveTag {
+            id: id.to_owned(),
+            tag: rival.to_owned(),
+        })
+        .chain(std::iter::once(Intent::AddTag {
+            id: id.to_owned(),
+            tag: tag.to_owned(),
+        }))
+        .collect()
 }
 
 /// A tag that breaks the taxonomy of `tags.toml` (spec section 16); never a
@@ -491,6 +632,123 @@ mapping = "sources/giro.toml"
         assert_eq!(
             t.clashes(&carried(&["recurring", "mine"])),
             Vec::<Vec<&str>>::new()
+        );
+    }
+
+    fn add(tag: &str) -> Intent {
+        Intent::AddTag {
+            id: "giro-000000000001".to_owned(),
+            tag: tag.to_owned(),
+        }
+    }
+
+    fn remove(tag: &str) -> Intent {
+        Intent::RemoveTag {
+            id: "giro-000000000001".to_owned(),
+            tag: tag.to_owned(),
+        }
+    }
+
+    #[test]
+    fn rivals_are_the_carried_members_of_the_picks_groups() {
+        let taxonomy = Taxonomy::parse(
+            "exclusive = [[\"recurring\", \"irregular\"], [\"a\", \"b\", \"c\"], [\"c\", \"d\"]]\n",
+        )
+        .unwrap();
+        let rivals = |tag: &str, tags: &[&str]| -> Vec<String> {
+            let carried = carried(tags);
+            taxonomy
+                .rivals(tag, &carried)
+                .into_iter()
+                .map(str::to_owned)
+                .collect()
+        };
+        assert_eq!(
+            rivals("irregular", &["recurring", "friends"]),
+            ["recurring"]
+        );
+        assert!(rivals("recurring", &["recurring"]).is_empty());
+        assert!(rivals("friends", &["recurring"]).is_empty());
+        assert_eq!(rivals("b", &["c", "a"]), ["c", "a"]);
+        assert_eq!(rivals("c", &["d", "a", "d"]), ["d", "a"]);
+    }
+
+    #[test]
+    fn choices_follow_the_taxonomy() {
+        let taxonomy = Ok(Taxonomy::parse(EXAMPLE).unwrap());
+        let choices = tag_choices(
+            Some(&taxonomy),
+            &Ledger::default(),
+            &carried(&["recurring"]),
+        );
+        let choice = |tag: &str, replaces: &[&str]| TagChoice {
+            tag: tag.to_owned(),
+            replaces: carried(replaces),
+        };
+        assert_eq!(
+            choices,
+            TagChoices {
+                tags: vec![
+                    choice("amortize-year", &[]),
+                    choice("friends", &[]),
+                    choice("irregular", &["recurring"]),
+                    choice("tax-relevant", &[]),
+                ],
+                families: carried(&["trip-", "share-"]),
+                source: ChoiceSource::Taxonomy,
+            }
+        );
+    }
+
+    #[test]
+    fn a_family_listed_twice_is_offered_once() {
+        let taxonomy =
+            Ok(Taxonomy::parse("families = [\"trip-\", \"share-\", \"trip-\"]\n").unwrap());
+        let choices = tag_choices(Some(&taxonomy), &Ledger::default(), &[]);
+        assert_eq!(choices.families, carried(&["trip-", "share-"]));
+    }
+
+    #[test]
+    fn without_a_readable_taxonomy_choices_are_the_ledgers_tags() {
+        let snapshot = Snapshot::from_files([
+            ("main.beancount", MAIN.to_owned()),
+            ("accounts.beancount", ACCOUNTS.to_owned()),
+            (GIRO_RUN, [txn(2, 1, "#b #a"), txn(3, 2, "#a #c")].concat()),
+        ]);
+        let ledger = ledger::load(&snapshot, "main.beancount");
+        let expected = |source| TagChoices {
+            tags: ["a", "b"]
+                .into_iter()
+                .map(|tag| TagChoice {
+                    tag: tag.to_owned(),
+                    replaces: Vec::new(),
+                })
+                .collect(),
+            families: Vec::new(),
+            source,
+        };
+        let carried = carried(&["c"]);
+        assert_eq!(
+            tag_choices(None, &ledger, &carried),
+            expected(ChoiceSource::Missing)
+        );
+        assert_eq!(
+            tag_choices(Some(&Err(TaxonomyError::NotUtf8)), &ledger, &carried),
+            expected(ChoiceSource::Invalid)
+        );
+    }
+
+    #[test]
+    fn picking_a_tag_removes_its_rivals_first() {
+        let taxonomy = Taxonomy::parse(EXAMPLE).unwrap();
+        let carried = carried(&["recurring", "friends"]);
+        assert_eq!(
+            pick_tag(Some(&taxonomy), "giro-000000000001", "irregular", &carried),
+            vec![remove("recurring"), add("irregular")]
+        );
+        assert_eq!(
+            pick_tag(None, "giro-000000000001", "irregular", &carried),
+            vec![add("irregular")]
         );
     }
 }
