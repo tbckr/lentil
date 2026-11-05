@@ -6,6 +6,7 @@ use jiff::civil::Date;
 use lentil_core::finding::{Finding, FindingCode, Severity};
 use lentil_core::intent::{ConflictCode, Intent, Outcome, PendingIntent};
 use lentil_core::sync::{Author, Credentials};
+use lentil_core::tags::{ChoiceSource, TagChoice, TagChoices};
 
 use crate::error::LentilError;
 
@@ -38,6 +39,36 @@ pub enum FfiIntent {
         /// Account to open.
         account: String,
         /// Opening date as `YYYY-MM-DD`.
+        date: String,
+    },
+    /// Add a tag to an active transaction; it never confirms it.
+    AddTag {
+        /// `lentil_id` of the transaction.
+        id: String,
+        /// The tag, without `#`.
+        tag: String,
+    },
+    /// Remove a tag from an active transaction; it never confirms it.
+    RemoveTag {
+        /// `lentil_id` of the transaction.
+        id: String,
+        /// The tag, without `#`.
+        tag: String,
+    },
+    /// Start a trip: an `event "trip"` in the device's month file.
+    StartTrip {
+        /// `lentil_id` of the event, from `new_manual_id`.
+        id: String,
+        /// Start date as `YYYY-MM-DD`, usually today.
+        date: String,
+        /// The trip's name, matching `[a-z0-9-]+` (see `is_plain_name`).
+        name: String,
+    },
+    /// End the running trip: an empty `event "trip"` in the device's month file.
+    EndTrip {
+        /// `lentil_id` of the event, from `new_manual_id`.
+        id: String,
+        /// End date as `YYYY-MM-DD`, usually today.
         date: String,
     },
 }
@@ -73,14 +104,76 @@ impl TryFrom<FfiPendingIntent> for PendingIntent {
             FfiIntent::Dismiss { id } => Intent::Dismiss { id },
             FfiIntent::OpenAccount { account, date } => Intent::OpenAccount {
                 account,
-                date: date.parse::<Date>().map_err(|_| LentilError::Other {
-                    detail: format!("invalid date {date:?} in intent {}", pending.key),
-                })?,
+                date: parse_date(&date, &pending.key)?,
+            },
+            FfiIntent::AddTag { id, tag } => Intent::AddTag { id, tag },
+            FfiIntent::RemoveTag { id, tag } => Intent::RemoveTag { id, tag },
+            FfiIntent::StartTrip { id, date, name } => Intent::StartTrip {
+                id,
+                date: parse_date(&date, &pending.key)?,
+                name,
+            },
+            FfiIntent::EndTrip { id, date } => Intent::EndTrip {
+                id,
+                date: parse_date(&date, &pending.key)?,
             },
         };
         Ok(Self {
             key: pending.key,
             intent,
+        })
+    }
+}
+
+/// Parses the `YYYY-MM-DD` date of the intent with `key`.
+fn parse_date(date: &str, key: &str) -> Result<Date, LentilError> {
+    date.parse::<Date>().map_err(|_| LentilError::Other {
+        detail: format!("invalid date {date:?} in intent {key}"),
+    })
+}
+
+impl TryFrom<Intent> for FfiIntent {
+    type Error = LentilError;
+
+    /// An intent the core computed for the app to record, such as those of
+    /// a tag pick. The app never records `set-payee` or `add-import-run`.
+    fn try_from(intent: Intent) -> Result<Self, Self::Error> {
+        Ok(match intent {
+            Intent::Confirm { id } => Self::Confirm { id },
+            Intent::SetAccount {
+                id,
+                posting,
+                old,
+                new,
+            } => Self::SetAccount {
+                id,
+                posting: u32::try_from(posting).map_err(|_| LentilError::Other {
+                    detail: format!("posting index {posting} out of range"),
+                })?,
+                old,
+                new,
+            },
+            Intent::Dismiss { id } => Self::Dismiss { id },
+            Intent::OpenAccount { account, date } => Self::OpenAccount {
+                account,
+                date: date.to_string(),
+            },
+            Intent::AddTag { id, tag } => Self::AddTag { id, tag },
+            Intent::RemoveTag { id, tag } => Self::RemoveTag { id, tag },
+            Intent::StartTrip { id, date, name } => Self::StartTrip {
+                id,
+                date: date.to_string(),
+                name,
+            },
+            Intent::EndTrip { id, date } => Self::EndTrip {
+                id,
+                date: date.to_string(),
+            },
+            other @ (Intent::SetPayee { .. } | Intent::AddImportRun { .. }) => {
+                return Err(LentilError::Other {
+                    detail: format!("the app does not record {}", other.op_name()),
+                });
+            }
         })
     }
 }
@@ -355,6 +448,72 @@ pub struct QueueItem {
     pub file: String,
     /// 1-based line of the header.
     pub line: u32,
+    /// Its tags without `#`, in file order.
+    pub tags: Vec<String>,
+    /// The tag of the trip its date lies in, suggested until the user
+    /// accepts it through `pick_tag` (spec section 9); never written by
+    /// itself.
+    pub suggested_tag: Option<String>,
+}
+
+/// Where the tag picker's choices come from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum FfiChoiceSource {
+    /// From `tags.toml`.
+    Taxonomy,
+    /// No `tags.toml`: the tags the ledger uses. The app shows a hint.
+    Missing,
+    /// `tags.toml` does not parse: the tags the ledger uses. The app shows a hint.
+    Invalid,
+}
+
+impl From<ChoiceSource> for FfiChoiceSource {
+    fn from(source: ChoiceSource) -> Self {
+        match source {
+            ChoiceSource::Taxonomy => Self::Taxonomy,
+            ChoiceSource::Missing => Self::Missing,
+            ChoiceSource::Invalid => Self::Invalid,
+        }
+    }
+}
+
+/// A tag the picker offers.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct FfiTagChoice {
+    /// The tag, without `#`.
+    pub tag: String,
+    /// The transaction's tags that picking it replaces, for "replaces #…".
+    pub replaces: Vec<String>,
+}
+
+impl From<TagChoice> for FfiTagChoice {
+    fn from(choice: TagChoice) -> Self {
+        Self {
+            tag: choice.tag,
+            replaces: choice.replaces,
+        }
+    }
+}
+
+/// What the tag picker offers for one transaction.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct FfiTagChoices {
+    /// Tags the transaction does not carry yet, sorted.
+    pub tags: Vec<FfiTagChoice>,
+    /// Family prefixes such as `share-`: the user types the rest.
+    pub families: Vec<String>,
+    /// Where the choices come from.
+    pub source: FfiChoiceSource,
+}
+
+impl From<TagChoices> for FfiTagChoices {
+    fn from(choices: TagChoices) -> Self {
+        Self {
+            tags: choices.tags.into_iter().map(FfiTagChoice::from).collect(),
+            families: choices.families,
+            source: choices.source.into(),
+        }
+    }
 }
 
 /// An opened account of the ledger, for the account picker.
@@ -373,6 +532,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use lentil_core::intent::Conflict;
+    use lentil_core::tags::{ChoiceSource, TagChoice, TagChoices};
 
     use super::*;
 
@@ -526,6 +686,35 @@ mod tests {
                     id: "card-0123456789ab".to_owned(),
                 },
             },
+            FfiPendingIntent {
+                key: "k5".to_owned(),
+                intent: FfiIntent::AddTag {
+                    id: "giro-3f9a1c2e7b4d".to_owned(),
+                    tag: "friends".to_owned(),
+                },
+            },
+            FfiPendingIntent {
+                key: "k6".to_owned(),
+                intent: FfiIntent::RemoveTag {
+                    id: "giro-3f9a1c2e7b4d".to_owned(),
+                    tag: "recurring".to_owned(),
+                },
+            },
+            FfiPendingIntent {
+                key: "k7".to_owned(),
+                intent: FfiIntent::StartTrip {
+                    id: TRIP_START.to_owned(),
+                    date: "2026-04-10".to_owned(),
+                    name: "lisbon".to_owned(),
+                },
+            },
+            FfiPendingIntent {
+                key: "k8".to_owned(),
+                intent: FfiIntent::EndTrip {
+                    id: TRIP_END.to_owned(),
+                    date: "2026-04-21".to_owned(),
+                },
+            },
         ];
 
         let converted = pending_intents(pending).unwrap();
@@ -561,8 +750,126 @@ mod tests {
                         id: "card-0123456789ab".to_owned(),
                     },
                 },
+                PendingIntent {
+                    key: "k5".to_owned(),
+                    intent: Intent::AddTag {
+                        id: "giro-3f9a1c2e7b4d".to_owned(),
+                        tag: "friends".to_owned(),
+                    },
+                },
+                PendingIntent {
+                    key: "k6".to_owned(),
+                    intent: Intent::RemoveTag {
+                        id: "giro-3f9a1c2e7b4d".to_owned(),
+                        tag: "recurring".to_owned(),
+                    },
+                },
+                PendingIntent {
+                    key: "k7".to_owned(),
+                    intent: Intent::StartTrip {
+                        id: TRIP_START.to_owned(),
+                        date: Date::constant(2026, 4, 10),
+                        name: "lisbon".to_owned(),
+                    },
+                },
+                PendingIntent {
+                    key: "k8".to_owned(),
+                    intent: Intent::EndTrip {
+                        id: TRIP_END.to_owned(),
+                        date: Date::constant(2026, 4, 21),
+                    },
+                },
             ]
         );
+    }
+
+    const TRIP_START: &str = "k7p2q9xd-01jc8m2w9z4f7q3r5t6v8x0y1a";
+    const TRIP_END: &str = "k7p2q9xd-01jcfh3k5n7p9r1s3t5v7w9y2b";
+
+    #[test]
+    fn invalid_trip_date_is_rejected() {
+        let result = pending_intents(vec![FfiPendingIntent {
+            key: "k1".to_owned(),
+            intent: FfiIntent::StartTrip {
+                id: TRIP_START.to_owned(),
+                date: "2026-02-30".to_owned(),
+                name: "lisbon".to_owned(),
+            },
+        }]);
+        assert!(matches!(result, Err(LentilError::Other { .. })));
+
+        let result = pending_intents(vec![FfiPendingIntent {
+            key: "k1".to_owned(),
+            intent: FfiIntent::EndTrip {
+                id: TRIP_END.to_owned(),
+                date: "today".to_owned(),
+            },
+        }]);
+        assert!(matches!(result, Err(LentilError::Other { .. })));
+    }
+
+    #[test]
+    fn core_intents_convert_back_for_the_app() {
+        let id = "giro-3f9a1c2e7b4d".to_owned();
+        assert_eq!(
+            FfiIntent::try_from(Intent::AddTag {
+                id: id.clone(),
+                tag: "solo".to_owned(),
+            })
+            .unwrap(),
+            FfiIntent::AddTag {
+                id: id.clone(),
+                tag: "solo".to_owned(),
+            }
+        );
+        assert_eq!(
+            FfiIntent::try_from(Intent::RemoveTag {
+                id: id.clone(),
+                tag: "friends".to_owned(),
+            })
+            .unwrap(),
+            FfiIntent::RemoveTag {
+                id: id.clone(),
+                tag: "friends".to_owned(),
+            }
+        );
+        assert!(matches!(
+            FfiIntent::try_from(Intent::SetPayee {
+                id,
+                old: None,
+                new: "Shop".to_owned(),
+            }),
+            Err(LentilError::Other { .. })
+        ));
+    }
+
+    #[test]
+    fn tag_choices_convert() {
+        let choices = TagChoices {
+            tags: vec![TagChoice {
+                tag: "irregular".to_owned(),
+                replaces: vec!["recurring".to_owned()],
+            }],
+            families: vec!["trip-".to_owned()],
+            source: ChoiceSource::Invalid,
+        };
+        assert_eq!(
+            FfiTagChoices::from(choices),
+            FfiTagChoices {
+                tags: vec![FfiTagChoice {
+                    tag: "irregular".to_owned(),
+                    replaces: vec!["recurring".to_owned()],
+                }],
+                families: vec!["trip-".to_owned()],
+                source: FfiChoiceSource::Invalid,
+            }
+        );
+        for (source, ffi) in [
+            (ChoiceSource::Taxonomy, FfiChoiceSource::Taxonomy),
+            (ChoiceSource::Missing, FfiChoiceSource::Missing),
+        ] {
+            assert_eq!(FfiChoiceSource::from(source), ffi);
+        }
     }
 
     #[test]

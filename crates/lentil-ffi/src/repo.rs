@@ -12,12 +12,14 @@ use lentil_core::intent::{self, PendingIntent};
 use lentil_core::ledger::{self, Ledger, Txn};
 use lentil_core::sync::git::Git2Backend;
 use lentil_core::sync::{self, BRANCH, CommitId, Credentials, GitBackend, Identity, ThreadSleeper};
+use lentil_core::tags::{self, Taxonomy, TaxonomyError};
+use lentil_core::trips::Trips;
 use lentil_core::validate::{self, Role};
 
 use crate::error::LentilError;
 use crate::types::{
-    AccountItem, FfiAuthor, FfiCredentials, FfiFinding, FfiIdentity, FfiPendingIntent, QueueItem,
-    SyncReport, findings, outcomes, pending_intents,
+    AccountItem, FfiAuthor, FfiCredentials, FfiFinding, FfiIdentity, FfiIntent, FfiPendingIntent,
+    FfiTagChoices, QueueItem, SyncReport, findings, outcomes, pending_intents,
 };
 
 /// A local clone of a Lentil repository.
@@ -38,6 +40,9 @@ struct View {
     pending: Vec<PendingIntent>,
     config: Config,
     ledger: Ledger,
+    /// `tags.toml`; `None` without the file.
+    taxonomy: Option<Result<Taxonomy, TaxonomyError>>,
+    trips: Trips,
 }
 
 #[uniffi::export]
@@ -80,7 +85,54 @@ impl LentilRepo {
     /// Fails if the clone cannot be read or `lentil.toml` is invalid.
     pub fn queue(&self, pending: Vec<FfiPendingIntent>) -> Result<Vec<QueueItem>, LentilError> {
         let view = self.view(pending)?;
-        Ok(queue_items(&view.config, &view.ledger))
+        Ok(queue_items(&view.config, &view.ledger, &view.trips))
+    }
+
+    /// What the tag picker offers for transaction `id`, with `pending`
+    /// applied: the taxonomy's tags it does not carry, each with the tags it
+    /// would replace, and the families; without a readable `tags.toml`, the
+    /// tags the ledger uses (PRD: FR-D12).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::queue`].
+    pub fn tag_choices(
+        &self,
+        pending: Vec<FfiPendingIntent>,
+        id: &str,
+    ) -> Result<FfiTagChoices, LentilError> {
+        let view = self.view(pending)?;
+        Ok(tag_choices_of(&view.ledger, view.taxonomy.as_ref(), id))
+    }
+
+    /// The intents of picking `tag` for transaction `id`: a `RemoveTag` for
+    /// each exclusive rival it replaces, then the `AddTag`. The app records
+    /// them for picks and for accepted trip suggestions alike.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::queue`].
+    pub fn pick_tag(
+        &self,
+        pending: Vec<FfiPendingIntent>,
+        id: &str,
+        tag: &str,
+    ) -> Result<Vec<FfiIntent>, LentilError> {
+        let view = self.view(pending)?;
+        pick_of(&view.ledger, view.taxonomy.as_ref(), id, tag)
+    }
+
+    /// The name of the running trip with `pending` applied, `None` if no trip
+    /// runs: the app offers "End trip" for it, otherwise "Start trip".
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::queue`].
+    pub fn running_trip(
+        &self,
+        pending: Vec<FfiPendingIntent>,
+    ) -> Result<Option<String>, LentilError> {
+        Ok(self.view(pending)?.trips.running().map(str::to_owned))
     }
 
     /// Every opened account, with `pending` applied, sorted by name, with the
@@ -205,11 +257,15 @@ impl LentilRepo {
             intent::replay(&snapshot, &config, &pending).snapshot
         };
         let ledger = ledger::load(&snapshot, &config.main_file);
+        let taxonomy = Taxonomy::load(&snapshot);
+        let trips = Trips::new(&ledger.trip_events);
         let view = Arc::new(View {
             head,
             pending,
             config,
             ledger,
+            taxonomy,
+            trips,
         });
         *cache = Some(Arc::clone(&view));
         Ok(view)
@@ -238,15 +294,43 @@ fn parse_config(text: Option<&str>) -> Result<Config, LentilError> {
 }
 
 /// The queue items of `ledger`, newest first.
-fn queue_items(config: &Config, ledger: &Ledger) -> Vec<QueueItem> {
+fn queue_items(config: &Config, ledger: &Ledger, trips: &Trips) -> Vec<QueueItem> {
     ledger
         .open_queue()
         .into_iter()
-        .map(|txn| queue_item(config, txn))
+        .map(|txn| queue_item(config, txn, trips))
         .collect()
 }
 
-fn queue_item(config: &Config, txn: &Txn) -> QueueItem {
+/// The tags transaction `id` carries; none if the ledger does not hold it.
+fn carried<'l>(ledger: &'l Ledger, id: &str) -> &'l [String] {
+    ledger.find(id).map_or(&[], |txn| txn.tags.as_slice())
+}
+
+/// The picker's choices for transaction `id`.
+fn tag_choices_of(
+    ledger: &Ledger,
+    taxonomy: Option<&Result<Taxonomy, TaxonomyError>>,
+    id: &str,
+) -> FfiTagChoices {
+    tags::tag_choices(taxonomy, ledger, carried(ledger, id)).into()
+}
+
+/// The intents of picking `tag` for transaction `id`.
+fn pick_of(
+    ledger: &Ledger,
+    taxonomy: Option<&Result<Taxonomy, TaxonomyError>>,
+    id: &str,
+    tag: &str,
+) -> Result<Vec<FfiIntent>, LentilError> {
+    let taxonomy = taxonomy.and_then(|t| t.as_ref().ok());
+    tags::pick_tag(taxonomy, id, tag, carried(ledger, id))
+        .into_iter()
+        .map(FfiIntent::try_from)
+        .collect()
+}
+
+fn queue_item(config: &Config, txn: &Txn, trips: &Trips) -> QueueItem {
     let source = source_posting(config, txn);
     // Only an unambiguous counter posting is offered for editing; splits and
     // postings on another source account stay read-only in the app (PRD:
@@ -279,6 +363,14 @@ fn queue_item(config: &Config, txn: &Txn) -> QueueItem {
         counter_posting: counter.and_then(|(i, _)| u32::try_from(i).ok()),
         file: txn.file.clone(),
         line: txn.line,
+        // A header may repeat a tag; the row shows each tag once.
+        tags: txn.tags.iter().fold(Vec::new(), |mut tags, tag| {
+            if !tags.contains(tag) {
+                tags.push(tag.clone());
+            }
+            tags
+        }),
+        suggested_tag: trips.suggestion(config, txn),
     }
 }
 
@@ -326,6 +418,10 @@ fn oldest_transaction_date(ledger: &Ledger) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use lentil_core::snapshot::Snapshot;
+    use lentil_core::tags::Taxonomy;
+    use lentil_core::trips::Trips;
+
+    use crate::types::{FfiChoiceSource, FfiIntent, FfiTagChoice, FfiTagChoices};
 
     use super::*;
 
@@ -352,6 +448,7 @@ mapping = "sources/card.toml"
     const MAIN: &str = r#"option "operating_currency" "EUR"
 include "accounts.beancount"
 include "imports/*/*/*.beancount"
+include "manual/*/*.beancount"
 "#;
 
     const ACCOUNTS: &str = "2026-01-01 open Assets:Bank:Giro EUR
@@ -389,24 +486,48 @@ include "imports/*/*/*.beancount"
   Liabilities:Card  100.00 EUR
 "#;
 
-    fn sample() -> (Config, Ledger) {
-        let snapshot = Snapshot::from_files([
+    const GIRO_FILE: &str = "imports/giro/2026/20261020T071502Z.beancount";
+    const TRIP_FILE: &str = "manual/k7p2q9xd/2026-10.beancount";
+    const TRIP_START: &str = "2026-10-17 event \"trip\" \"lakeside\"\n  lentil_id: \"k7p2q9xd-01jc8m2w9z4f7q3r5t6v8x0y1a\"\n";
+    const GROCERY_HEADER: &str = "2026-10-18 ! \"Corner Grocery\" \"Weekly shopping\"";
+
+    fn sample_files() -> Snapshot {
+        Snapshot::from_files([
             ("lentil.toml", CONFIG),
             ("main.beancount", MAIN),
             ("accounts.beancount", ACCOUNTS),
-            ("imports/giro/2026/20261020T071502Z.beancount", GIRO_RUN),
+            (GIRO_FILE, GIRO_RUN),
             ("imports/card/2026/20261020T071503Z.beancount", CARD_RUN),
-        ]);
+        ])
+    }
+
+    fn loaded(snapshot: &Snapshot) -> (Config, Ledger) {
         let config = parse_config(snapshot.text(CONFIG_FILE)).unwrap();
-        let ledger = ledger::load(&snapshot, &config.main_file);
+        let ledger = ledger::load(snapshot, &config.main_file);
         (config, ledger)
+    }
+
+    fn sample() -> (Config, Ledger) {
+        loaded(&sample_files())
+    }
+
+    /// The sample with `#friends` on the grocery transaction of 10-18 and,
+    /// with `trip`, the start of a trip on 10-17.
+    fn tagged(trip: bool) -> (Config, Ledger) {
+        let mut files = sample_files();
+        let run = GIRO_RUN.replace(GROCERY_HEADER, &format!("{GROCERY_HEADER} #friends"));
+        files.insert(GIRO_FILE, run);
+        if trip {
+            files.insert(TRIP_FILE, TRIP_START);
+        }
+        loaded(&files)
     }
 
     #[test]
     fn queue_lists_open_transactions_newest_first() {
         let (config, ledger) = sample();
 
-        let ids: Vec<_> = queue_items(&config, &ledger)
+        let ids: Vec<_> = queue_items(&config, &ledger, &Trips::default())
             .into_iter()
             .map(|item| item.id)
             .collect();
@@ -424,7 +545,7 @@ include "imports/*/*/*.beancount"
     #[test]
     fn queue_item_names_source_and_counter_posting() {
         let (config, ledger) = sample();
-        let items = queue_items(&config, &ledger);
+        let items = queue_items(&config, &ledger, &Trips::default());
 
         let grocery = items
             .iter()
@@ -445,14 +566,158 @@ include "imports/*/*/*.beancount"
                 counter_posting: Some(1),
                 file: "imports/giro/2026/20261020T071502Z.beancount".to_owned(),
                 line: 1,
+                tags: vec![],
+                suggested_tag: None,
             }
         );
     }
 
     #[test]
+    fn queue_items_carry_tags_and_the_trip_suggestion() {
+        let (config, ledger) = tagged(true);
+        let trips = Trips::new(&ledger.trip_events);
+        let items = queue_items(&config, &ledger, &trips);
+        let item = |id: &str| items.iter().find(|i| i.id.as_deref() == Some(id)).unwrap();
+        let grocery = item("giro-3f9a1c2e7b4d");
+        assert_eq!(grocery.tags, ["friends"]);
+        assert_eq!(grocery.suggested_tag.as_deref(), Some("trip-lakeside"));
+        assert_eq!(
+            item("giro-111111111111").suggested_tag.as_deref(),
+            Some("trip-lakeside")
+        );
+
+        let (config, ledger) = tagged(false);
+        let trips = Trips::new(&ledger.trip_events);
+        assert!(
+            queue_items(&config, &ledger, &trips)
+                .iter()
+                .all(|i| i.suggested_tag.is_none())
+        );
+    }
+
+    #[test]
+    fn a_tag_written_twice_shows_once() {
+        let mut files = sample_files();
+        let run = GIRO_RUN.replace(
+            GROCERY_HEADER,
+            &format!("{GROCERY_HEADER} #friends #solo #friends"),
+        );
+        files.insert(GIRO_FILE, run);
+        let (config, ledger) = loaded(&files);
+        let items = queue_items(&config, &ledger, &Trips::default());
+        let grocery = items
+            .iter()
+            .find(|i| i.id.as_deref() == Some("giro-3f9a1c2e7b4d"))
+            .unwrap();
+        assert_eq!(grocery.tags, ["friends", "solo"]);
+    }
+
+    /// A clone of a remote whose `main` holds `files`.
+    fn clone_of(files: &Snapshot) -> (tempfile::TempDir, Arc<LentilRepo>) {
+        use lentil_core::sync::{Author, GitBackend};
+        let dir = tempfile::TempDir::new().unwrap();
+        let remote = dir.path().join("remote.git");
+        let mut options = git2::RepositoryInitOptions::new();
+        options.bare(true).initial_head("main");
+        git2::Repository::init_opts(&remote, &options).unwrap();
+        let url = remote.to_string_lossy().into_owned();
+        let mut seed =
+            Git2Backend::clone_bare(&url, &dir.path().join("seed"), Credentials::Default).unwrap();
+        seed.fetch().unwrap();
+        let author = Author {
+            name: "Admin".to_owned(),
+            email: "admin@example.org".to_owned(),
+        };
+        let commit = seed
+            .commit(None, &Snapshot::new(), files, "admin: init\n", &author)
+            .unwrap();
+        seed.push(&commit).unwrap();
+        let clone = dir.path().join("clone").to_string_lossy().into_owned();
+        let repo = LentilRepo::clone_repo(&url, clone, FfiCredentials::Default).unwrap();
+        (dir, repo)
+    }
+
+    #[test]
+    fn the_view_shows_a_pending_trip_before_it_syncs() {
+        let (_dir, repo) = clone_of(&sample_files());
+        assert_eq!(repo.running_trip(vec![]).unwrap(), None);
+        let start = FfiPendingIntent {
+            key: "t1".to_owned(),
+            intent: FfiIntent::StartTrip {
+                id: "k7p2q9xd-01jc8m2w9z4f7q3r5t6v8x0y1a".to_owned(),
+                date: "2026-10-17".to_owned(),
+                name: "lakeside".to_owned(),
+            },
+        };
+        assert_eq!(
+            repo.running_trip(vec![start.clone()]).unwrap().as_deref(),
+            Some("lakeside")
+        );
+        let queue = repo.queue(vec![start]).unwrap();
+        assert!(!queue.is_empty());
+        assert!(
+            queue
+                .iter()
+                .all(|i| i.suggested_tag.as_deref() == Some("trip-lakeside")),
+            "{queue:?}"
+        );
+    }
+
+    #[test]
+    fn tag_choices_and_picks_follow_the_taxonomy() {
+        let (_, ledger) = tagged(false);
+        let taxonomy = Taxonomy::parse(
+            "tags = [\"friends\", \"solo\"]\nexclusive = [[\"friends\", \"solo\"]]\n",
+        );
+        let grocery = "giro-3f9a1c2e7b4d";
+        assert_eq!(
+            tag_choices_of(&ledger, Some(&taxonomy), grocery),
+            FfiTagChoices {
+                tags: vec![FfiTagChoice {
+                    tag: "solo".to_owned(),
+                    replaces: vec!["friends".to_owned()],
+                }],
+                families: vec![],
+                source: FfiChoiceSource::Taxonomy,
+            }
+        );
+        let tag = |intent: fn(String, String) -> FfiIntent, id: &str, tag: &str| {
+            intent(id.to_owned(), tag.to_owned())
+        };
+        let add = |id: String, tag: String| FfiIntent::AddTag { id, tag };
+        let remove = |id: String, tag: String| FfiIntent::RemoveTag { id, tag };
+        assert_eq!(
+            pick_of(&ledger, Some(&taxonomy), grocery, "solo").unwrap(),
+            vec![tag(remove, grocery, "friends"), tag(add, grocery, "solo")]
+        );
+        assert_eq!(
+            pick_of(&ledger, Some(&taxonomy), "giro-ffffffffffff", "solo").unwrap(),
+            vec![tag(add, "giro-ffffffffffff", "solo")]
+        );
+        assert_eq!(
+            tag_choices_of(&ledger, None, grocery).source,
+            FfiChoiceSource::Missing
+        );
+    }
+
+    #[test]
+    fn running_trip_is_the_last_started_one() {
+        let (_, ledger) = tagged(true);
+        assert_eq!(Trips::new(&ledger.trip_events).running(), Some("lakeside"));
+
+        let mut files = sample_files();
+        files.insert(
+            TRIP_FILE,
+            format!("{TRIP_START}2026-10-20 event \"trip\" \"\"\n  lentil_id: \"k7p2q9xd-01jcfh3k5n7p9r1s3t5v7w9y2b\"\n"),
+        );
+        let (_, ledger) = loaded(&files);
+        assert_eq!(Trips::new(&ledger.trip_events).running(), None);
+    }
+
+    #[test]
     fn source_posting_follows_the_run_files_source() {
         let (config, ledger) = sample();
-        let items = queue_items(&config, &ledger);
+        let items = queue_items(&config, &ledger, &Trips::default());
 
         // Imported from the card: the card posting is the source posting,
         // although the giro posting comes first. The giro posting is a source
@@ -473,7 +738,7 @@ include "imports/*/*/*.beancount"
     #[test]
     fn split_has_no_counter_posting() {
         let (config, ledger) = sample();
-        let items = queue_items(&config, &ledger);
+        let items = queue_items(&config, &ledger, &Trips::default());
 
         let split = items
             .iter()
