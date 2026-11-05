@@ -48,9 +48,15 @@ data class QueueUiState(
     val loadError: LedgerError? = null,
     /** The open tag picker, `null` while none is open. */
     val tagPicker: TagPicker? = null,
+    /** The name of the running trip, `null` if none runs (PRD: FR-D13). */
+    val runningTrip: String? = null,
 ) {
     val writable: Boolean
         get() = readOnly.isEmpty()
+
+    /** Whether a trip may start or end: on a writable ledger, once a load told whether one runs. */
+    val tripsEditable: Boolean
+        get() = writable && !loading
 }
 
 /** The tag picker for [entry], with the [choices] the core computed for it (PRD: FR-D12). */
@@ -201,6 +207,30 @@ class QueueViewModel(
         pickTag(entry, tag)
     }
 
+    /** Whether [name] may name a trip or follow a tag family's prefix; the core's rule. */
+    fun isPlainName(name: String): Boolean = ledger.isPlainName(name)
+
+    /**
+     * Starts the trip [name] today, as an event with a new ID of this device, so it works offline
+     * and shows as running at once (spec section 9).
+     */
+    fun startTrip(name: String) {
+        val device = tripDevice() ?: return
+        if (!ledger.isPlainName(name)) return
+        val today = LocalDate.now(clock).toString()
+        mutableState.update { it.copy(runningTrip = name) }
+        record(today, listOf(Intent.StartTrip(ledger.newManualId(device), today, name)))
+    }
+
+    /** Ends the running trip today. */
+    fun endTrip() {
+        val device = tripDevice() ?: return
+        if (mutableState.value.runningTrip == null) return
+        val today = LocalDate.now(clock).toString()
+        mutableState.update { it.copy(runningTrip = null) }
+        record(today, listOf(Intent.EndTrip(ledger.newManualId(device), today)))
+    }
+
     fun discardConflict(key: String) {
         intentState = intentState.discard(key)
         publishIntents()
@@ -250,6 +280,10 @@ class QueueViewModel(
         reload()
     }
 
+    /** The device that writes trip events; `null` while the app may not write or has no ID. */
+    private fun tripDevice(): String? =
+        identity()?.device?.takeIf { mutableState.value.tripsEditable }
+
     private fun editableId(entry: QueueEntry): String? =
         entry.id.takeIf { mutableState.value.writable }
 
@@ -278,10 +312,9 @@ class QueueViewModel(
     private fun record(label: String, new: List<Intent>) {
         intentState = intentState.add(new.map { StoredIntent(newKey(), it, label) })
         publishIntents()
-        viewModelScope.launch {
-            persist()
-            reload()
-        }
+        // At once: a load that started before these intents would undo what the screen shows.
+        reload()
+        viewModelScope.launch { persist() }
     }
 
     private fun publishIntents() {
@@ -312,6 +345,7 @@ class QueueViewModel(
                         accounts = view.accounts,
                         defaultOpenDate = view.defaultOpenDate,
                         readOnly = view.readOnly,
+                        runningTrip = view.runningTrip,
                         loadError = null,
                         tagPicker = it.tagPicker?.within(view.queue, view.readOnly.isEmpty()),
                     )

@@ -89,6 +89,9 @@ class FakeLedger(
     /** If set, a sync waits for it, so a test can act while the sync runs. */
     var syncGate: CompletableDeferred<Unit>? = null
 
+    /** If set, a load waits for it and then returns the ledger as it was when the load started. */
+    var loadGate: CompletableDeferred<Unit>? = null
+
     val loads = mutableListOf<List<StoredIntent>>()
     val syncs = mutableListOf<SyncCall>()
     var cloned: Pair<String, Credentials>? = null
@@ -121,13 +124,16 @@ class FakeLedger(
                     }
                 }
                 .toSet()
-        return LedgerView(
-            queue = queue.filterNot { it.id in done },
-            accounts = accounts,
-            defaultOpenDate = defaultOpenDate,
-            readOnly = readOnly,
-            runningTrip = runningTrip,
-        )
+        val view =
+            LedgerView(
+                queue = queue.filterNot { it.id in done },
+                accounts = accounts,
+                defaultOpenDate = defaultOpenDate,
+                readOnly = readOnly,
+                runningTrip = runningTrip,
+            )
+        loadGate?.await()
+        return view
     }
 
     override suspend fun tagChoices(pending: List<StoredIntent>, id: String): TagChoices {

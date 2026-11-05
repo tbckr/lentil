@@ -1,7 +1,6 @@
 package app.lentil.ui
 
 import app.lentil.data.Finding
-import app.lentil.data.Identity
 import app.lentil.data.Intent
 import app.lentil.data.IntentOutcome
 import app.lentil.data.IntentState
@@ -13,9 +12,6 @@ import app.lentil.data.TagChoice
 import app.lentil.data.TagChoices
 import app.lentil.data.TagSource
 import app.lentil.data.usableOn
-import java.time.Clock
-import java.time.Instant
-import java.time.ZoneOffset
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -23,32 +19,10 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import org.junit.Rule
 import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
-class QueueViewModelTest {
-    @get:Rule val main = MainDispatcherRule()
-
-    private val grocery = entry("giro-3f9a1c2e7b4d")
-    private val older = entry("giro-0a1b2c3d4e5f", date = "2026-10-01")
-    private val ledger = FakeLedger(queue = listOf(grocery, older))
-    private val store = FakeIntentStore()
-    private val settings = FakeSettings()
-    private val secrets = FakeSecrets()
-    private var keys = 0
-
-    private fun viewModel(deviceId: String? = "k7p2q9xd") =
-        QueueViewModel(
-            ledger = ledger,
-            intents = store,
-            settings = settings,
-            secrets = secrets,
-            identity = { deviceId?.let { Identity("lentil-android/0.1.0", it) } },
-            clock = Clock.fixed(Instant.parse("2026-10-30T12:00:00Z"), ZoneOffset.UTC),
-            newKey = { "key-${++keys}" },
-        )
-
+class QueueViewModelTest : QueueViewModelTestBase() {
     @Test
     fun `start loads the queue and syncs`() =
         runTest(main.dispatcher) {

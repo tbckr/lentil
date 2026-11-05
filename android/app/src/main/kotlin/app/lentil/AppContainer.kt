@@ -29,7 +29,7 @@ class AppContainer(context: Context) {
     val intents: IntentStore = JsonIntentStore(File(storage, "intents.json"))
     val ledger: LedgerRepository =
         FfiLedgerRepository(File(storage, "ledger.git"), SystemCaBundle(File(storage, "ca.pem")))
-    private val clock: Clock = Clock.systemDefaultZone()
+    private val clock: Clock = DeviceClock
 
     /** `Lentil-Client` of every commit (spec section 12). */
     private val client = "lentil-android/${BuildConfig.VERSION_NAME}"
