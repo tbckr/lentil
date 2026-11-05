@@ -1,6 +1,8 @@
 package app.lentil.data
 
+import app.lentil.ui.entry
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class LedgerTest {
@@ -19,5 +21,18 @@ class LedgerTest {
             listOf("Expenses:Garden", "Expenses:Groceries"),
             accounts.usableOn("2026-10-18"),
         )
+    }
+
+    @Test
+    fun `a queue entry carries no tags and no suggestion unless the core gives them`() {
+        val plain = entry("giro-3f9a1c2e7b4d")
+        assertEquals(emptyList<String>(), plain.tags)
+        assertNull(plain.suggestedTag)
+
+        val tagged = entry("giro-3f9a1c2e7b4d", tags = listOf("friends"), suggested = "trip-lisbon")
+        assertEquals(listOf("friends"), tagged.tags)
+        assertEquals("trip-lisbon", tagged.suggestedTag)
+
+        assertNull(LedgerView(emptyList(), emptyList(), null, emptyList()).runningTrip)
     }
 }

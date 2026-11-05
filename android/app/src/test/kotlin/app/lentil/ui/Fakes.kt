@@ -17,6 +17,8 @@ import app.lentil.data.QueueEntry
 import app.lentil.data.SecretStore
 import app.lentil.data.SettingsStore
 import app.lentil.data.StoredIntent
+import app.lentil.data.TagChoices
+import app.lentil.data.TagSource
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -41,6 +43,8 @@ fun entry(
     date: String = "2026-10-18",
     counter: String? = "Expenses:Uncategorized",
     posting: Int? = 1,
+    tags: List<String> = emptyList(),
+    suggested: String? = null,
 ) =
     QueueEntry(
         id = id,
@@ -55,6 +59,8 @@ fun entry(
         counterPosting = posting,
         file = "imports/giro/2026/20261020T071502Z.beancount",
         line = 1,
+        tags = tags,
+        suggestedTag = suggested,
     )
 
 /** A ledger whose queue hides confirmed and dismissed transactions, like the core's replay. */
@@ -75,6 +81,10 @@ class FakeLedger(
         pending.associate { it.key to IntentOutcome.Applied }
     }
     var warnings = emptyList<app.lentil.data.Finding>()
+    var runningTrip: String? = null
+    var choices = TagChoices(emptyList(), emptyList(), TagSource.Taxonomy)
+    var picks: (String, String) -> List<Intent> = { id, tag -> listOf(Intent.AddTag(id, tag)) }
+    val picked = mutableListOf<Pair<String, String>>()
 
     /** If set, a sync waits for it, so a test can act while the sync runs. */
     var syncGate: CompletableDeferred<Unit>? = null
@@ -116,8 +126,29 @@ class FakeLedger(
             accounts = accounts,
             defaultOpenDate = defaultOpenDate,
             readOnly = readOnly,
+            runningTrip = runningTrip,
         )
     }
+
+    override suspend fun tagChoices(pending: List<StoredIntent>, id: String): TagChoices {
+        loadError?.let { throw LedgerException(it) }
+        return choices
+    }
+
+    override suspend fun pickTag(
+        pending: List<StoredIntent>,
+        id: String,
+        tag: String,
+    ): List<Intent> {
+        loadError?.let { throw LedgerException(it) }
+        picked += id to tag
+        return picks(id, tag)
+    }
+
+    override fun newManualId(device: String): String = "$device-01jc8m2w9z4f7q3r5t6v8x0y1a"
+
+    /** The core's rule, `[a-z0-9-]+`, standing in for it in tests. */
+    override fun isPlainName(name: String): Boolean = PLAIN.matches(name)
 
     override suspend fun sync(
         pending: List<StoredIntent>,
@@ -133,6 +164,8 @@ class FakeLedger(
 
     override fun newDeviceId(): String = "k7p2q9xd"
 }
+
+private val PLAIN = Regex("[a-z0-9-]+")
 
 class FakeIntentStore(var state: IntentState = IntentState()) : IntentStore {
     var writes = 0

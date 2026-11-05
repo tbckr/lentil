@@ -1,6 +1,7 @@
 package app.lentil.data
 
 import app.lentil.ffi.FfiAuthor
+import app.lentil.ffi.FfiChoiceSource
 import app.lentil.ffi.FfiCredentials
 import app.lentil.ffi.FfiFinding
 import app.lentil.ffi.FfiIdentity
@@ -8,10 +9,13 @@ import app.lentil.ffi.FfiIntent
 import app.lentil.ffi.FfiOutcome
 import app.lentil.ffi.FfiPendingIntent
 import app.lentil.ffi.FfiSeverity
+import app.lentil.ffi.FfiTagChoices
 import app.lentil.ffi.LentilException
 import app.lentil.ffi.LentilRepo
 import app.lentil.ffi.QueueItem
+import app.lentil.ffi.isPlainName as ffiIsPlainName
 import app.lentil.ffi.newDeviceId as ffiNewDeviceId
+import app.lentil.ffi.newManualId as ffiNewManualId
 import app.lentil.ffi.useCaBundle
 import java.io.File
 import kotlinx.coroutines.CoroutineDispatcher
@@ -22,6 +26,7 @@ import kotlinx.coroutines.withContext
  * [LedgerRepository] on the Rust core: a bare clone in [directory], driven through the generated
  * UniFFI bindings. Calls block, so they run on [io].
  */
+@Suppress("TooManyFunctions") // One function per call of the repository, plus two helpers.
 class FfiLedgerRepository(
     private val directory: File,
     private val caBundle: SystemCaBundle,
@@ -52,7 +57,20 @@ class FfiLedgerRepository(
             accounts = repo.accounts(intents).map { LedgerAccount(it.name, it.openFrom) },
             defaultOpenDate = repo.defaultOpenDate(intents),
             readOnly = readOnly,
+            runningTrip = repo.runningTrip(intents),
         )
+    }
+
+    override suspend fun tagChoices(pending: List<StoredIntent>, id: String): TagChoices = call {
+        repo().tagChoices(pending.map { it.toFfi() }, id).toChoices()
+    }
+
+    override suspend fun pickTag(
+        pending: List<StoredIntent>,
+        id: String,
+        tag: String,
+    ): List<Intent> = call {
+        repo().pickTag(pending.map { it.toFfi() }, id, tag).map { it.toIntent() }
     }
 
     override suspend fun sync(
@@ -78,6 +96,10 @@ class FfiLedgerRepository(
     }
 
     override fun newDeviceId(): String = ffiNewDeviceId()
+
+    override fun newManualId(device: String): String = ffiNewManualId(device)
+
+    override fun isPlainName(name: String): Boolean = ffiIsPlainName(name)
 
     private fun repo(): LentilRepo = opened ?: LentilRepo.open(directory.path).also { opened = it }
 
@@ -133,6 +155,31 @@ private fun StoredIntent.toFfi(): FfiPendingIntent =
             },
     )
 
+private fun FfiIntent.toIntent(): Intent =
+    when (this) {
+        is FfiIntent.Confirm -> Intent.Confirm(id)
+        is FfiIntent.SetAccount ->
+            Intent.SetAccount(id = id, posting = posting.toInt(), old = old, new = new)
+        is FfiIntent.Dismiss -> Intent.Dismiss(id)
+        is FfiIntent.OpenAccount -> Intent.OpenAccount(account, date)
+        is FfiIntent.AddTag -> Intent.AddTag(id, tag)
+        is FfiIntent.RemoveTag -> Intent.RemoveTag(id, tag)
+        is FfiIntent.StartTrip -> Intent.StartTrip(id, date, name)
+        is FfiIntent.EndTrip -> Intent.EndTrip(id, date)
+    }
+
+private fun FfiTagChoices.toChoices(): TagChoices =
+    TagChoices(
+        tags = tags.map { TagChoice(it.tag, it.replaces) },
+        families = families,
+        source =
+            when (source) {
+                FfiChoiceSource.TAXONOMY -> TagSource.Taxonomy
+                FfiChoiceSource.MISSING -> TagSource.Missing
+                FfiChoiceSource.INVALID -> TagSource.Invalid
+            },
+    )
+
 private fun QueueItem.toEntry(): QueueEntry =
     QueueEntry(
         id = id,
@@ -147,6 +194,8 @@ private fun QueueItem.toEntry(): QueueEntry =
         counterPosting = counterPosting?.toInt(),
         file = file,
         line = line.toInt(),
+        tags = tags,
+        suggestedTag = suggestedTag,
     )
 
 private fun FfiFinding.toFinding(): Finding =

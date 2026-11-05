@@ -17,6 +17,10 @@ data class QueueEntry(
     val counterPosting: Int?,
     val file: String,
     val line: Int,
+    /** Its tags without `#`, in file order. */
+    val tags: List<String> = emptyList(),
+    /** The tag of the trip its date lies in, until the user accepts it (spec section 9). */
+    val suggestedTag: String? = null,
 ) {
     /** Whether the app can edit the transaction at all. */
     val editable: Boolean
@@ -57,6 +61,29 @@ data class LedgerView(
     val defaultOpenDate: String?,
     /** Why the app may not write; empty if it may. */
     val readOnly: List<Finding>,
+    /** The name of the running trip, `null` if none runs. */
+    val runningTrip: String? = null,
+)
+
+/** Where the tag picker's choices come from; the picker shows a hint unless it is [Taxonomy]. */
+enum class TagSource {
+    /** From `tags.toml`. */
+    Taxonomy,
+    /** There is no `tags.toml`: the tags the ledger uses. */
+    Missing,
+    /** `tags.toml` doesn't parse: the tags the ledger uses. */
+    Invalid,
+}
+
+/** A tag the picker offers, with the transaction's tags that picking it replaces. */
+data class TagChoice(val tag: String, val replaces: List<String>)
+
+/** What the tag picker offers for one transaction, as the core computes it. */
+data class TagChoices(
+    val tags: List<TagChoice>,
+    /** Prefixes such as `share-`: the user types the rest. */
+    val families: List<String>,
+    val source: TagSource,
 )
 
 /** What a sync did with one intent. */
@@ -132,4 +159,16 @@ interface LedgerRepository {
 
     /** A new device ID (spec section 9). */
     fun newDeviceId(): String
+
+    /** What the tag picker offers for transaction [id] with [pending] applied. */
+    suspend fun tagChoices(pending: List<StoredIntent>, id: String): TagChoices
+
+    /** The intents of picking [tag] for transaction [id]: removing its rivals, then adding it. */
+    suspend fun pickTag(pending: List<StoredIntent>, id: String, tag: String): List<Intent>
+
+    /** A new `lentil_id` for an entry this device creates, such as a trip event. */
+    fun newManualId(device: String): String
+
+    /** Whether [name] is a valid trip name and a valid rest after a tag family's prefix. */
+    fun isPlainName(name: String): Boolean
 }
