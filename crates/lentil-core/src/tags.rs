@@ -25,6 +25,16 @@ pub fn is_tag_name(name: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'/' | b'.'))
 }
 
+/// Whether `name` matches `[a-z0-9-]+`: a trip name (spec section 9), and
+/// what the app lets the user type after a tag family's prefix.
+#[must_use]
+pub fn is_plain_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
 /// The tags a ledger uses, read from `tags.toml` (spec section 16).
 #[derive(Clone, Debug, Default)]
 pub struct Taxonomy {
@@ -239,6 +249,16 @@ mod tests {
 
     fn carried(tags: &[&str]) -> Vec<String> {
         tags.iter().map(|t| (*t).to_owned()).collect()
+    }
+
+    #[test]
+    fn plain_names_are_lowercase_letters_digits_and_hyphens() {
+        for name in ["portugal-2026", "a", "2026", "-"] {
+            assert!(is_plain_name(name), "{name:?}");
+        }
+        for name in ["", "Portugal", "a b", "a_b", "a.b", "a/b", "ä", "a\"b"] {
+            assert!(!is_plain_name(name), "{name:?}");
+        }
     }
 
     #[test]

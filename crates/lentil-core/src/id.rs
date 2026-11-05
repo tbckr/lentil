@@ -160,6 +160,34 @@ pub fn manual_id(device_id: &str, now: Timestamp, random: &mut dyn Random) -> St
     format!("{device_id}-{}", new_ulid(now, random))
 }
 
+/// The device and the ULID of a manual `lentil_id` `<device-id>-<ulid>`
+/// (spec sections 5 and 9): 8 characters of `a-z` and `0-9`, `-`, then 26
+/// lowercase Crockford base32 characters. `None` for any other ID.
+fn manual_parts(id: &str) -> Option<(&str, &str)> {
+    let (device, ulid) = id.split_once('-')?;
+    let valid = device.len() == 8
+        && device
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        && ulid.len() == 26
+        && ulid.bytes().all(|b| CROCKFORD.contains(&b));
+    valid.then_some((device, ulid))
+}
+
+/// The device of a manual `lentil_id` `<device-id>-<ulid>`; `None` for any
+/// other ID.
+#[must_use]
+pub fn manual_device(id: &str) -> Option<&str> {
+    manual_parts(id).map(|(device, _)| device)
+}
+
+/// The ULID of a manual `lentil_id` `<device-id>-<ulid>`; `None` for any
+/// other ID. ULIDs compare as strings in the order they were created.
+#[must_use]
+pub fn manual_ulid(id: &str) -> Option<&str> {
+    manual_parts(id).map(|(_, ulid)| ulid)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -369,5 +397,40 @@ mod tests {
         let id = manual_id("k7p2q9xd", Timestamp::UNIX_EPOCH, &mut CountingRandom(0));
         assert!(id.starts_with("k7p2q9xd-"));
         assert_eq!(id.len(), 8 + 1 + 26);
+    }
+
+    #[test]
+    fn manual_ids_name_their_device() {
+        assert_eq!(
+            manual_device("k7p2q9xd-01jc8m2w9z4f7q3r5t6v8x0y1a"),
+            Some("k7p2q9xd")
+        );
+        for id in [
+            "k7p2q9xd",
+            "K7P2Q9XD-01jc8m2w9z4f7q3r5t6v8x0y1a",
+            "k7p2q9x-01jc8m2w9z4f7q3r5t6v8x0y1a",
+            "k7p2q9x.-01jc8m2w9z4f7q3r5t6v8x0y1a",
+            "k7p2q9xdd-01jc8m2w9z4f7q3r5t6v8x0y1a",
+            "k7p2q9xd-01JC8M2W9Z4F7Q3R5T6V8X0Y1A",
+            "k7p2q9xd-01jc8m2w9z4f7q3r5t6v8x0y1",
+            "k7p2q9xd-01jc8m2w9z4f7q3r5t6v8x0y1u",
+            "giro-3f9a1c2e7b4d",
+            "../../x-01jc8m2w9z4f7q3r5t6v8x0y1a",
+        ] {
+            assert_eq!(manual_device(id), None, "{id}");
+        }
+        let id = manual_id("abcdefgh", Timestamp::UNIX_EPOCH, &mut CountingRandom(0));
+        assert_eq!(manual_device(&id), Some("abcdefgh"));
+    }
+
+    #[test]
+    fn manual_ids_carry_their_ulid() {
+        assert_eq!(
+            manual_ulid("k7p2q9xd-01jc8m2w9z4f7q3r5t6v8x0y1a"),
+            Some("01jc8m2w9z4f7q3r5t6v8x0y1a")
+        );
+        assert_eq!(manual_ulid("giro-3f9a1c2e7b4d"), None);
+        assert_eq!(manual_ulid("k7p2q9xd-01jc8m2w9z4f7q3r5t6v8x0y1"), None);
+        assert_eq!(manual_ulid("k7p2q9x.-01jc8m2w9z4f7q3r5t6v8x0y1a"), None);
     }
 }

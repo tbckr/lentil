@@ -20,6 +20,7 @@ use rustledger_loader::{ErrorSeverity, FileSystem, LoadError, LoadOptions};
 use crate::id;
 use crate::snapshot::{Snapshot, glob_match};
 use crate::tags::is_tag_name;
+use crate::trips::TRIP_EVENT;
 
 /// Metadata key of the stable transaction ID (spec section 5).
 pub const META_ID: &str = "lentil_id";
@@ -244,6 +245,23 @@ pub enum ConstructKind {
     TagStack,
 }
 
+/// An `event "trip"` entry (spec section 9), indexed whatever its value.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TripEvent {
+    /// `lentil_id`, if the entry has one.
+    pub id: Option<String>,
+    /// Repository-relative file.
+    pub file: String,
+    /// Byte offset of the entry in `file`, its position for ordering.
+    pub offset: usize,
+    /// 1-based line of the entry.
+    pub line: u32,
+    /// The event's date.
+    pub date: Date,
+    /// The event's value: a trip name, or empty for the end of a trip.
+    pub name: String,
+}
+
 /// The indexed ledger.
 #[derive(Clone, Debug, Default)]
 pub struct Ledger {
@@ -259,6 +277,8 @@ pub struct Ledger {
     pub balance_assertions: Vec<BalanceAssertion>,
     /// All pads.
     pub pads: Vec<PadEntry>,
+    /// Every `event "trip"`, whatever its value, in file order.
+    pub trip_events: Vec<TripEvent>,
     /// Options, includes, plugins and tag stacks for the profile check.
     pub constructs: Vec<Construct>,
     /// Errors from loading, parsing, booking and validation.
@@ -445,6 +465,7 @@ impl Ledger {
         }
         self.balance_assertions.extend(part.balance_assertions);
         self.pads.extend(part.pads);
+        self.trip_events.extend(part.trip_events);
         self.constructs.extend(part.constructs);
     }
 }
@@ -558,6 +579,16 @@ fn index_file(ledger: &mut Ledger, file: &str, text: &str) {
             Directive::Close(c) => {
                 let state = ledger.accounts.entry(c.account.to_string()).or_default();
                 state.closed = Some(c.date);
+            }
+            Directive::Event(e) if e.event_type == TRIP_EVENT => {
+                ledger.trip_events.push(TripEvent {
+                    id: meta_string(&e.meta, META_ID),
+                    file: file.to_owned(),
+                    offset: start,
+                    line: lines.line_of(start),
+                    date: e.date,
+                    name: e.value.clone(),
+                });
             }
             _ => {}
         }
@@ -1365,5 +1396,51 @@ include "imports/*/*/*.beancount"
         assert!(ledger.is_open_on("Assets:Bank:Giro", d("2020-01-01")));
         assert!(!ledger.is_open_on("Assets:Bank:Giro", d("2019-12-31")));
         assert!(!ledger.is_open_on("Assets:Nope", d("2026-01-01")));
+    }
+
+    #[test]
+    fn indexes_trip_events_whatever_their_name() {
+        let manual = "manual/k7p2q9xd/2026-04.beancount";
+        let text = "2026-04-10 event \"trip\" \"portugal-2026\"\n  lentil_id: \"k7p2q9xd-01jc8m2w9z4f7q3r5t6v8x0y1a\"\n2026-04-12 event \"location\" \"Lisbon\"\n2026-04-21 event \"trip\" \"\"\n";
+        let mut s = snapshot();
+        s.insert(
+            "main.beancount",
+            format!("{MAIN}include \"manual/*/*.beancount\"\n"),
+        );
+        let accounts = format!("{ACCOUNTS}2026-04-15 event \"trip\" \"x\"\n");
+        s.insert("accounts.beancount", accounts.as_str());
+        s.insert(manual, text);
+        let ledger = load(&s, "main.beancount");
+        assert!(ledger.errors.is_empty(), "{:?}", ledger.errors);
+        let d = |s: &str| s.parse::<Date>().unwrap();
+        assert_eq!(
+            ledger.trip_events,
+            vec![
+                TripEvent {
+                    id: None,
+                    file: "accounts.beancount".to_owned(),
+                    offset: ACCOUNTS.len(),
+                    line: 4,
+                    date: d("2026-04-15"),
+                    name: "x".to_owned(),
+                },
+                TripEvent {
+                    id: Some("k7p2q9xd-01jc8m2w9z4f7q3r5t6v8x0y1a".to_owned()),
+                    file: manual.to_owned(),
+                    offset: 0,
+                    line: 1,
+                    date: d("2026-04-10"),
+                    name: "portugal-2026".to_owned(),
+                },
+                TripEvent {
+                    id: None,
+                    file: manual.to_owned(),
+                    offset: text.find("2026-04-21").unwrap(),
+                    line: 4,
+                    date: d("2026-04-21"),
+                    name: String::new(),
+                },
+            ]
+        );
     }
 }

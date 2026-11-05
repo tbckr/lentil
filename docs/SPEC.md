@@ -225,7 +225,7 @@ Each import run reads one bank export through an adapter (section 15), writes ex
 
 Manual entries go into files that only one device writes, so two devices can never collide on them (PRD: FR-D8, v1).
 
-- Each device has a `device-id`: 8 random lowercase base32 characters, created once on first start and kept on the device.
+- Each device has a `device-id`: 8 random characters of `a-z` and `0-9`, created once on first start and kept on the device.
 - Entries go to `manual/<device-id>/<YYYY-MM>.beancount`, by the entry's date, and are appended at the end of the file. The include pattern of section 3 picks up new files.
 - Manual transactions carry a `lentil_id` (section 5) and start with flag `*`. Trip events carry a `lentil_id` too and have no flag.
 - In v1, a manual transaction MUST NOT post to a source account: the import brings those transactions anyway, and Lentil cannot yet match a manual entry to the imported one. `lentil status` reports manual postings on source accounts as possible duplicates.
@@ -243,7 +243,7 @@ Manual entries go into files that only one device writes, so two devices can nev
 - `<date> event "trip" "<name>"` starts a trip and `<date> event "trip" ""` ends it. `<name>` MUST match `[a-z0-9-]+`, and the trip's tag is `trip-<name>`; a trip event whose name does not match is ignored.
 - Trip events are appended to the device's month file like other manual entries, through `start-trip` and `end-trip` (section 10). They carry a `lentil_id` (section 5).
 - Lentil uses the event type `"trip"` for trips; other event types pass through unchanged (section 14).
-- The trip of a date follows from the trip events on or before that date, ordered by date, then by file path, then by position in the file. If the latest of them starts a trip, the date lies in that trip. If it ends a trip and is dated at most three days before the date, the date still counts for the trip the preceding start event began, which covers payments that the bank books after the trip. A start event without an end event ends at the next start event, so the later trip wins.
+- The trip of a date follows from the trip events on or before that date, ordered by date, then by the ULID of their `lentil_id` (section 5), which orders the events of one day by the time they were created, then by file path, then by position in the file. On its date, an event without such an ID comes first. An end event that does not follow a start event ends no trip and is ignored. If the latest remaining event starts a trip, the date lies in that trip. If it ends a trip and is dated at most three days before the date, the date still counts for the trip the preceding start event began, which covers payments that the bank books after the trip. A start event without an end event ends at the next start event, so the later trip wins.
 - An active transaction with flag `!` and a `lentil_id`, except a source's opening transaction (section 8), gets the tag of the trip its date lies in suggested, unless it already carries it. A transaction gets at most one trip tag suggested.
 - A suggestion is never written by itself. Clients MUST NOT add a suggested tag without an explicit action of the user, and confirming a transaction MUST NOT accept it.
 
