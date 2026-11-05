@@ -28,6 +28,26 @@
     <string name="split_read_only">Aufgeteilt: im Texteditor bearbeiten</string>
     <string name="no_id_read_only">In der App nicht bearbeitbar</string>
 
+    <string name="tag_add">Schlagwort hinzufügen</string>
+    <string name="tag_remove">#%1$s entfernen</string>
+    <string name="tag_suggested">Vorgeschlagenes Schlagwort #%1$s hinzufügen</string>
+    <string name="tag_picker_title">Schlagwort hinzufügen</string>
+    <string name="tag_replaces">Ersetzt %1$s</string>
+    <string name="tag_families">Familien</string>
+    <string name="tag_family_rest">Rest des Schlagworts</string>
+    <string name="tag_family_add">#%1$s hinzufügen</string>
+    <string name="tag_source_missing">Es gibt keine tags.toml. Das sind die Schlagwörter, die das Haushaltsbuch schon nutzt.</string>
+    <string name="tag_source_invalid">tags.toml lässt sich nicht lesen. Das sind die Schlagwörter, die das Haushaltsbuch schon nutzt.</string>
+    <string name="tag_picker_empty">Es gibt keine Schlagwörter zur Auswahl.</string>
+    <string name="action_start_trip">Reise starten</string>
+    <string name="action_end_trip">Reise %1$s beenden</string>
+    <string name="trip_start_title">Reise starten</string>
+    <string name="trip_start_text">Offene Buchungen ab heute bis drei Tage nach dem Ende der Reise bekommen das Schlagwort der Reise vorgeschlagen.</string>
+    <string name="trip_name">Name, etwa lissabon-2026</string>
+    <string name="trip_name_rule">Kleinbuchstaben, Ziffern und Bindestriche</string>
+    <string name="trip_start_confirm">Starten</string>
+    <string name="status_trip">Auf Reise %1$s</string>
+
     <string name="status_syncing">Synchronisiere…</string>
     <string name="status_up_to_date">Auf dem neuesten Stand</string>
     <string name="status_offline">Server nicht erreichbar</string>

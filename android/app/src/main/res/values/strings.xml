@@ -31,6 +31,27 @@
     <string name="split_read_only">Split: edit it in a text editor</string>
     <string name="no_id_read_only">Can\'t be edited in the app</string>
 
+    <!-- Tags and trips (PRD: FR-D12, FR-D13) -->
+    <string name="tag_add">Add tag</string>
+    <string name="tag_remove">Remove #%1$s</string>
+    <string name="tag_suggested">Add the suggested tag #%1$s</string>
+    <string name="tag_picker_title">Add a tag</string>
+    <string name="tag_replaces">Replaces %1$s</string>
+    <string name="tag_families">Families</string>
+    <string name="tag_family_rest">Rest of the tag</string>
+    <string name="tag_family_add">Add #%1$s</string>
+    <string name="tag_source_missing">There is no tags.toml. These are the tags the ledger already uses.</string>
+    <string name="tag_source_invalid">tags.toml can\'t be read. These are the tags the ledger already uses.</string>
+    <string name="tag_picker_empty">There are no tags to choose from.</string>
+    <string name="action_start_trip">Start trip</string>
+    <string name="action_end_trip">End trip %1$s</string>
+    <string name="trip_start_title">Start a trip</string>
+    <string name="trip_start_text">Open transactions dated from today until three days after the trip ends get its tag suggested.</string>
+    <string name="trip_name">Name, such as lisbon-2026</string>
+    <string name="trip_name_rule">Lowercase letters, digits and hyphens</string>
+    <string name="trip_start_confirm">Start</string>
+    <string name="status_trip">On trip %1$s</string>
+
     <!-- Sync status, without Git terms (PRD: FR-D6) -->
     <string name="status_syncing">Syncing…</string>
     <string name="status_up_to_date">Up to date</string>

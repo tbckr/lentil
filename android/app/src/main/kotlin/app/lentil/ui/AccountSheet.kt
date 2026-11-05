@@ -77,7 +77,7 @@ fun AccountSheet(
 }
 
 @Composable
-private fun Header(text: String) {
+internal fun Header(text: String) {
     Text(
         text,
         style = MaterialTheme.typography.labelLarge,
@@ -95,7 +95,7 @@ private fun Account(account: String, onSelect: (String) -> Unit) {
 }
 
 /** List items on the sheet's own background. */
-@Composable private fun transparent() = ListItemDefaults.colors(containerColor = Color.Transparent)
+@Composable internal fun transparent() = ListItemDefaults.colors(containerColor = Color.Transparent)
 
 /**
  * Whether [name] looks like a Beancount account, such as `Expenses:Garden`. Only a hint for the

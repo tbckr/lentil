@@ -11,9 +11,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
@@ -24,6 +26,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -57,7 +60,7 @@ fun QueueScreen(viewModel: QueueViewModel, onChangeConnection: () -> Unit) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var accountFor by remember { mutableStateOf<QueueEntry?>(null) }
     var dismissFor by remember { mutableStateOf<QueueEntry?>(null) }
-    var menu by remember { mutableStateOf(false) }
+    var startingTrip by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -70,23 +73,13 @@ fun QueueScreen(viewModel: QueueViewModel, onChangeConnection: () -> Unit) {
                             contentDescription = stringResource(R.string.action_sync),
                         )
                     }
-                    Box {
-                        IconButton(onClick = { menu = true }) {
-                            Icon(
-                                painterResource(R.drawable.ic_more_vert),
-                                contentDescription = stringResource(R.string.action_more),
-                            )
-                        }
-                        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.action_change_connection)) },
-                                onClick = {
-                                    menu = false
-                                    onChangeConnection()
-                                },
-                            )
-                        }
-                    }
+                    QueueMenu(
+                        runningTrip = state.runningTrip,
+                        editable = state.tripsEditable,
+                        onStartTrip = { startingTrip = true },
+                        onEndTrip = viewModel::endTrip,
+                        onChangeConnection = onChangeConnection,
+                    )
                 },
             )
         }
@@ -134,6 +127,9 @@ fun QueueScreen(viewModel: QueueViewModel, onChangeConnection: () -> Unit) {
                         onConfirm = { viewModel.confirm(entry) },
                         onAccount = { accountFor = entry },
                         onDismiss = { dismissFor = entry },
+                        onAddTag = { viewModel.openTagPicker(entry) },
+                        onRemoveTag = { tag -> viewModel.removeTag(entry, tag) },
+                        onAcceptSuggestion = { viewModel.acceptSuggestion(entry) },
                     )
                 }
             }
@@ -154,6 +150,26 @@ fun QueueScreen(viewModel: QueueViewModel, onChangeConnection: () -> Unit) {
                 accountFor = null
             },
             onClose = { accountFor = null },
+        )
+    }
+
+    state.tagPicker?.let { picker ->
+        TagSheet(
+            choices = picker.choices,
+            isPlainName = viewModel::isPlainName,
+            onPick = { tag -> viewModel.pickTag(picker.entry, tag) },
+            onClose = viewModel::closeTagPicker,
+        )
+    }
+
+    if (startingTrip) {
+        StartTripDialog(
+            isPlainName = viewModel::isPlainName,
+            onStart = { name ->
+                viewModel.startTrip(name)
+                startingTrip = false
+            },
+            onClose = { startingTrip = false },
         )
     }
 
@@ -178,6 +194,51 @@ fun QueueScreen(viewModel: QueueViewModel, onChangeConnection: () -> Unit) {
                 }
             },
         )
+    }
+}
+
+/** The top bar's menu: start or end a trip (PRD: FR-D13), and change the connection. */
+@Composable
+private fun QueueMenu(
+    runningTrip: String?,
+    editable: Boolean,
+    onStartTrip: () -> Unit,
+    onEndTrip: () -> Unit,
+    onChangeConnection: () -> Unit,
+) {
+    var menu by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { menu = true }) {
+            Icon(
+                painterResource(R.drawable.ic_more_vert),
+                contentDescription = stringResource(R.string.action_more),
+            )
+        }
+        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            DropdownMenuItem(
+                text = {
+                    Text(
+                        if (runningTrip == null) {
+                            stringResource(R.string.action_start_trip)
+                        } else {
+                            stringResource(R.string.action_end_trip, runningTrip)
+                        }
+                    )
+                },
+                enabled = editable,
+                onClick = {
+                    menu = false
+                    if (runningTrip == null) onStartTrip() else onEndTrip()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.action_change_connection)) },
+                onClick = {
+                    menu = false
+                    onChangeConnection()
+                },
+            )
+        }
     }
 }
 
@@ -206,8 +267,9 @@ private fun StatusLine(state: QueueUiState) {
         stringResource(R.string.status_up_to_date).takeIf {
             state.sync == SyncStatus.UpToDate && pending == null
         }
+    val trip = state.runningTrip?.let { stringResource(R.string.status_trip, it) }
     Column {
-        listOfNotNull(upToDate, pending, problem).forEach {
+        listOfNotNull(trip, upToDate, pending, problem).forEach {
             Text(it, style = MaterialTheme.typography.bodyMedium)
         }
     }
@@ -220,6 +282,9 @@ private fun QueueRow(
     onConfirm: () -> Unit,
     onAccount: () -> Unit,
     onDismiss: () -> Unit,
+    onAddTag: () -> Unit,
+    onRemoveTag: (String) -> Unit,
+    onAcceptSuggestion: () -> Unit,
 ) {
     val editable = writable && entry.editable
     var menu by remember { mutableStateOf(false) }
@@ -295,8 +360,48 @@ private fun QueueRow(
                     }
                 }
             }
+            TagChips(entry, editable, onAddTag, onRemoveTag, onAcceptSuggestion)
         }
     }
+}
+
+/** Asks for the name of a new trip; only a name by the core's rule can start it. */
+@Composable
+private fun StartTripDialog(
+    isPlainName: (String) -> Boolean,
+    onStart: (String) -> Unit,
+    onClose: () -> Unit,
+) {
+    var name by remember { mutableStateOf("") }
+    val trimmed = name.trim()
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text(stringResource(R.string.trip_start_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(stringResource(R.string.trip_start_text))
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text(stringResource(R.string.trip_name)) },
+                    supportingText = { Text(stringResource(R.string.trip_name_rule)) },
+                    isError = breaksNameRule(trimmed, isPlainName),
+                    singleLine = true,
+                    keyboardOptions = NAME_KEYBOARD,
+                    keyboardActions =
+                        KeyboardActions(onDone = { if (isPlainName(trimmed)) onStart(trimmed) }),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onStart(trimmed) }, enabled = isPlainName(trimmed)) {
+                Text(stringResource(R.string.trip_start_confirm))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onClose) { Text(stringResource(R.string.cancel)) }
+        },
+    )
 }
 
 @Composable
