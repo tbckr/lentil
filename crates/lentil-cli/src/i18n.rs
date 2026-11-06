@@ -246,7 +246,7 @@ pub fn text(lang: Lang, msg: Msg) -> &'static str {
         (RulesTag, En | De) => "    {sign} #{tag}",
         (RulesTagConflict, En | De) => "    {sign} #{tag}: {reason}",
         (StaleTagsHeader, En) => "The rules no longer yield these tags ({count}):",
-        (StaleTagsHeader, De) => "Diese Tags ergeben die Regeln nicht mehr ({count}):",
+        (StaleTagsHeader, De) => "Diese Schlagwörter ergeben die Regeln nicht mehr ({count}):",
         (StaleTag, En | De) => "    #{tag}",
         (PromptRemoveTag, En) => "    Remove #{tag}? [y/N] ",
         (PromptRemoveTag, De) => "    #{tag} entfernen? [j/N] ",
@@ -254,18 +254,18 @@ pub fn text(lang: Lang, msg: Msg) -> &'static str {
             "Kept: tags are removed only after a confirmation in a terminal, without --yes."
         }
         (StaleTagsKept, De) => {
-            "Behalten: Tags werden nur nach einer Bestätigung im Terminal entfernt, ohne --yes."
+            "Behalten: Schlagwörter werden nur nach einer Bestätigung im Terminal entfernt, ohne --yes."
         }
         (StaleTagsNone, En) => "No tag to remove.",
-        (StaleTagsNone, De) => "Kein Tag zu entfernen.",
+        (StaleTagsNone, De) => "Kein Schlagwort zu entfernen.",
         (StaleTagsNeedTags, En) => {
             "--stale-tags looks at tags, so it cannot be combined with --only payee or --only account"
         }
         (StaleTagsNeedTags, De) => {
-            "--stale-tags betrifft Tags und lässt sich daher nicht mit --only payee oder --only account verbinden"
+            "--stale-tags betrifft Schlagwörter und lässt sich daher nicht mit --only payee oder --only account verbinden"
         }
         (TagsRemoved, En) => "These tags were removed ({count}):",
-        (TagsRemoved, De) => "Diese Tags wurden entfernt ({count}):",
+        (TagsRemoved, De) => "Diese Schlagwörter wurden entfernt ({count}):",
         (RulesNothing, En) => "The rules change nothing.",
         (RulesNothing, De) => "Die Regeln ändern nichts.",
         (RulesWouldBlock, En) => {
@@ -281,7 +281,7 @@ pub fn text(lang: Lang, msg: Msg) -> &'static str {
         (FieldAccount, En) => "account",
         (FieldAccount, De) => "Konto",
         (FieldTags, En) => "tags",
-        (FieldTags, De) => "Tags",
+        (FieldTags, De) => "Schlagwörter",
         (NoPayee, En) => "(none)",
         (NoPayee, De) => "(keiner)",
         (StatusOpen, En) => "Open transactions: {count}",
@@ -499,7 +499,7 @@ pub fn rules_error(lang: Lang, error: &RulesError) -> String {
         ),
         NoCondition(rule) => (
             "rule {rule} has neither a regular expression nor tags in match",
-            "Regel {rule} hat in match weder einen regulären Ausdruck noch Tags",
+            "Regel {rule} hat in match weder einen regulären Ausdruck noch Schlagwörter",
             vec![("rule", rule.to_string())],
         ),
         NoOutput(rule) => (
@@ -509,17 +509,17 @@ pub fn rules_error(lang: Lang, error: &RulesError) -> String {
         ),
         EmptyTags(rule) => (
             "rule {rule} has an empty list of tags",
-            "Regel {rule} hat eine leere Liste von Tags",
+            "Regel {rule} hat eine leere Liste von Schlagwörtern",
             vec![("rule", rule.to_string())],
         ),
         InvalidTag { rule, tag } => (
             "rule {rule} has the tag {tag}, which is not a valid tag",
-            "Regel {rule} hat den Tag {tag}, der kein gültiger Tag ist",
+            "Regel {rule} hat das Schlagwort {tag}, das kein gültiges Schlagwort ist",
             vec![("rule", rule.to_string()), ("tag", format!("{tag:?}"))],
         ),
         TagMatchSetsField(rule) => (
             "rule {rule} matches tags, so it may only add tags",
-            "Regel {rule} prüft Tags und darf daher nur Tags hinzufügen",
+            "Regel {rule} prüft Schlagwörter und darf daher nur Schlagwörter hinzufügen",
             vec![("rule", rule.to_string())],
         ),
         EmptyPayee(rule) => (
@@ -559,7 +559,9 @@ pub fn taxonomy_error(lang: Lang, error: &TaxonomyError) -> String {
         (TaxonomyError::NotUtf8, Lang::En) => "the file is not UTF-8 text".to_owned(),
         (TaxonomyError::NotUtf8, Lang::De) => "die Datei ist kein UTF-8-Text".to_owned(),
         (TaxonomyError::InvalidTag(tag), Lang::En) => format!("{tag:?} is not a valid tag"),
-        (TaxonomyError::InvalidTag(tag), Lang::De) => format!("{tag:?} ist kein gültiger Tag"),
+        (TaxonomyError::InvalidTag(tag), Lang::De) => {
+            format!("{tag:?} ist kein gültiges Schlagwort")
+        }
     }
 }
 
@@ -725,7 +727,7 @@ pub fn tag_warning(lang: Lang, warning: &TagWarning) -> String {
         }
         (TagWarning::UnknownRuleTag { rule, tag }, Lang::De) => {
             format!(
-                "rules.toml: {severity}: Regel {rule} nutzt #{tag}, der nicht in tags.toml steht."
+                "rules.toml: {severity}: Regel {rule} nutzt #{tag}, das nicht in tags.toml steht."
             )
         }
     }
@@ -761,7 +763,7 @@ pub fn conflict(lang: Lang, code: ConflictCode) -> &'static str {
         (InvalidAccount, En) => "the account name is invalid",
         (InvalidAccount, De) => "der Kontoname ist ungültig",
         (InvalidTag, En) => "the tag is not a valid tag",
-        (InvalidTag, De) => "der Tag ist kein gültiger Tag",
+        (InvalidTag, De) => "das Schlagwort ist kein gültiges Schlagwort",
         (InvalidTrip, En) => "the trip's name or ID is invalid",
         (InvalidTrip, De) => "Name oder ID der Reise sind ungültig",
     }
@@ -868,7 +870,7 @@ mod tests {
         );
         assert_eq!(
             rules_error(Lang::De, &invalid),
-            "Regel 2 hat den Tag \"#x\", der kein gültiger Tag ist"
+            "Regel 2 hat das Schlagwort \"#x\", das kein gültiges Schlagwort ist"
         );
         assert_eq!(
             rules_error(Lang::En, &RulesError::EmptyTags(3)),
@@ -880,7 +882,7 @@ mod tests {
         );
         assert_eq!(
             rules_error(Lang::De, &RulesError::TagMatchSetsField(2)),
-            "Regel 2 prüft Tags und darf daher nur Tags hinzufügen"
+            "Regel 2 prüft Schlagwörter und darf daher nur Schlagwörter hinzufügen"
         );
         assert_eq!(
             rules_error(Lang::En, &RulesError::Regex("(?<=x)".into())),
@@ -944,7 +946,7 @@ mod tests {
         );
         assert_eq!(
             tag_warning(Lang::De, &rule),
-            "rules.toml: Warnung: Regel 2 nutzt #recuring, der nicht in tags.toml steht."
+            "rules.toml: Warnung: Regel 2 nutzt #recuring, das nicht in tags.toml steht."
         );
         let broken = InputProblem::Taxonomy(TaxonomyError::InvalidTag("#x".into()));
         assert_eq!(
@@ -953,7 +955,7 @@ mod tests {
         );
         assert_eq!(
             input_problem(Lang::De, &broken),
-            "tags.toml ist ungültig: \"#x\" ist kein gültiger Tag"
+            "tags.toml ist ungültig: \"#x\" ist kein gültiges Schlagwort"
         );
     }
 
