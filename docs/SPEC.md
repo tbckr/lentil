@@ -43,7 +43,7 @@ prices/
   2026/
     20261020.beancount             exchange rates, one file per fetch (section 8)
 status/
-  bot-1.json                       bot status (section 17, later)
+  bot-1.json                       bot status (section 17)
 README.md                          explains the convention
 ```
 
@@ -76,16 +76,16 @@ spec_version = 0
 main_file = "main.beancount"
 fallback_account = "Expenses:Uncategorized"
 unattributed_account = "Expenses:Unattributed"
-price_currencies = ["USD"]        # v1: ECB rates fetched by lentil prices
+price_currencies = ["USD"]        # currencies with ECB rates (section 8)
 
 [[source]]                        # imported account
 id = "giro"                       # [a-z0-9-], used in paths and IDs
 account = "Assets:Bank:Giro"
 currency = "EUR"
-importer = "csv"                  # "csv"; "fints" may follow later
+importer = "csv"                  # the only importer
 mapping = "sources/giro.toml"     # CSV mapping (section 15)
 
-[[snapshot]]                      # balance-tracked account (v1)
+[[snapshot]]                      # balance-tracked account
 account = "Assets:PaymentService"
 currency = "EUR"
 ```
@@ -94,7 +94,7 @@ currency = "EUR"
 - Each `[[source]]` describes one bank account or card that is imported. `id` MUST be unique, MUST NOT be `keep` (section 3) and MUST NOT change once transactions exist, because it is part of every imported ID.
 - Each `[[snapshot]]` describes one balance-tracked account (section 9). An account MUST NOT be both a source account and a snapshot account.
 - `fallback_account` is the counter account when no suggestion exists; `unattributed_account` receives differences between balance snapshots. Both MUST be opened in `accounts.beancount`.
-- `price_currencies` lists the currencies for which lentil prices fetches ECB reference rates (v1).
+- `price_currencies` lists the currencies for which a client fetches ECB reference rates (section 8).
 - Credentials, PINs and tokens MUST NOT appear in `lentil.toml` or anywhere in the repository (PRD: Security).
 - Mapping files under `sources/` follow section 15. Only the admin role creates or changes them.
 
@@ -145,9 +145,9 @@ Every client acts in one of three roles, and each role may only touch its own ar
 
 | Role | Used by | May create | May change | MUST NOT |
 | --- | --- | --- | --- | --- |
-| Importer | CLI import; from v1 import on Android and the Parqet import; later a bot | New run files under `imports/<source-id>/`; price files under `prices/` (v1); `status/<bot-id>.json` | Nothing that already exists | Change, move or remove existing transactions |
-| Editor | Android; CLI `rules apply`; a local web UI if built | Files under `manual/<device-id>/`, including balance snapshots and trip events (section 9); `open` directives in `accounts.beancount` | Flag, payee, narration, tags, links, metadata other than `lentil_id`, `lentil_ref` and the original fields (section 5), and the account of postings that are not on a source account | Change dates, a source posting, `lentil_id`, `lentil_ref` or an original field; move a posting onto a source account; delete transactions; write manual transactions or pads that post to a source account |
-| Admin | CLI (`init`, `adopt`, config commands) | Anything | Anything | Break any rule of this spec in the resulting state |
+| Importer | CLI import | New run files under `imports/<source-id>/`; price files under `prices/`; `status/<bot-id>.json` | Nothing that already exists | Change, move or remove existing transactions |
+| Editor | Android; CLI `rules apply` | Files under `manual/<device-id>/`, including balance snapshots and trip events (section 9); `open` directives in `accounts.beancount` | Flag, payee, narration, tags, links, metadata other than `lentil_id`, `lentil_ref` and the original fields (section 5), and the account of postings that are not on a source account | Change dates, a source posting, `lentil_id`, `lentil_ref` or an original field; move a posting onto a source account; delete transactions; write manual transactions or pads that post to a source account |
+| Admin | CLI `init`; hand edits | Anything | Anything | Break any rule of this spec in the resulting state |
 
 - Every posting on a source account is a source posting. Editors never move a posting onto a source account, and suggestions never name one (section 16), so each side of a transfer between two source accounts stays a transaction of its own (section 8).
 - A client declares its role in every commit (section 12). Validation checks the commit's changes against that role (section 13).
@@ -219,19 +219,19 @@ Each import run reads one bank export through an adapter (section 15), writes ex
 - The transfer account holds the money in transit. A balance that remains on it points to a transfer whose other side is missing.
 - Beancount has no dates per posting. A single transaction with postings on both source accounts would carry one date, so a balance assertion of the other account between the two booking dates would fail.
 
-**Exchange rates (v1).** lentil prices fetches the ECB reference rates for the currencies in `price_currencies` at most once per business day, run by hand or from a timer. It writes them as `price` directives into a new file `prices/<YYYY>/<YYYYMMDD>.beancount`; a day without new rates writes no file. Prices entered by hand go into the same layout under the admin role.
+**Exchange rates.** A client that fetches exchange rates reads the ECB reference rates for the currencies in `price_currencies` at most once per business day, by hand or from a timer. It writes them as `price` directives into a new file `prices/<YYYY>/<YYYYMMDD>.beancount`; a day without new rates writes no file. Prices entered by hand go into the same layout under the admin role.
 
 ## 9. Manual entries and balance snapshots
 
-Manual entries go into files that only one device writes, so two devices can never collide on them (PRD: FR-D8, v1).
+Manual entries go into files that only one device writes, so two devices can never collide on them.
 
 - Each device has a `device-id`: 8 random characters of `a-z` and `0-9`, created once on first start and kept on the device.
 - Entries go to `manual/<device-id>/<YYYY-MM>.beancount`, by the entry's date, and are appended at the end of the file. The include pattern of section 3 picks up new files.
 - Manual transactions carry a `lentil_id` (section 5) and start with flag `*`. Trip events carry a `lentil_id` too and have no flag.
-- In v1, a manual transaction MUST NOT post to a source account: the import brings those transactions anyway, and Lentil cannot yet match a manual entry to the imported one. `lentil status` reports manual postings on source accounts as possible duplicates.
+- A manual transaction MUST NOT post to a source account: the import brings those transactions anyway, and Lentil does not match a manual entry to the imported one (section 18). Validation blocks such a posting (section 13).
 - A device MUST NOT write into another device's directory. Edits to existing manual entries use the edit operations of section 10 like any other transaction.
 
-**Trips (v0.1).** A trip records its dates in the device's files, so a client can suggest the trip's tag when the trip's transactions arrive with a later import (PRD: FR-D13).
+**Trips.** A trip records its dates in the device's files, so a client can suggest the trip's tag when the trip's transactions arrive with a later import (PRD: FR-D13).
 
 ```beancount
 2026-04-10 event "trip" "portugal-2026"
@@ -247,7 +247,7 @@ Manual entries go into files that only one device writes, so two devices can nev
 - An active transaction with flag `!` and a `lentil_id`, except a source's opening transaction (section 8), gets the tag of the trip its date lies in suggested, unless it already carries it. A transaction gets at most one trip tag suggested.
 - A suggestion is never written by itself. Clients MUST NOT add a suggested tag without an explicit action of the user, and confirming a transaction MUST NOT accept it.
 
-**Balance snapshots (v1).** A balance-tracked account (`[[snapshot]]` in section 4) has no transactions from a bank. Its user enters the balance once or twice a month, and the difference to the computed balance is booked to `unattributed_account`. This keeps net worth exact without importing every transaction.
+**Balance snapshots.** A balance-tracked account (`[[snapshot]]` in section 4) has no transactions from a bank. Its user enters the balance once or twice a month, and the difference to the computed balance is booked to `unattributed_account`. This keeps net worth exact without importing every transaction.
 
 - The user enters the balance at the start of a day, before that day's transactions.
 - The editor computes the account's balance at that point with the core. If it matches, the editor writes only the balance assertion. If it differs, it also writes a `pad` dated the previous day, from the account to `unattributed_account`; the first snapshot of an account pads from `Equity:OpeningBalances`.
@@ -264,22 +264,22 @@ Manual entries go into files that only one device writes, so two devices can nev
 
 Clients never ship text diffs; they record intents that name what they change, usually a transaction by its ID, and carry the value the user saw where the change has one, so they can be re-applied safely to a newer state.
 
-| Operation | Arguments | Precondition | Effect | Role | Release |
-| --- | --- | --- | --- | --- | --- |
-| `confirm` | id | Transaction is active | Flag becomes `*` | Editor | v0.1 |
-| `set-account` | id, posting index, old, new | Posting has account `old` and is not a source posting; `new` is open and not a source account | Account becomes `new` | Editor | v0.1 |
-| `set-payee` | id, old, new | Payee equals `old`; `old` is absent if the transaction has no payee | Payee becomes `new`; without a payee, `"<new>" ` is inserted before the narration | Editor | v0.1 |
-| `dismiss` | id | Transaction is active | Transaction is commented out in place | Editor | v0.1 |
-| `open-account` | account, date | Account is not open | `<date> open <account>` appended to `accounts.beancount` | Editor, Admin | v0.1 |
-| `add-import-run` | source, file, content | File does not exist | New run file written | Importer | v0.1 |
-| `add-tag` | id, tag | Transaction is active | `#<tag>` added to the header | Editor | v0.1 |
-| `remove-tag` | id, tag | Transaction is active | `#<tag>` removed from the header | Editor | v0.1 |
-| `start-trip` | id, date, name | — | `<date> event "trip" "<name>"` with `lentil_id` `id` appended to the device's month file (section 9) | Editor | v0.1 |
-| `end-trip` | id, date | — | `<date> event "trip" ""` with `lentil_id` `id` appended to the device's month file (section 9) | Editor | v0.1 |
-| `set-narration` | id, old, new | Narration equals `old` | Narration becomes `new` | Editor | v1 |
-| `set-meta` | id, key, old, new | Key is not `lentil_id`, `lentil_ref` or an original field (section 5); value equals `old` | Value becomes `new` | Editor | v1 |
-| `add-entry` | device file, entry | File belongs to this device | Entry appended | Editor | v1 |
-| `add-snapshot` | account, date, amount | Account is a snapshot account; no balance assertion for it on that date | Balance assertion and, only if needed, a pad appended to the device's month file (section 9) | Editor | v1 |
+| Operation | Arguments | Precondition | Effect | Role |
+| --- | --- | --- | --- | --- |
+| `confirm` | id | Transaction is active | Flag becomes `*` | Editor |
+| `set-account` | id, posting index, old, new | Posting has account `old` and is not a source posting; `new` is open and not a source account | Account becomes `new` | Editor |
+| `set-payee` | id, old, new | Payee equals `old`; `old` is absent if the transaction has no payee | Payee becomes `new`; without a payee, `"<new>" ` is inserted before the narration | Editor |
+| `dismiss` | id | Transaction is active | Transaction is commented out in place | Editor |
+| `open-account` | account, date | Account is not open | `<date> open <account>` appended to `accounts.beancount` | Editor, Admin |
+| `add-import-run` | source, file, content | File does not exist | New run file written | Importer |
+| `add-tag` | id, tag | Transaction is active | `#<tag>` added to the header | Editor |
+| `remove-tag` | id, tag | Transaction is active | `#<tag>` removed from the header | Editor |
+| `start-trip` | id, date, name | — | `<date> event "trip" "<name>"` with `lentil_id` `id` appended to the device's month file (section 9) | Editor |
+| `end-trip` | id, date | — | `<date> event "trip" ""` with `lentil_id` `id` appended to the device's month file (section 9) | Editor |
+| `set-narration` | id, old, new | Narration equals `old` | Narration becomes `new` | Editor |
+| `set-meta` | id, key, old, new | Key is not `lentil_id`, `lentil_ref` or an original field (section 5); value equals `old` | Value becomes `new` | Editor |
+| `add-entry` | device file, entry | File belongs to this device | Entry appended | Editor |
+| `add-snapshot` | account, date, amount | Account is a snapshot account; no balance assertion for it on that date | Balance assertion and, only if needed, a pad appended to the device's month file (section 9) | Editor |
 
 **Applying an intent.** For each intent, in creation order:
 
@@ -364,19 +364,17 @@ The v0 profile is the small part of Beancount that a repository created by `init
 | `plugin` | Outside | No plugins in v0 |
 | `open`, `close`, `commodity` | Supported |  |
 | Transactions with flag, payee, narration, tags, links, metadata | Supported |  |
-| Amounts in any currency, price annotations `@` and `@@` | Supported | Needed for foreign currencies (v1) |
-| Cost annotations `{...}` | Outside | Securities with lots come in v1 (PRD: N17) |
+| Amounts in any currency, price annotations `@` and `@@` | Supported | Needed for foreign currencies |
+| Cost annotations `{...}` | Outside |  |
 | Posting with elided amount | Supported | At most one per transaction |
-| `balance`, `pad`, `price` | Supported | `pad` only on balance-tracked accounts (section 9); `price` from lentil prices or written by hand |
-| `note`, `document`, `event`, `query`, `custom` | Supported | Passed through unchanged, except that `event "trip"` marks trips (section 9); `custom "budget"` is used after v1 |
+| `balance`, `pad`, `price` | Supported | `pad` only on balance-tracked accounts (section 9); `price` fetched as in section 8 or written by hand |
+| `note`, `document`, `event`, `query`, `custom` | Supported | Passed through unchanged, except that `event "trip"` marks trips (section 9) |
 | `pushtag`, `poptag` | Outside |  |
 | Posting flags | Supported | Preserved, no meaning (section 6) |
 
-The profile widens with `adopt` in v1, so existing ledgers can be taken over without rewriting them.
-
 ## 15. Import mappings
 
-An importer reads a bank export through an adapter that turns it into statement records. Everything after that works on records only and knows nothing about the bank: IDs, duplicate checks, suggestions, balance assertions and the run file (section 8). v0 defines one adapter, CSV with a declarative mapping file. Adapters added later, for example for camt.053, MUST produce the same records.
+An importer reads a bank export through an adapter that turns it into statement records. Everything after that works on records only and knows nothing about the bank: IDs, duplicate checks, suggestions, balance assertions and the run file (section 8). v0 defines one adapter, CSV with a declarative mapping file. Any other adapter, for example for camt.053, MUST produce the same records.
 
 **Statement records.**
 
@@ -428,7 +426,7 @@ column = "Saldo"                       # with from = "column"
 
 **Rules.**
 
-- Mapping files are data. They MUST NOT name programs, scripts or shell commands, because any device with write access to the repository could otherwise run code on the machine that imports. A converter that runs a program, if one is added later, is configured outside the repository.
+- Mapping files are data. They MUST NOT name programs, scripts or shell commands, because any device with write access to the repository could otherwise run code on the machine that imports. A converter that runs a program is configured outside the repository.
 - The format is versioned with `spec_version`. A client MUST reject a mapping with an unknown key or a missing required key. New keys are added only when a real export needs them, together with a test case.
 - The header row is the first row that contains every cell listed in `header`, compared after trimming. Rows before it are ignored. If no row matches, the import aborts, because the export no longer matches the mapping.
 - Columns are referenced by header name only, never by position. A reordered export still imports; a renamed column aborts the import and names the column.
@@ -441,7 +439,7 @@ column = "Saldo"                       # with from = "column"
 - `from = "column"`: in booking order, each row's balance MUST equal the previous row's balance plus its amount. This check also shows whether the bank lists rows oldest or newest first. If neither order fits, the importer writes no assertion and reports the mapping as suspect. Otherwise it uses the balance after the last booking before the run date.
 - `from = "text"`: `pattern` is matched against the lines before the header row and from the `end` line on. The named group `amount` is required; `date` is optional and read with `date_format`. Without `date`, the balance refers to the run date.
 - `from = "none"`: the CLI asks for the balance (section 8).
-- Lentil may later ship ready-made mappings for common banks. Each comes with an anonymized sample export and its expected records as a test.
+- A ready-made mapping that Lentil ships for a bank comes with an anonymized sample export and its expected records as a test.
 
 ## 16. Suggestion rules
 
@@ -485,7 +483,7 @@ add_tags = ["recurring"]
 - When re-applying, a field changes only if a rule sets it to a different value, and the account only if exactly one posting of the transaction is not on a source account. Tags of the evaluation that the transaction lacks are added. A change whose operation conflicts is shown to the user and left out; the others are committed.
 - A client lists removal candidates only when the user asks for them, for example after narrowing a rule. A removal candidate is a tag on a considered transaction that appears in the `add_tags` of some rule in `rules.toml`, but that the evaluation does not yield for the transaction when it starts from the transaction's tags that appear in no rule's `add_tags`. The hold-back always uses the tags the transaction carries. Lentil cannot tell a tag a rule added from one the user added, so the client removes each candidate only after the user confirms it, through a `remove-tag` intent created at confirmation and not planned again on a newly fetched state. Tags to add are computed after the confirmed removals are applied, so a removed tag never justifies an added one.
 - Learned suggestions are computed from reviewed (`*`) transactions. Their input is the original text (section 5) and the source account, never payee or narration, which users may edit (PRD: FR-C8). They suggest only the counter account, never a source account and never tags, and they need no file of their own, so any client can recompute them.
-- In v0.1 only the admin role edits `rules.toml`. In v1 editors add rules through an `add-rule` operation (PRD: FR-C11).
+- Only the admin role edits `rules.toml`.
 
 **Tag taxonomy (`tags.toml`).** An optional `tags.toml` at the repository root lists the tags a ledger uses, so editors can offer them and `lentil check` can find typos and clashes (PRD: FR-A8).
 
@@ -501,9 +499,9 @@ exclusive = [["recurring", "irregular"]]
 - Re-applying the rules reads `tags.toml` for its exclusive groups and stops if the file does not parse, as for a broken `rules.toml`; without the file, no group holds a tag back. Import does not read it, because a transaction being imported carries no tags before the evaluation.
 - Editors read it to offer tags. If it is missing or does not parse, they offer the tags already used in the ledger and never block on it. When the user picks a tag of an exclusive group of which the transaction already carries another member, the editor says so and replaces that member: it writes `remove-tag` for it and `add-tag` for the pick.
 
-## 17. Bot status file (later)
+## 17. Bot status file
 
-Deferred until automatic bank access exists. A bot then reports its health through a small JSON file in the repository, so clients learn about errors and expiring bank access at their next sync without extra infrastructure (PRD: FR-C15).
+A bot that fetches accounts automatically reports its health through a small JSON file in the repository, so clients learn about errors and expiring bank access at their next sync without extra infrastructure.
 
 ```json
 {
@@ -542,4 +540,4 @@ Seven questions are settled; one remains open.
 
 **Open**
 
-- [ ] **Matching manual and imported entries (after v1):** match a manual entry to a later import by account, amount and a date within a few days, as beancount-import does with up to 5 days. Until then, section 9 forbids manual postings on source accounts.
+- [ ] **Matching manual and imported entries:** match a manual entry to a later import by account, amount and a date within a few days, as beancount-import does with up to 5 days. Until then, section 9 forbids manual postings on source accounts.

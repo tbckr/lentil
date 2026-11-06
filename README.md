@@ -3,27 +3,27 @@
 Lentil makes [Beancount](https://github.com/beancount/beancount/) practical for everyday use: you import your bank's CSV exports, every transaction arrives with a suggested account, and you review it with one tap on your phone. Your ledger stays a Git repository of standard Beancount files that you own.
 
 > [!WARNING]
-> Lentil is an early, unreleased draft of v0.1. The convention its clients follow is at `spec_version` 0 and may still change incompatibly until version 1, so try Lentil on a test ledger first.
+> Lentil is an early, unreleased draft. The convention its clients follow is at `spec_version` 0 and may still change incompatibly until version 1, so try Lentil on a test ledger first.
 
 ## Why Lentil
 
 Lentil cuts the work per transaction down to one confirmation, without taking your data out of your hands.
 
-- **Mobile-first.** What you do often happens on your phone, one gesture at a time: confirming and correcting transactions, tagging them, and from v1 on importing bank exports, recording cash and seeing your net worth. The CLI sets up the repository, imports CSV exports and handles what is rare.
+- **Mobile-first.** What you do often happens on your phone, one gesture at a time: confirming and correcting transactions and tagging them. The CLI sets up the repository, imports CSV exports and handles what is rare.
 - **Review means confirming.** Every imported transaction arrives open, with flag `!` and a suggested counter account from your rules or from transactions you reviewed before. Confirming sets `*`. The goal is under 15 minutes of review per month.
 - **No server, no lock-in.** The single source of truth is a Git repository on any remote you choose. Everything Lentil writes is standard Beancount, which Fava, `bean-check` and your text editor read as well.
 - **Exact balances.** Every import run checks the bank's balance with zero tolerance. A gap is reported, never hidden or corrected automatically.
 - **Your files stay as they are.** A change touches only the affected characters, such as a flag or an account name. Lentil never reformats a file and keeps your comments.
 - **Several devices, no merge conflicts.** Each client writes only to its own area of the repository and re-applies its changes to the latest state, so the history stays linear. A real conflict is shown to you, never dropped.
-- **Private by default.** No telemetry. Lentil talks only to your Git remote, and from v1 on to the ECB for exchange rates and to portfolio services you connect, starting with Parqet.
+- **Private by default.** No telemetry. Lentil talks only to your Git remote.
 
 ## Who it is for
 
 Lentil is built for technically skilled people who want to own their financial data and are comfortable with a Git remote.
 
 - **Primary:** you run or choose a Git remote and want little everyday effort, reliable numbers and no lock-in.
-- **Existing Beancount users:** served on a best-effort basis. Adopting an existing ledger (`lentil adopt`) comes with v1. A ledger that uses anything outside the [supported profile](docs/SPEC.md#14-supported-profile-v0) is shown read-only instead of being computed approximately.
-- **Not for:** people who cannot or will not use a Git remote. `lentil init` sets up the repository, but Git does not disappear entirely. Several people or households sharing one ledger are not supported in v1.
+- **Existing Beancount users:** served on a best-effort basis. A ledger that uses anything outside the [supported profile](docs/SPEC.md#14-supported-profile-v0) is shown read-only instead of being computed approximately.
+- **Not for:** people who cannot or will not use a Git remote. `lentil init` sets up the repository, but Git does not disappear entirely. Several people or households sharing one ledger are not supported.
 
 ## How it works
 
@@ -41,13 +41,11 @@ Three clients share one Git repository, and each of them does one job.
 
 ## Status
 
-The v0.1 draft covers the core loop of import and mobile triage; tags complete v0.1, and the features for everyday use follow in v1.
+Lentil is an unreleased draft that covers the core loop of import and mobile triage, plus tags and trips.
 
-| Release | Content |
-| --- | --- |
-| v0.1 (draft) | `lentil init`, `import`, `rules apply`, `status` and `check`; rules add tags, and `lentil check` warns about tags outside `tags.toml`; the Android app confirms transactions, changes the counter account, opens a missing account and dismisses duplicates; Fava as the read-only view |
-| v1 | Cash and one-off entries on Android, a balance overview, importing bank exports on the phone, securities portfolios with their buys and sells from Parqet, spreading and shifting payments across months, month-end close, tax export, foreign currencies, conflict resolution in the app, adopting an existing ledger, drafting a CSV mapping from a sample export |
-| Later | Automatic bank access via FinTS, an own web UI, a desktop app |
+- The CLI sets up a repository and imports CSV exports, re-applies the rules, lists what is open and checks the ledger: `lentil init`, `import`, `rules apply`, `status` and `check`. Rules add tags, and `lentil check` warns about tags outside `tags.toml`.
+- The Android app confirms transactions, changes the counter account, opens a missing account, dismisses duplicates, edits tags and records trips.
+- Fava or rustfava is the read-only view.
 
 The CLI and the app speak English and German; the CLI follows `LANG`.
 
@@ -226,19 +224,19 @@ adb install app/build/outputs/apk/debug/app-debug.apk
 
 ## Non-goals
 
-Feature requests are filtered through these non-goals; the reasons are in the [PRD](docs/PRD.md#non-goals-for-v1).
+Feature requests are filtered through these non-goals; the reasons are in the [PRD](docs/PRD.md#non-goals).
 
-- Budgets; receipts from a document archive (after v1)
-- Matching manual entries with later imports; third-party plugins and importers (after v1)
-- Own web UI, desktop app and automatic bank access via FinTS (later)
-- iOS; several people or households; end-to-end encrypted remote; commercial bank aggregators (open)
+- Budgets; receipts from a document archive
+- Matching manual entries with later imports; third-party plugins and importers
+- Own web UI, desktop app and automatic bank access via FinTS
+- iOS; several people or households; end-to-end encrypted remote; commercial bank aggregators
 - Hosted service (never)
 
 ## Documentation
 
 The design documents describe Lentil in full.
 
-- [Product requirements](docs/PRD.md): principles, goals, requirements and release plan.
+- [Product requirements](docs/PRD.md): principles, goals and requirements.
 - [Convention spec](docs/SPEC.md): the rules every client follows, including the format of CSV mappings and suggestion rules.
 - [Contributing](CONTRIBUTING.md): engineering standards for development.
 

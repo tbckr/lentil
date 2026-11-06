@@ -19,7 +19,7 @@ use crate::snapshot::Snapshot;
 use crate::tags::{is_plain_name, is_tag_name};
 use crate::trips::TRIP_EVENT;
 
-/// One edit operation of spec section 10 (v0.1 subset).
+/// One edit operation of spec section 10, of those Lentil implements.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "kebab-case")]
 pub enum Intent {
@@ -295,7 +295,7 @@ pub fn summary(intents: &[PendingIntent], outcomes: &[(String, Outcome)]) -> Str
         .join(", ")
 }
 
-/// Number of v0.1 operations.
+/// Number of implemented operations.
 const OP_COUNT: usize = 10;
 
 impl Intent {

@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-Lentil has a first, unreleased draft of v0.1 next to its design documents:
+Lentil has a first, unreleased draft next to its design documents:
 
-- `docs/PRD.md`: product requirements. Covers principles, goals, usage scenarios (`N1` …), functional requirements (`FR-A1` …) and non-functional requirements, each with a target release, plus a release plan.
+- `docs/PRD.md`: product requirements. Covers principles, goals and non-goals, and describes what Lentil does today, without releases, in usage scenarios (`N1` …), functional requirements (`FR-A1` …) and non-functional requirements.
 - `docs/SPEC.md`: the Lentil Convention Spec. Its RFC 2119 rules make every client interchangeable on one Git repository of Beancount files. It is at `spec_version` 0, so any change may break until version 1.
 - `CONTRIBUTING.md`: engineering standards for testing, linting, dependencies, CI and releases.
 - `README.md`: short overview with links to the documents above and the non-goals. When a non-goal changes in the PRD, change the README too.
@@ -51,8 +51,8 @@ Every development tool comes from the flake's development shell, Python packages
 
 - Everything in the repository is written in English: code, comments, commit messages, docs and UI strings.
 - Sections open with one sentence that states their conclusion, followed by bullets or a table. Keep that shape.
-- Requirement and scenario IDs never change. The tables are sorted by release (`v0.1`, `v1`, `Later`). A new entry takes the next free number in its group and goes where its release and topic fit, even if that breaks the numeric order. When you add an entry or change its release, update the PRD's release plan table too, because it lists every ID. The non-goals table additionally uses `After v1`, `Open` and `Never`.
-- The documents refer to each other by number. The spec cites `PRD: FR-D8`, `PRD: Security` and its own sections ("section 15"), and the PRD cites "Spec section 15". If you renumber spec sections or rename PRD sections, update the references in both files in the same change.
+- Requirement and scenario IDs never change, and an ID that leaves the PRD is never reused. The highest IDs used so far are N18, FR-A8, FR-B5, FR-C21, FR-D13, FR-E8 and FR-F8, so new numbers start above them. The tables are grouped by topic: a new entry takes the next free number in its group and goes where its topic fits, even if that breaks the numeric order.
+- The documents refer to each other by number. The spec cites `PRD: FR-D13`, `PRD: Security` and its own sections ("section 15"), and the PRD cites "Spec section 15". If you renumber spec sections or rename PRD sections, update the references in both files in the same change.
 - In SPEC §18, tick resolved open questions with their outcome, and keep the counts in the lead sentence in line with the lists below it.
 - The repository is public. Documents describe the product, not the author's setup, so leave out hosting details, personal tool stack, real banks, account types and household details. Keep examples fictional and test data synthetic. Real bank mappings and sample exports belong in the user's private ledger repository, and tests against real ledgers run only locally, never in CI.
 - The documents state results, not how they were reached, and never point to unpublished documents such as reports or notes.
@@ -62,10 +62,10 @@ Every development tool comes from the flake's development shell, Python packages
 
 There is no server. A Git repository of standard Beancount files is the single source of truth, and every client works on its own clone.
 
-- **Clients:** the CLI handles `init`, CSV import, re-applying rules (`rules apply`), `status`, `check`, `prices`, `export tax` and `adopt`. The Android app handles triage and tags, and from v1 on also manual capture, importing bank exports and accruals; from v1 on both import securities portfolios from Parqet. Fava or rustfava is the read-only desktop view. An own web UI (`lentil serve`) and a Tauri app wait until Fava plus the CLI demonstrably fall short.
+- **Clients:** the CLI handles `init`, CSV import, re-applying rules (`rules apply`), `status` and `check`. The Android app handles triage, tags and trips. Fava or rustfava is the read-only desktop view. An own web UI (`lentil serve`) and a Tauri app wait until Fava plus the CLI demonstrably fall short.
 - **One core:** all clients compute with the same core, which is rustledger pinned to an exact version (GPL-3.0-only). Lentil uses rustledger as it is and builds the convention and the clients around it: a plugin is in the profile only if rustledger runs it natively and its Python original exists for Fava, otherwise Lentil writes the data into the files. The spec itself does not depend on any core library. If a ledger uses anything outside the supported profile (SPEC §14), the client treats the repository as read-only instead of computing it approximately. Git runs inside the core too, so the CLI and the Android app share one sync implementation. The Android app holds no finance logic; it keeps its pending intents in its own storage and hands them to the core for replay. UniFFI generates the Kotlin bindings to the core.
 - **Roles and write areas (§7):**
-  - Importers only create new files (`imports/<source-id>/`, later `prices/`).
+  - Importers only create new files (`imports/<source-id>/`, `prices/`).
   - Editors change the flag, account, payee, narration, tags and metadata of existing transactions, and write only under `manual/<device-id>/`.
   - The admin role may change anything.
 
@@ -109,5 +109,5 @@ The full list is in `CONTRIBUTING.md`; network, secrets and language rules are N
 - Linting: for Rust, clippy over all targets with warnings as errors plus selected pedantic lints, configured in `[workspace.lints]`, and rustfmt with default settings. For Kotlin, Android Lint and detekt with warnings as errors, plus ktfmt. CodeQL scans the Rust code and the workflows in CI.
 - Dependencies: justify every new direct dependency in its PR. Run cargo-deny, cargo-machete and the license check for Gradle dependencies (`:app:checkLicenses`); cargo-deny admits only crates.io unless its configuration lists an explicit exception. Pin rustledger and UniFFI exactly. Use no update bots except Dependabot, which only bumps the GitHub Actions, and pin every action by commit SHA. The license allowlist exists twice, in `deny.toml`, which the Gradle check reads too, and in `.github/dependency-review-config.yml` for CI's dependency review, so change both together.
 - Toolchain: Rust is pinned only in `rust-toolchain.toml`. The Nix dev shell reads it through rust-overlay and supplies every cargo tool, so never `cargo install` one. It also supplies uv with a pinned Python that stays off `PATH`, and Python Beancount is pinned in `pyproject.toml` and `uv.lock`, so never `pip install` it. Bump the Python minor version in `flake.nix` and `requires-python` together.
-- Network: no telemetry, and no traffic except to the Git remote, the ECB and portfolio services the user connects (Parqet). Secrets never go into the repository, `lentil.toml` included.
-- Internationalization is built in from v0.1, with German as the first translation. The core reports findings and conflicts as typed codes that each client translates, never as English text. `spec_version` governs compatibility between clients, not the app version.
+- Network: no telemetry, and today no traffic except to the Git remote; principle 8 also admits the ECB and portfolio services the user connects, such as Parqet. Secrets never go into the repository, `lentil.toml` included.
+- Internationalization is built in, with German as the first translation. The core reports findings and conflicts as typed codes that each client translates, never as English text. `spec_version` governs compatibility between clients, not the app version.

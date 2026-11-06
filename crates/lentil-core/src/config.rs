@@ -19,15 +19,15 @@ pub struct Config {
     pub main_file: String,
     /// Counter account when no suggestion exists.
     pub fallback_account: String,
-    /// Receives differences between balance snapshots (v1).
+    /// Receives differences between balance snapshots.
     pub unattributed_account: String,
-    /// Currencies for which `lentil prices` fetches ECB rates (v1).
+    /// Currencies to fetch ECB rates for (spec section 8).
     #[serde(default)]
     pub price_currencies: Vec<String>,
     /// Imported accounts.
     #[serde(default, rename = "source")]
     pub sources: Vec<SourceConfig>,
-    /// Balance-tracked accounts (v1).
+    /// Balance-tracked accounts.
     #[serde(default, rename = "snapshot")]
     pub snapshots: Vec<SnapshotConfig>,
 }
@@ -56,7 +56,7 @@ pub enum ImporterKind {
     Csv,
 }
 
-/// One balance-tracked account (`[[snapshot]]`, v1).
+/// One balance-tracked account (`[[snapshot]]`).
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SnapshotConfig {
