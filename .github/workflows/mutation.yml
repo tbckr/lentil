@@ -57,6 +57,13 @@ jobs:
           # The diff needs the merge base with main.
           fetch-depth: 0
           persist-credentials: false
+      # After a force push, no branch reaches the state of main before it, so
+      # the checkout lacks that commit; GitHub still serves it by its SHA.
+      - name: Fetch the state of main before a force push
+        if: github.event_name == 'push' && github.event.forced
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: git fetch --no-tags origin "$BEFORE"
       - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
