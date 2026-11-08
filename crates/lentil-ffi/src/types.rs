@@ -169,7 +169,10 @@ impl TryFrom<Intent> for FfiIntent {
                 id,
                 date: date.to_string(),
             },
-            other @ (Intent::SetPayee { .. } | Intent::AddImportRun { .. }) => {
+            other @ (Intent::SetPayee { .. }
+            | Intent::AddImportRun { .. }
+            | Intent::SuggestAccount { .. }
+            | Intent::AddRule { .. }) => {
                 return Err(LentilError::Other {
                     detail: format!("the app does not record {}", other.op_name()),
                 });
@@ -356,6 +359,7 @@ pub fn conflict_code_name(code: ConflictCode) -> &'static str {
         ConflictCode::InvalidAccount => "InvalidAccount",
         ConflictCode::InvalidTag => "InvalidTag",
         ConflictCode::InvalidTrip => "InvalidTrip",
+        ConflictCode::RulesInvalid => "RulesInvalid",
     }
 }
 
@@ -614,6 +618,7 @@ mod tests {
             ConflictCode::InvalidAccount,
             ConflictCode::InvalidTag,
             ConflictCode::InvalidTrip,
+            ConflictCode::RulesInvalid,
         ] {
             assert_eq!(conflict_code_name(code), format!("{code:?}"));
         }

@@ -766,6 +766,8 @@ pub fn conflict(lang: Lang, code: ConflictCode) -> &'static str {
         (InvalidTag, De) => "das Schlagwort ist kein gültiges Schlagwort",
         (InvalidTrip, En) => "the trip's name or ID is invalid",
         (InvalidTrip, De) => "Name oder ID der Reise sind ungültig",
+        (RulesInvalid, En) => "rules.toml is missing or invalid, or the rule is",
+        (RulesInvalid, De) => "rules.toml fehlt oder ist ungültig, oder die Regel ist es",
     }
 }
 
@@ -905,6 +907,18 @@ mod tests {
         assert_eq!(
             rules_error(Lang::En, &RulesError::NotUtf8),
             "the file is not UTF-8 text"
+        );
+    }
+
+    #[test]
+    fn translates_the_rules_conflict() {
+        assert_eq!(
+            conflict(Lang::En, ConflictCode::RulesInvalid),
+            "rules.toml is missing or invalid, or the rule is"
+        );
+        assert_eq!(
+            conflict(Lang::De, ConflictCode::RulesInvalid),
+            "rules.toml fehlt oder ist ungültig, oder die Regel ist es"
         );
     }
 

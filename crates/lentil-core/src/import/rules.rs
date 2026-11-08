@@ -46,6 +46,189 @@ impl Rule {
             && hit(&self.purpose, original.purpose)
             && hit(&self.booking_type, original.booking_type)
     }
+
+    /// Whether the rule is `rule`: the same regular expressions, as written,
+    /// and the same account, and no other key.
+    fn is(&self, rule: &EditorRule) -> bool {
+        self.counterparty.as_ref().map(Regex::as_str) == rule.counterparty.as_deref()
+            && self.purpose.as_ref().map(Regex::as_str) == rule.purpose.as_deref()
+            && self.account.as_deref() == Some(rule.account.as_str())
+            && self.source.is_none()
+            && self.booking_type.is_none()
+            && self.tags.is_empty()
+            && self.payee.is_none()
+            && self.add_tags.is_empty()
+    }
+}
+
+/// A rule in the editor shape (spec section 16): a `match` with only
+/// `counterparty`, `purpose` or both, and only `account`. Editors insert it
+/// before the first rule of `rules.toml` through `add-rule` (spec
+/// section 10).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EditorRule {
+    /// The regular expression on `lentil_counterparty`, if any.
+    pub counterparty: Option<String>,
+    /// The regular expression on `lentil_purpose`, if any.
+    pub purpose: Option<String>,
+    /// The counter account the rule sets.
+    pub account: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawEditorRules {
+    rule: Vec<RawEditorRule>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawEditorRule {
+    #[serde(rename = "match")]
+    conditions: RawEditorMatch,
+    account: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawEditorMatch {
+    counterparty: Option<String>,
+    purpose: Option<String>,
+}
+
+/// The regular expression that matches a text containing `words` in this
+/// order, each bounded by a non-letter or the edge of the text,
+/// case-insensitively; `None` without words.
+///
+/// Letters are characters of Unicode general category L (`\pL`), as for
+/// [`crate::learn::words`]. The expression avoids `\b`, which RE2 defines
+/// for ASCII only: each word is followed by a non-letter, and anything
+/// between two words ends in a non-letter.
+fn words_pattern(words: &[String]) -> Option<String> {
+    if words.is_empty() {
+        return None;
+    }
+    let words: Vec<String> = words.iter().map(|w| regex::escape(w)).collect();
+    Some(format!(
+        r"(?i)(?:^|\PL){}(?:\PL|$)",
+        words.join(r"\PL(?:.*\PL)?")
+    ))
+}
+
+impl EditorRule {
+    /// The rule that sets `account` for every transaction whose counterparty
+    /// contains the words `counterparty` and whose purpose contains the
+    /// words `purpose`, each in text order and bounded by non-letters or the
+    /// edge of the text, case-insensitively. A field without words is not
+    /// matched. `None` if both are empty.
+    #[must_use]
+    pub fn from_words(counterparty: &[String], purpose: &[String], account: &str) -> Option<Self> {
+        let counterparty = words_pattern(counterparty);
+        let purpose = words_pattern(purpose);
+        if counterparty.is_none() && purpose.is_none() {
+            return None;
+        }
+        Some(Self {
+            counterparty,
+            purpose,
+            account: account.to_owned(),
+        })
+    }
+
+    /// The rule as a `[[rule]]` block of `rules.toml`, ending in a line
+    /// break. The regular expressions are TOML literal strings, so they need
+    /// no escaping, and the account is written as it is.
+    ///
+    /// A literal string cannot hold `'` or a line break, and the account is
+    /// not escaped, so the block holds exactly this rule only if
+    /// [`Self::parse_blocks`] reads it back as this rule; `add-rule` checks
+    /// that. The words of [`Self::from_words`] and a valid account name
+    /// always do.
+    #[must_use]
+    pub fn block(&self) -> String {
+        let conditions: Vec<String> = [
+            ("counterparty", &self.counterparty),
+            ("purpose", &self.purpose),
+        ]
+        .into_iter()
+        .filter_map(|(key, pattern)| Some(format!("{key} = '{}'", pattern.as_deref()?)))
+        .collect();
+        format!(
+            "[[rule]]\nmatch = {{ {} }}\naccount = \"{}\"\n",
+            conditions.join(", "),
+            self.account
+        )
+    }
+
+    /// The rules of `text` if it is TOML that holds only rules, at least
+    /// one, each with a `match` of only `counterparty`, `purpose` or both
+    /// and an `account`, and no other key; otherwise `None`.
+    #[must_use]
+    pub fn parse_blocks(text: &str) -> Option<Vec<Self>> {
+        let raw: RawEditorRules = toml::from_str(text).ok()?;
+        if raw.rule.is_empty() {
+            return None;
+        }
+        raw.rule
+            .into_iter()
+            .map(|r| {
+                let RawEditorMatch {
+                    counterparty,
+                    purpose,
+                } = r.conditions;
+                (counterparty.is_some() || purpose.is_some()).then_some(Self {
+                    counterparty,
+                    purpose,
+                    account: r.account,
+                })
+            })
+            .collect()
+    }
+}
+
+/// `text`, a `rules.toml` that parses, with `block` inserted as its first
+/// rule (spec section 10).
+///
+/// The block goes before the first `[[rule]]` header and before the comment
+/// lines directly above it, unless they reach the start of the file, and one
+/// blank line separates it from what follows. A file without rules gets the
+/// block at its end, after one blank line. A leading byte order mark stays
+/// first, and the file starts after it. Every byte of `text` stays as it is;
+/// the block keeps its own line breaks.
+#[must_use]
+pub fn insert_rule(text: &str, block: &str) -> String {
+    // TOML skips a leading byte order mark, and `trim` does not remove it.
+    let body = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let bom = text.len() - body.len();
+    // `rule` is the only key of a rules.toml that parses, so above its first
+    // rule there are only blank and comment lines: the first other line
+    // starts the first rule, and no multi-line string starts above it.
+    let mut start = bom;
+    // Where the comment lines directly above the current line start.
+    let mut comments: Option<usize> = None;
+    for line in body.split_inclusive('\n') {
+        let content = line.trim();
+        if content.starts_with('#') {
+            comments.get_or_insert(start);
+        } else if content.is_empty() {
+            comments = None;
+        } else {
+            if content.starts_with("[[") {
+                let at = comments.filter(|&c| c > bom).unwrap_or(start);
+                return format!("{}{block}\n{}", &text[..at], &text[at..]);
+            }
+            break;
+        }
+        start += line.len();
+    }
+    let separator = if body.is_empty() {
+        ""
+    } else if body.ends_with('\n') {
+        "\n"
+    } else {
+        "\n\n"
+    };
+    format!("{text}{separator}{block}")
 }
 
 /// The original fields of one transaction (spec section 5), which rules
@@ -339,6 +522,14 @@ impl Rules {
             .iter()
             .enumerate()
             .filter_map(|(i, r)| Some((i + 1, r.account.as_deref()?)))
+    }
+
+    /// Whether the first rule is identical to `rule`: the same regular
+    /// expressions, as written, and the same account, and no other key
+    /// (spec section 10, `add-rule`).
+    #[must_use]
+    pub fn is_first(&self, rule: &EditorRule) -> bool {
+        self.rules.first().is_some_and(|r| r.is(rule))
     }
 
     /// Whether some rule lists `tag` in its `add_tags`.
@@ -977,5 +1168,309 @@ mapping = "sources/card.toml"
         }
         assert!(is_account_name("Expenses:Lebensmittel:Bäckerei-2"));
         assert!(is_account_name("Assets:2026"));
+    }
+
+    fn strings(words: &[&str]) -> Vec<String> {
+        words.iter().map(|w| (*w).to_owned()).collect()
+    }
+
+    /// Whether the editor rule on these words books a transaction with
+    /// these original fields.
+    fn books(counterparty: &[&str], purpose: &[&str], original: &Original<'_>) -> bool {
+        let rule = EditorRule::from_words(&strings(counterparty), &strings(purpose), "Expenses:A")
+            .unwrap();
+        let rules = Rules::parse(&rule.block()).unwrap();
+        rules.suggest("giro", original).account == Some("Expenses:A")
+    }
+
+    #[test]
+    fn a_block_is_a_rule_of_the_editor_shape() {
+        let rule =
+            EditorRule::from_words(&[], &["streamflix".into()], "Expenses:Subscriptions").unwrap();
+        assert_eq!(
+            rule.block(),
+            "[[rule]]\nmatch = { purpose = '(?i)(?:^|\\PL)streamflix(?:\\PL|$)' }\naccount = \"Expenses:Subscriptions\"\n"
+        );
+        assert_eq!(
+            EditorRule::parse_blocks(&rule.block()),
+            Some(vec![rule.clone()])
+        );
+        let rules = Rules::parse(&rule.block()).unwrap();
+        assert!(rules.is_first(&rule));
+        assert!(EditorRule::from_words(&[], &[], "Expenses:Subscriptions").is_none());
+
+        let both =
+            EditorRule::from_words(&["zahlfix".into()], &["abo".into()], "Expenses:A").unwrap();
+        assert_eq!(
+            both.block(),
+            "[[rule]]\nmatch = { counterparty = '(?i)(?:^|\\PL)zahlfix(?:\\PL|$)', purpose = '(?i)(?:^|\\PL)abo(?:\\PL|$)' }\naccount = \"Expenses:A\"\n"
+        );
+        assert_eq!(
+            EditorRule::parse_blocks(&format!("{}\n{}", rule.block(), both.block())),
+            Some(vec![rule, both])
+        );
+    }
+
+    #[test]
+    fn only_an_identical_first_rule_is_first() {
+        let rule =
+            EditorRule::from_words(&["corner".into()], &["card".into()], "Expenses:A").unwrap();
+        let block = rule.block();
+        let account = "account = \"Expenses:A\"";
+        assert!(
+            Rules::parse(&format!("{block}\n{RULES}"))
+                .unwrap()
+                .is_first(&rule)
+        );
+        // An identical rule further down does not count.
+        assert!(
+            !Rules::parse(&format!("{RULES}\n{block}"))
+                .unwrap()
+                .is_first(&rule)
+        );
+        assert!(!Rules::parse("").unwrap().is_first(&rule));
+        for other in [
+            block.replace(account, "payee = \"P\"\naccount = \"Expenses:A\""),
+            block.replace(account, "account = \"Expenses:A\"\nadd_tags = [\"x\"]"),
+            block.replace("match = { ", "match = { source = \"giro\", "),
+            block.replace("match = { ", "match = { type = \"x\", "),
+            block.replace(account, "account = \"Expenses:B\""),
+            block.replace("corner", "corners"),
+            block.replace("card", "cards"),
+            EditorRule::from_words(&["corner".into()], &[], "Expenses:A")
+                .unwrap()
+                .block(),
+            EditorRule::from_words(&[], &["card".into()], "Expenses:A")
+                .unwrap()
+                .block(),
+        ] {
+            assert!(!Rules::parse(&other).unwrap().is_first(&rule), "{other}");
+        }
+    }
+
+    #[test]
+    fn several_words_match_in_order_at_letter_boundaries() {
+        let words = ["zahlfix", "europe"];
+        let counterparty = |text| original(text, "", "");
+        for hit in [
+            "Zahlfix Europe S.A.",
+            "ZAHLFIX (EUROPE)",
+            "zahlfix-europe",
+            "Pay: zahlfix 0815 Europe",
+        ] {
+            assert!(books(&words, &[], &counterparty(hit)), "{hit}");
+        }
+        for miss in [
+            "Europe Zahlfix",
+            "ZahlfixEurope",
+            "zahlfixs europe",
+            "zahlfix european",
+            "Zahlfix",
+            "",
+        ] {
+            assert!(!books(&words, &[], &counterparty(miss)), "{miss}");
+        }
+        // Digits separate words, as in the words of a text.
+        assert!(books(&["streamflix"], &[], &counterparty("STREAMFLIX0815")));
+        // A word given twice must occur twice.
+        assert!(books(&["abo", "abo"], &[], &counterparty("Abo / abo")));
+        assert!(!books(&["abo", "abo"], &[], &counterparty("Abo")));
+        // Every field with words must match.
+        assert!(books(
+            &["zahlfix"],
+            &["streamflix"],
+            &original("Zahlfix", "Streamflix Abo", "")
+        ));
+        assert!(!books(
+            &["zahlfix"],
+            &["streamflix"],
+            &original("Zahlfix", "Other", "")
+        ));
+        assert!(!books(
+            &["zahlfix"],
+            &["streamflix"],
+            &original("Other", "Streamflix", "")
+        ));
+    }
+
+    #[test]
+    fn patterns_respect_unicode_letters() {
+        let counterparty = |text| original(text, "", "");
+        assert!(books(&["müller"], &[], &counterparty("Bäckerei MÜLLER")));
+        assert!(books(&["café"], &[], &counterparty("CAFÉ 0815")));
+        for miss in ["Müllerstraße", "Bäckereimüller", "MÜLLERS"] {
+            assert!(!books(&["müller"], &[], &counterparty(miss)), "{miss}");
+        }
+        // A non-ASCII letter is a letter, not a boundary.
+        assert!(!books(&["ller"], &[], &counterparty("Müller")));
+        assert!(!books(&["ckerei"], &[], &counterparty("Bäckerei")));
+        // The words of a text match it, also where a letter's lowercase is
+        // longer than the letter, as with "İ".
+        for text in ["İSTANBUL GRILL", "ΟΔΟΣ 7", "Straße", "Ǆemal"] {
+            let words = crate::learn::words(text);
+            let words: Vec<&str> = words.iter().map(String::as_str).collect();
+            assert!(books(&words, &[], &counterparty(text)), "{text}");
+        }
+    }
+
+    #[test]
+    fn parse_blocks_rejects_other_keys() {
+        let block = |rule: &str| format!("[[rule]]\n{rule}\n");
+        let editor =
+            block("match = { counterparty = 'x', purpose = 'y' }\naccount = \"Expenses:A\"");
+        assert_eq!(
+            EditorRule::parse_blocks(&editor),
+            Some(vec![EditorRule {
+                counterparty: Some("x".into()),
+                purpose: Some("y".into()),
+                account: "Expenses:A".into(),
+            }])
+        );
+        for other in [
+            block("match = { purpose = 'x' }\npayee = \"P\"\naccount = \"Expenses:A\""),
+            block("match = { purpose = 'x' }\naccount = \"Expenses:A\"\nadd_tags = [\"t\"]"),
+            block("match = { source = \"giro\", purpose = 'x' }\naccount = \"Expenses:A\""),
+            block("match = { type = 'x', purpose = 'x' }\naccount = \"Expenses:A\""),
+            block("match = { tags = [\"t\"], purpose = 'x' }\naccount = \"Expenses:A\""),
+            block("match = { purpose = 'x' }"),
+            block("match = {}\naccount = \"Expenses:A\""),
+            block("account = \"Expenses:A\""),
+            format!("x = 1\n{editor}"),
+            "# only a comment\n".to_owned(),
+            "rule = []\n".to_owned(),
+            String::new(),
+            "[[rule]\n".to_owned(),
+        ] {
+            assert_eq!(EditorRule::parse_blocks(&other), None, "{other}");
+        }
+    }
+
+    /// The block of an editor rule for the purpose word `streamflix`.
+    const BLOCK: &str = "[[rule]]\nmatch = { purpose = '(?i)(?:^|\\PL)streamflix(?:\\PL|$)' }\naccount = \"Expenses:Subscriptions\"\n";
+    const GROCERIES: &str = "[[rule]]\nmatch = { counterparty = \"(?i)grocery\" }\naccount = \"Expenses:Food:Groceries\"\n";
+
+    /// Checks that `after` parses with the block's rule first, followed by
+    /// `rules` more.
+    fn inserted_first(after: &str, rules: usize) {
+        let parsed = Rules::parse(after).unwrap();
+        assert_eq!(parsed.len(), rules + 1, "{after}");
+        assert_eq!(
+            parsed.accounts().next(),
+            Some((1, "Expenses:Subscriptions")),
+            "{after}"
+        );
+    }
+
+    #[test]
+    fn insert_goes_before_the_first_rule_and_its_comments() {
+        let text = format!("# header\n\n# Groceries\n# and more\n{GROCERIES}\n# Other\n{RULES}");
+        let after = insert_rule(&text, BLOCK);
+        assert_eq!(
+            after,
+            format!("# header\n\n{BLOCK}\n# Groceries\n# and more\n{GROCERIES}\n# Other\n{RULES}")
+        );
+        inserted_first(&after, 4);
+        // Whitespace inside the brackets, indentation and a comment on the
+        // header line; a rule header in a comment is no rule.
+        let text = format!(
+            "# [[rule]]\n\n  # Groceries\n  [[ rule ]] # first\n{}",
+            &GROCERIES[9..]
+        );
+        let after = insert_rule(&text, BLOCK);
+        assert_eq!(
+            after,
+            format!(
+                "# [[rule]]\n\n{BLOCK}\n  # Groceries\n  [[ rule ]] # first\n{}",
+                &GROCERIES[9..]
+            )
+        );
+        inserted_first(&after, 1);
+    }
+
+    #[test]
+    fn insert_after_a_header_that_runs_into_the_rule() {
+        let text = format!("# header\n# Groceries\n{GROCERIES}");
+        let after = insert_rule(&text, BLOCK);
+        assert_eq!(
+            after,
+            format!("# header\n# Groceries\n{BLOCK}\n{GROCERIES}")
+        );
+        inserted_first(&after, 1);
+        assert_eq!(
+            insert_rule(GROCERIES, BLOCK),
+            format!("{BLOCK}\n{GROCERIES}")
+        );
+        assert_eq!(
+            insert_rule(&format!("\n# Groceries\n{GROCERIES}"), BLOCK),
+            format!("\n{BLOCK}\n# Groceries\n{GROCERIES}")
+        );
+    }
+
+    #[test]
+    fn insert_appends_to_a_file_without_rules() {
+        let init = crate::layout::init_files(&crate::layout::InitOptions {
+            title: "Ledger".into(),
+            currency: "EUR".into(),
+        });
+        let text = init.text(RULES_FILE).unwrap();
+        let after = insert_rule(text, BLOCK);
+        assert_eq!(after, format!("{text}\n{BLOCK}"));
+        inserted_first(&after, 0);
+        assert_eq!(
+            insert_rule("# no rules yet", BLOCK),
+            format!("# no rules yet\n\n{BLOCK}")
+        );
+        assert_eq!(insert_rule("", BLOCK), BLOCK);
+    }
+
+    #[test]
+    fn insert_keeps_crlf_and_missing_newline() {
+        let crlf = format!(
+            "# header\r\n\r\n# Groceries\r\n{}",
+            GROCERIES.replace('\n', "\r\n")
+        );
+        let after = insert_rule(&crlf, BLOCK);
+        assert_eq!(
+            after,
+            format!(
+                "# header\r\n\r\n{BLOCK}\n# Groceries\r\n{}",
+                GROCERIES.replace('\n', "\r\n")
+            )
+        );
+        inserted_first(&after, 1);
+        let unterminated = GROCERIES.trim_end();
+        let after = insert_rule(unterminated, BLOCK);
+        assert_eq!(after, format!("{BLOCK}\n{unterminated}"));
+        inserted_first(&after, 1);
+        let comment = "# header\r\n# no rules yet";
+        assert_eq!(insert_rule(comment, BLOCK), format!("{comment}\n\n{BLOCK}"));
+    }
+
+    #[test]
+    fn insert_goes_after_a_byte_order_mark() {
+        const BOM: &str = "\u{feff}";
+        let after = insert_rule(&format!("{BOM}{GROCERIES}"), BLOCK);
+        assert_eq!(after, format!("{BOM}{BLOCK}\n{GROCERIES}"));
+        inserted_first(&after, 1);
+        // Comment lines right after the mark reach the start of the file.
+        let text = format!("{BOM}# header\n# Groceries\n{GROCERIES}");
+        let after = insert_rule(&text, BLOCK);
+        assert_eq!(
+            after,
+            format!("{BOM}# header\n# Groceries\n{BLOCK}\n{GROCERIES}")
+        );
+        inserted_first(&after, 1);
+        let text = format!("{BOM}# header\n\n# Groceries\n{GROCERIES}");
+        let after = insert_rule(&text, BLOCK);
+        assert_eq!(
+            after,
+            format!("{BOM}# header\n\n{BLOCK}\n# Groceries\n{GROCERIES}")
+        );
+        inserted_first(&after, 1);
+        assert_eq!(insert_rule(BOM, BLOCK), format!("{BOM}{BLOCK}"));
+        assert_eq!(
+            insert_rule(&format!("{BOM}# no rules yet\n"), BLOCK),
+            format!("{BOM}# no rules yet\n\n{BLOCK}")
+        );
     }
 }

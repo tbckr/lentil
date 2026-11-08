@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 use crate::config::Config;
 use crate::edit::{self, EditError};
 use crate::id::manual_device;
+use crate::import::rules::RULES_FILE;
+use crate::import::{EditorRule, Rules, insert_rule};
 use crate::ledger::{self, Ledger, META_ID, Txn};
 use crate::snapshot::Snapshot;
 use crate::tags::{is_plain_name, is_tag_name};
@@ -39,6 +41,19 @@ pub enum Intent {
         /// The account the user chose; must be open on the transaction date.
         new: String,
     },
+    /// Change the account of a posting that is not the source posting to a
+    /// computed suggestion, such as the account of a rule just added. Done
+    /// on a reviewed transaction, and the flag stays (spec section 10).
+    SuggestAccount {
+        /// `lentil_id` of the transaction.
+        id: String,
+        /// 0-based index of the posting in file order.
+        posting: usize,
+        /// The account the suggestion was computed for.
+        old: String,
+        /// The suggested account; must be open on the transaction date.
+        new: String,
+    },
     /// Set the payee of an active transaction, inserting one before the
     /// narration if it has none.
     SetPayee {
@@ -60,6 +75,17 @@ pub enum Intent {
         account: String,
         /// Opening date.
         date: Date,
+    },
+    /// Insert a rule in the editor shape before the first rule of
+    /// `rules.toml` (spec sections 10 and 16); done if the first rule is
+    /// already identical.
+    AddRule {
+        /// The regular expression on `lentil_counterparty`, if any.
+        counterparty: Option<String>,
+        /// The regular expression on `lentil_purpose`, if any.
+        purpose: Option<String>,
+        /// The counter account the rule sets; never a source account.
+        account: String,
     },
     /// Write a new import run file.
     AddImportRun {
@@ -116,9 +142,11 @@ impl Intent {
         match self {
             Self::Confirm { .. } => "confirm",
             Self::SetAccount { .. } => "set-account",
+            Self::SuggestAccount { .. } => "suggest-account",
             Self::SetPayee { .. } => "set-payee",
             Self::Dismiss { .. } => "dismiss",
             Self::OpenAccount { .. } => "open-account",
+            Self::AddRule { .. } => "add-rule",
             Self::AddImportRun { .. } => "add-import-run",
             Self::AddTag { .. } => "add-tag",
             Self::RemoveTag { .. } => "remove-tag",
@@ -133,11 +161,13 @@ impl Intent {
         match self {
             Self::Confirm { id }
             | Self::SetAccount { id, .. }
+            | Self::SuggestAccount { id, .. }
             | Self::SetPayee { id, .. }
             | Self::Dismiss { id }
             | Self::AddTag { id, .. }
             | Self::RemoveTag { id, .. } => Some(id),
             Self::OpenAccount { .. }
+            | Self::AddRule { .. }
             | Self::AddImportRun { .. }
             | Self::StartTrip { .. }
             | Self::EndTrip { .. } => None,
@@ -207,6 +237,12 @@ pub enum ConflictCode {
     /// `<device-id>-<ulid>` or names another device than the one that
     /// syncs, or the name of a `start-trip` does not match `[a-z0-9-]+`.
     InvalidTrip,
+    /// `rules.toml` is missing, is not UTF-8, does not parse or fails the
+    /// checks against `lentil.toml` (a `source` that names no source, a
+    /// rule that books to a source account), or the rule of an `add-rule`
+    /// has no regular expression, or one that does not compile or that the
+    /// file cannot hold as written.
+    RulesInvalid,
 }
 
 /// The result of replaying intents on a snapshot.
@@ -225,7 +261,8 @@ pub struct ReplayResult {
 ///
 /// The ledger is loaded once. Later intents see the effect of earlier ones
 /// (a confirmed flag, a changed account or payee, a dismissed transaction, an
-/// opened account), and the edits are written into the files at the end.
+/// opened account, an added rule), and the edits are written into the files at
+/// the end.
 /// Transactions in run files added by the same replay cannot be addressed; a
 /// commit holds the changes of one role only (spec section 12), so importer
 /// and editor intents never share a replay.
@@ -296,7 +333,7 @@ pub fn summary(intents: &[PendingIntent], outcomes: &[(String, Outcome)]) -> Str
 }
 
 /// Number of implemented operations.
-const OP_COUNT: usize = 10;
+const OP_COUNT: usize = 12;
 
 impl Intent {
     /// Position of the operation in the table of spec section 10.
@@ -304,14 +341,16 @@ impl Intent {
         match self {
             Self::Confirm { .. } => 0,
             Self::SetAccount { .. } => 1,
-            Self::SetPayee { .. } => 2,
-            Self::Dismiss { .. } => 3,
-            Self::OpenAccount { .. } => 4,
-            Self::AddImportRun { .. } => 5,
-            Self::AddTag { .. } => 6,
-            Self::RemoveTag { .. } => 7,
-            Self::StartTrip { .. } => 8,
-            Self::EndTrip { .. } => 9,
+            Self::SuggestAccount { .. } => 2,
+            Self::SetPayee { .. } => 3,
+            Self::Dismiss { .. } => 4,
+            Self::OpenAccount { .. } => 5,
+            Self::AddRule { .. } => 6,
+            Self::AddImportRun { .. } => 7,
+            Self::AddTag { .. } => 8,
+            Self::RemoveTag { .. } => 9,
+            Self::StartTrip { .. } => 10,
+            Self::EndTrip { .. } => 11,
         }
     }
 }
@@ -360,6 +399,8 @@ struct Replay<'a> {
     trips: Vec<(usize, String, [String; 2])>,
     /// `lentil_id`s of the trip events in [`Self::trips`].
     trip_ids: HashSet<String>,
+    /// [`RULES_FILE`] with the rules added by earlier intents, if any.
+    rules: Option<String>,
 }
 
 /// The virtual state of one transaction during a replay.
@@ -440,6 +481,7 @@ impl<'a> Replay<'a> {
             new_files: BTreeMap::new(),
             trips: Vec::new(),
             trip_ids: HashSet::new(),
+            rules: None,
         }
     }
 
@@ -452,10 +494,25 @@ impl<'a> Replay<'a> {
                 posting,
                 old,
                 new,
-            } => self.set_account(index, id, *posting, old, new),
+            } => self.set_account(index, id, *posting, old, new, false),
+            Intent::SuggestAccount {
+                id,
+                posting,
+                old,
+                new,
+            } => self.set_account(index, id, *posting, old, new, true),
             Intent::SetPayee { id, old, new } => self.set_payee(index, id, old.as_deref(), new),
             Intent::Dismiss { id } => self.dismiss(index, id),
             Intent::OpenAccount { account, date } => self.open_account(index, account, *date),
+            Intent::AddRule {
+                counterparty,
+                purpose,
+                account,
+            } => self.add_rule(&EditorRule {
+                counterparty: counterparty.clone(),
+                purpose: purpose.clone(),
+                account: account.clone(),
+            }),
             Intent::AddImportRun { file, content, .. } => self.add_import_run(file, content),
             Intent::AddTag { id, tag } => self.add_tag(index, id, tag),
             Intent::RemoveTag { id, tag } => self.remove_tag(index, id, tag),
@@ -501,14 +558,20 @@ impl<'a> Replay<'a> {
         self.texts.get(txn.file.as_str()).copied()
     }
 
+    /// The flag of transaction `i` at this point of the replay.
+    fn flag(&self, i: usize) -> char {
+        self.touched
+            .get(&i)
+            .map_or(self.ledger.transactions[i].flag, |s| s.flag)
+    }
+
     fn confirm(&mut self, index: usize, id: &str) -> Outcome {
         let i = match self.active(id) {
             Ok(i) => i,
             Err(outcome) => return outcome,
         };
         let txn = &self.ledger.transactions[i];
-        let flag = self.touched.get(&i).map_or(txn.flag, |s| s.flag);
-        if flag == REVIEWED {
+        if self.flag(i) == REVIEWED {
             return self.already_applied(i, index);
         }
         if !self.text(txn).is_some_and(|text| flag_editable(text, txn)) {
@@ -520,6 +583,11 @@ impl<'a> Replay<'a> {
         Outcome::Applied
     }
 
+    /// `set-account`, or `suggest-account` if `suggestion` is true. Both
+    /// check the same, except that a suggestion is done on a reviewed
+    /// transaction: a human decision outranks a computed suggestion, so a
+    /// suggestion never changes one (spec section 10). A missing or
+    /// dismissed transaction is a conflict for both.
     fn set_account(
         &mut self,
         index: usize,
@@ -527,11 +595,15 @@ impl<'a> Replay<'a> {
         posting: usize,
         old: &str,
         new: &str,
+        suggestion: bool,
     ) -> Outcome {
         let i = match self.active(id) {
             Ok(i) => i,
             Err(outcome) => return outcome,
         };
+        if suggestion && self.flag(i) == REVIEWED {
+            return self.already_applied(i, index);
+        }
         let txn = &self.ledger.transactions[i];
         let Some(original) = txn.postings.get(posting) else {
             return conflict(ConflictCode::PostingNotFound);
@@ -712,6 +784,55 @@ impl<'a> Replay<'a> {
         Outcome::Applied
     }
 
+    /// `add-rule` (spec section 10): done if the first rule of
+    /// [`RULES_FILE`] is identical, otherwise the rule's block goes before
+    /// it, also if an identical rule stands further down.
+    fn add_rule(&mut self, rule: &EditorRule) -> Outcome {
+        let Some(current) = self
+            .rules
+            .as_deref()
+            .or_else(|| self.snapshot.text(RULES_FILE))
+        else {
+            return conflict(ConflictCode::RulesInvalid);
+        };
+        let Ok(rules) = Rules::parse(current) else {
+            return conflict(ConflictCode::RulesInvalid);
+        };
+        // Clients reject a rules.toml that fails the check (spec section 16),
+        // and validation would block the whole commit otherwise.
+        if rules.check(self.config).is_err() {
+            return conflict(ConflictCode::RulesInvalid);
+        }
+        if !is_valid_account(&rule.account) {
+            return conflict(ConflictCode::InvalidAccount);
+        }
+        if self.config.is_source_account(&rule.account) {
+            return conflict(ConflictCode::SourcePosting);
+        }
+        // Only the first rule counts: an identical one further down may
+        // lose to the rules above it.
+        if rules.is_first(rule) {
+            return Outcome::AlreadyApplied;
+        }
+        // The block must hold exactly this rule. That rejects a rule
+        // without a regular expression and one that a TOML literal string
+        // cannot hold, also where the quote and line breaks would add keys
+        // to a block that still parses.
+        let block = rule.block();
+        if EditorRule::parse_blocks(&block).as_deref() != Some(std::slice::from_ref(rule)) {
+            return conflict(ConflictCode::RulesInvalid);
+        }
+        let text = insert_rule(current, &block);
+        // The result must parse. That rejects a regular expression that
+        // does not compile, and rules written without a `[[rule]]` header,
+        // which `insert_rule` cannot insert before.
+        if Rules::parse(&text).is_err() {
+            return conflict(ConflictCode::RulesInvalid);
+        }
+        self.rules = Some(text);
+        Outcome::Applied
+    }
+
     fn add_import_run(&mut self, file: &str, content: &str) -> Outcome {
         let existing = self
             .new_files
@@ -817,6 +938,11 @@ impl<'a> Replay<'a> {
 
         for (file, content) in self.new_files {
             out.insert(file, content);
+        }
+
+        // The replay holds the whole new text, so writing it cannot fail.
+        if let Some(text) = self.rules {
+            out.insert(RULES_FILE, text);
         }
 
         if !self.open_lines.is_empty() {
@@ -1050,6 +1176,7 @@ fn render(text: &str, txn: &Txn, state: &TxnState) -> Result<Option<String>, Edi
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::import::Original;
 
     const CONFIG: &str = r#"
 spec_version = 0
@@ -1267,6 +1394,12 @@ include "imports/*/*/*.beancount"
             (run_file("x", "y"), "add-import-run", None),
             (add_tag(GROCERY, "a"), "add-tag", Some(GROCERY)),
             (remove_tag(BAKERY, "food"), "remove-tag", Some(BAKERY)),
+            (suggest(CAFE, 1, "a", "b"), "suggest-account", Some(CAFE)),
+            (
+                add_rule(&editor_rule(&["corner"], &[], "Expenses:A")),
+                "add-rule",
+                None,
+            ),
         ];
         for (intent, name, id) in cases {
             assert_eq!((intent.op_name(), intent.transaction_id()), (name, id));
@@ -2420,6 +2553,420 @@ include "imports/*/*/*.beancount"
             summary(&intents, &result.outcomes),
             "confirm 2, set-account 1"
         );
+    }
+
+    const RULES_TOML: &str = "# Rules\n\n[[rule]]\nmatch = { counterparty = \"(?i)^corner grocery\" }\naccount = \"Expenses:Food:Groceries\"\n";
+
+    /// [`snapshot`] with [`RULES_TOML`].
+    fn rules_snapshot() -> Snapshot {
+        let mut files = snapshot();
+        files.insert(RULES_FILE, RULES_TOML);
+        files
+    }
+
+    fn suggest(id: &str, posting: usize, old: &str, new: &str) -> Intent {
+        Intent::SuggestAccount {
+            id: id.into(),
+            posting,
+            old: old.into(),
+            new: new.into(),
+        }
+    }
+
+    fn editor_rule(counterparty: &[&str], purpose: &[&str], account: &str) -> EditorRule {
+        let words = |words: &[&str]| words.iter().map(|w| (*w).to_owned()).collect::<Vec<_>>();
+        EditorRule::from_words(&words(counterparty), &words(purpose), account).unwrap()
+    }
+
+    fn add_rule(rule: &EditorRule) -> Intent {
+        Intent::AddRule {
+            counterparty: rule.counterparty.clone(),
+            purpose: rule.purpose.clone(),
+            account: rule.account.clone(),
+        }
+    }
+
+    /// The original fields of the grocery transaction.
+    fn grocery_original() -> Original<'static> {
+        Original::new(Some("CORNER GROCERY 4711"), Some("CARD PAYMENT"), None)
+    }
+
+    #[test]
+    fn add_rule_goes_first_and_wins() {
+        let rule = editor_rule(&["corner"], &[], "Expenses:Late");
+        let (after, outcomes) = replay_on(&rules_snapshot(), &[add_rule(&rule)]);
+        assert_eq!(outcomes, vec![Applied]);
+        let text = after.text(RULES_FILE).unwrap();
+        assert_eq!(
+            text,
+            changed(
+                RULES_TOML,
+                "\n\n[[rule]]",
+                &format!("\n\n{}\n[[rule]]", rule.block())
+            )
+        );
+        assert_eq!(
+            Rules::parse(text)
+                .unwrap()
+                .suggest("giro", &grocery_original())
+                .account,
+            Some("Expenses:Late")
+        );
+        let mut others = after.clone();
+        others.insert(RULES_FILE, RULES_TOML);
+        assert_eq!(others, rules_snapshot());
+    }
+
+    #[test]
+    fn the_same_rule_again_is_done() {
+        let rule = editor_rule(&["corner"], &[], "Expenses:Late");
+        let (after, outcomes) = replay_on(&rules_snapshot(), &[add_rule(&rule), add_rule(&rule)]);
+        assert_eq!(outcomes, vec![Applied, AlreadyApplied]);
+        assert_eq!(
+            after.text(RULES_FILE).unwrap().matches("[[rule]]").count(),
+            2
+        );
+        let (again, outcomes) = replay_on(&after, &[add_rule(&rule)]);
+        assert_eq!(outcomes, vec![AlreadyApplied]);
+        assert_eq!(again, after);
+        // So is the rule already first in the file, written by hand.
+        let (again, outcomes) = replay_on(&rules_snapshot(), &[existing_rule()]);
+        assert_eq!(outcomes, vec![AlreadyApplied]);
+        assert_eq!(again, rules_snapshot());
+    }
+
+    /// The rule of [`RULES_TOML`] as an `add-rule`.
+    fn existing_rule() -> Intent {
+        Intent::AddRule {
+            counterparty: Some("(?i)^corner grocery".into()),
+            purpose: None,
+            account: "Expenses:Food:Groceries".into(),
+        }
+    }
+
+    #[test]
+    fn an_identical_rule_below_another_goes_on_top_again() {
+        // Below the new "corner" rule, the rule of RULES_TOML can no longer
+        // win, so adding it again inserts it on top.
+        let rule = editor_rule(&["corner"], &[], "Expenses:Late");
+        let (after, outcomes) = replay_on(&rules_snapshot(), &[add_rule(&rule), existing_rule()]);
+        assert_eq!(outcomes, vec![Applied, Applied]);
+        let existing = "[[rule]]\nmatch = { counterparty = '(?i)^corner grocery' }\naccount = \"Expenses:Food:Groceries\"\n";
+        assert_eq!(
+            after.text(RULES_FILE).unwrap(),
+            changed(
+                RULES_TOML,
+                "\n\n[[rule]]",
+                &format!("\n\n{existing}\n{}\n[[rule]]", rule.block())
+            )
+        );
+        assert_eq!(
+            Rules::parse(after.text(RULES_FILE).unwrap())
+                .unwrap()
+                .suggest("giro", &grocery_original())
+                .account,
+            Some("Expenses:Food:Groceries")
+        );
+    }
+
+    #[test]
+    fn a_later_rule_stands_above_an_earlier_one() {
+        let first = editor_rule(&["corner"], &[], "Expenses:Late");
+        let second = editor_rule(&[], &["card"], "Expenses:Food:Groceries");
+        let (after, outcomes) =
+            replay_on(&rules_snapshot(), &[add_rule(&first), add_rule(&second)]);
+        assert_eq!(outcomes, vec![Applied, Applied]);
+        let text = after.text(RULES_FILE).unwrap();
+        assert_eq!(
+            text,
+            changed(
+                RULES_TOML,
+                "\n\n[[rule]]",
+                &format!("\n\n{}\n{}\n[[rule]]", second.block(), first.block())
+            )
+        );
+        assert_eq!(
+            Rules::parse(text)
+                .unwrap()
+                .suggest("giro", &grocery_original())
+                .account,
+            Some("Expenses:Food:Groceries")
+        );
+        let (one, _) = replay_on(&rules_snapshot(), &[add_rule(&first)]);
+        let (two, _) = replay_on(&one, &[add_rule(&second)]);
+        assert_eq!(two, after);
+    }
+
+    #[test]
+    fn add_rule_needs_a_parsing_rules_file() {
+        let intent = add_rule(&editor_rule(&["corner"], &[], "Expenses:Late"));
+        let invalid = conflict(ConflictCode::RulesInvalid);
+        let (after, outcomes) = replay_on(&snapshot(), std::slice::from_ref(&intent));
+        assert_eq!(outcomes, vec![invalid.clone()]);
+        assert_eq!(after, snapshot());
+        for content in [
+            b"# Rule for the caf\xe9\n".as_slice(),
+            b"[[rule]]\naccount = \"Expenses:A\"\n",
+            b"[[rule]]\nmatch = { purpose = \"(?<=x)\" }\naccount = \"Expenses:A\"\n",
+            // Rules in an inline array have no header to insert before, and
+            // a block after them would not parse.
+            b"rule = [{ match = { purpose = \"x\" }, account = \"Expenses:A\" }]\n",
+        ] {
+            let mut before = snapshot();
+            before.insert(RULES_FILE, content);
+            let (after, outcomes) = replay_on(&before, std::slice::from_ref(&intent));
+            assert_eq!(
+                outcomes,
+                vec![invalid.clone()],
+                "{}",
+                String::from_utf8_lossy(content)
+            );
+            assert_eq!(after, before);
+        }
+    }
+
+    #[test]
+    fn add_rule_needs_a_rules_file_that_passes_the_check() {
+        let intent = add_rule(&editor_rule(&["corner"], &[], "Expenses:Late"));
+        for content in [
+            // A source that lentil.toml does not define.
+            "[[rule]]\nmatch = { source = \"girro\", purpose = \"x\" }\npayee = \"B\"\n",
+            // A rule that books to a source account.
+            "[[rule]]\nmatch = { purpose = \"x\" }\naccount = \"Liabilities:Card\"\n",
+        ] {
+            let mut before = snapshot();
+            before.insert(RULES_FILE, content);
+            let (after, outcomes) = replay_on(&before, std::slice::from_ref(&intent));
+            assert_eq!(
+                outcomes,
+                vec![conflict(ConflictCode::RulesInvalid)],
+                "{content}"
+            );
+            assert_eq!(after, before);
+        }
+    }
+
+    #[test]
+    fn add_rule_checks_its_account_and_patterns() {
+        let account = || "Expenses:Late".to_owned();
+        let rule = |account: &str| add_rule(&editor_rule(&["corner"], &[], account));
+        let cases = [
+            (rule("Assets:Bank:Giro"), ConflictCode::SourcePosting),
+            (rule("Liabilities:Card"), ConflictCode::SourcePosting),
+            (rule("Expenses:late"), ConflictCode::InvalidAccount),
+            (rule("Late"), ConflictCode::InvalidAccount),
+            (
+                Intent::AddRule {
+                    counterparty: None,
+                    purpose: None,
+                    account: account(),
+                },
+                ConflictCode::RulesInvalid,
+            ),
+            (
+                Intent::AddRule {
+                    counterparty: Some("(?<=x)y".into()),
+                    purpose: None,
+                    account: account(),
+                },
+                ConflictCode::RulesInvalid,
+            ),
+            // A TOML literal string cannot hold the quote.
+            (
+                Intent::AddRule {
+                    counterparty: None,
+                    purpose: Some("(?i)it's".into()),
+                    account: account(),
+                },
+                ConflictCode::RulesInvalid,
+            ),
+            // Nor a quote and line breaks that would end the string and add
+            // a key, though the file would still parse.
+            (
+                Intent::AddRule {
+                    counterparty: None,
+                    purpose: Some("x' }\npayee = 'p'\n#".into()),
+                    account: account(),
+                },
+                ConflictCode::RulesInvalid,
+            ),
+        ];
+        for (intent, code) in cases {
+            let (after, outcomes) = replay_on(&rules_snapshot(), std::slice::from_ref(&intent));
+            assert_eq!(outcomes, vec![conflict(code)], "{intent:?}");
+            assert_eq!(after, rules_snapshot());
+        }
+    }
+
+    #[test]
+    fn suggest_account_moves_an_open_transaction_and_keeps_its_flag() {
+        let intent = suggest(
+            GROCERY,
+            1,
+            "Expenses:Uncategorized",
+            "Expenses:Food:Groceries",
+        );
+        let (after, outcomes) = replay_on(&snapshot(), &[intent.clone(), intent.clone()]);
+        assert_eq!(outcomes, vec![Applied, AlreadyApplied]);
+        assert_eq!(
+            after.text(RUN_FILE).unwrap(),
+            changed(
+                RUN,
+                "  Expenses:Uncategorized\n\n; 2026-10-19",
+                "  Expenses:Food:Groceries\n\n; 2026-10-19"
+            )
+        );
+        let txn = reload(&after).find(GROCERY).unwrap().clone();
+        assert_eq!(
+            (txn.flag, txn.postings[1].account.as_str()),
+            ('!', "Expenses:Food:Groceries")
+        );
+        let (again, outcomes) = replay_on(&after, &[intent]);
+        assert_eq!(outcomes, vec![AlreadyApplied]);
+        assert_eq!(again, after);
+    }
+
+    #[test]
+    fn suggest_account_leaves_a_reviewed_transaction_alone() {
+        let reviewed = with_run(&changed(RUN, "2026-10-18 ! ", "2026-10-18 * "));
+        let uncategorized = "Expenses:Uncategorized";
+        for intent in [
+            suggest(GROCERY, 1, uncategorized, "Expenses:Food:Groceries"),
+            // Done even where an open transaction would conflict.
+            suggest(GROCERY, 1, "Expenses:Old", "Expenses:Food:Groceries"),
+            suggest(GROCERY, 1, uncategorized, "Expenses:Late"),
+            suggest(GROCERY, 2, uncategorized, "Expenses:Food:Groceries"),
+            suggest(BAKERY, 1, uncategorized, "Expenses:Food:Groceries"),
+        ] {
+            let (after, outcomes) = replay_on(&reviewed, std::slice::from_ref(&intent));
+            assert_eq!(outcomes, vec![AlreadyApplied], "{intent:?}");
+            assert_eq!(after, reviewed);
+        }
+        let (after, outcomes) = replay_on(
+            &reviewed,
+            &[set(GROCERY, 1, uncategorized, "Expenses:Food:Groceries")],
+        );
+        assert_eq!(outcomes, vec![Applied]);
+        assert_ne!(after, reviewed);
+    }
+
+    #[test]
+    fn suggest_account_after_a_confirm_in_the_same_replay_is_done() {
+        let intent = suggest(
+            GROCERY,
+            1,
+            "Expenses:Uncategorized",
+            "Expenses:Food:Groceries",
+        );
+        let (after, outcomes) = replay_on(&snapshot(), &[confirm(GROCERY), intent.clone()]);
+        assert_eq!(outcomes, vec![Applied, AlreadyApplied]);
+        assert_eq!(
+            after.text(RUN_FILE).unwrap(),
+            changed(RUN, "2026-10-18 ! ", "2026-10-18 * ")
+        );
+        let (after, outcomes) = replay_on(&snapshot(), &[intent, confirm(GROCERY)]);
+        assert_eq!(outcomes, vec![Applied, Applied]);
+        let txn = reload(&after).find(GROCERY).unwrap().clone();
+        assert_eq!(
+            (txn.flag, txn.postings[1].account.as_str()),
+            ('*', "Expenses:Food:Groceries")
+        );
+    }
+
+    #[test]
+    fn suggest_account_conflicts_like_set_account() {
+        let uncategorized = "Expenses:Uncategorized";
+        let cases = [
+            (
+                suggest(GROCERY, 1, "Expenses:Food:Groceries", "Expenses:Late"),
+                Outcome::Conflict(Conflict {
+                    code: ConflictCode::AccountChanged,
+                    current: Some(uncategorized.into()),
+                }),
+            ),
+            (
+                suggest(UTILITIES, 1, uncategorized, "Expenses:Late"),
+                conflict(ConflictCode::TransactionDismissed),
+            ),
+            (
+                suggest("giro-000000000000", 1, uncategorized, "Expenses:Late"),
+                conflict(ConflictCode::TransactionNotFound),
+            ),
+            (
+                suggest(GROCERY, 0, "Assets:Bank:Giro", uncategorized),
+                conflict(ConflictCode::SourcePosting),
+            ),
+            (
+                suggest(TRANSFER, 1, uncategorized, "Liabilities:Card"),
+                conflict(ConflictCode::SourcePosting),
+            ),
+            (
+                suggest(GROCERY, 1, uncategorized, "Expenses:Late"),
+                conflict(ConflictCode::AccountNotOpen),
+            ),
+            (
+                suggest(GROCERY, 2, uncategorized, "Expenses:Late"),
+                conflict(ConflictCode::PostingNotFound),
+            ),
+        ];
+        for (intent, outcome) in cases {
+            let (after, outcomes) = replay_on(&snapshot(), std::slice::from_ref(&intent));
+            assert_eq!(outcomes, vec![outcome], "{intent:?}");
+            assert_eq!(after, snapshot());
+        }
+        // A dismissed transaction is a conflict, even a reviewed one.
+        let (_, outcomes) = replay_on(
+            &snapshot(),
+            &[
+                dismiss(BAKERY),
+                suggest(BAKERY, 1, uncategorized, "Expenses:Late"),
+            ],
+        );
+        assert_eq!(
+            outcomes,
+            vec![Applied, conflict(ConflictCode::TransactionDismissed)]
+        );
+    }
+
+    #[test]
+    fn summary_counts_the_new_operations_in_table_order() {
+        let uncategorized = "Expenses:Uncategorized";
+        let intents = pending(&[
+            add_rule(&editor_rule(&["corner"], &[], "Expenses:Late")),
+            suggest(TRANSFER, 1, uncategorized, "Expenses:Late"),
+            set(GROCERY, 1, uncategorized, "Expenses:Food:Groceries"),
+            suggest(CAFE, 1, uncategorized, "Expenses:Food:Groceries"),
+        ]);
+        let mut before = rules_snapshot();
+        before.insert(CARD_FILE, CARD_RUN);
+        let result = replay(&before, &config(), &intents);
+        assert!(result.outcomes.iter().all(|(_, o)| *o == Applied));
+        assert_eq!(
+            summary(&intents, &result.outcomes),
+            "set-account 1, suggest-account 2, add-rule 1"
+        );
+    }
+
+    #[test]
+    fn rule_intents_serialize_with_their_op_names() {
+        for (intent, op) in [
+            (
+                suggest(GROCERY, 1, "a", "b"),
+                "{\"op\":\"suggest-account\",\"id\":\"giro-3f9a1c2e7b4d\",\"posting\":1,\"old\":\"a\",\"new\":\"b\"}",
+            ),
+            (
+                Intent::AddRule {
+                    counterparty: None,
+                    purpose: Some("x".into()),
+                    account: "Expenses:A".into(),
+                },
+                "{\"op\":\"add-rule\",\"counterparty\":null,\"purpose\":\"x\",\"account\":\"Expenses:A\"}",
+            ),
+        ] {
+            let json = serde_json::to_string(&intent).unwrap();
+            assert_eq!(json, op);
+            assert_eq!(serde_json::from_str::<Intent>(&json).unwrap(), intent);
+        }
     }
 
     const TRIP_A: &str = "k7p2q9xd-01jc8m2w9z4f7q3r5t6v8x0y1a";
