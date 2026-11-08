@@ -14,6 +14,7 @@ import app.lentil.data.LedgerError
 import app.lentil.data.LedgerException
 import app.lentil.data.LedgerRepository
 import app.lentil.data.QueueEntry
+import app.lentil.data.RuleWords
 import app.lentil.data.SecretStore
 import app.lentil.data.SettingsStore
 import app.lentil.data.StoredConflict
@@ -22,7 +23,11 @@ import app.lentil.data.TagChoices
 import java.time.Clock
 import java.time.LocalDate
 import java.util.UUID
+import kotlin.time.Duration.Companion.milliseconds
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -30,6 +35,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 /** The review queue and the sync status (PRD: FR-D1 to FR-D6). */
 data class QueueUiState(
@@ -50,6 +56,10 @@ data class QueueUiState(
     val tagPicker: TagPicker? = null,
     /** The name of the running trip, `null` if none runs (PRD: FR-D13). */
     val runningTrip: String? = null,
+    /** How many other open transactions the account sheet's rule would move; `null` until known. */
+    val rulePreview: Int? = null,
+    /** What the last account change moved, until its notice has shown. */
+    val moved: Moved? = null,
 ) {
     val writable: Boolean
         get() = readOnly.isEmpty()
@@ -61,6 +71,12 @@ data class QueueUiState(
 
 /** The tag picker for [entry], with the [choices] the core computed for it (PRD: FR-D12). */
 data class TagPicker(val entry: QueueEntry, val choices: TagChoices)
+
+/**
+ * The notice that one account change moved [count] other open transactions; [serial] tells two
+ * changes with the same count apart, so each gets its notice.
+ */
+data class Moved(val count: Int, val serial: Long)
 
 /** The last sync, in the user's terms rather than Git's (PRD: FR-D6). */
 sealed interface SyncStatus {
@@ -109,6 +125,16 @@ class QueueViewModel(
     private val writing = Mutex()
     private var loadJob: Job? = null
     private var syncJob: Job? = null
+    private var previewJob: Job? = null
+
+    /** Takes corrections one at a time, so each is computed on the intents of those before it. */
+    private val correcting = Mutex()
+
+    /** The transactions whose correction the core is computing; a reload keeps them hidden. */
+    private val inCorrection = mutableSetOf<String>()
+
+    /** The serial of the last [Moved] notice. */
+    private var movedSerial = 0L
 
     init {
         viewModelScope.launch {
@@ -133,29 +159,60 @@ class QueueViewModel(
 
     /**
      * Sets the counter account of [entry] to the existing [account] and confirms it, because any
-     * edit by the user reviews the transaction (spec section 6).
+     * edit by the user reviews the transaction (spec section 6). With [rule], the words the user
+     * picked, it also adds a rule that books like this (PRD: FR-D14).
      */
-    fun changeAccount(entry: QueueEntry, account: String) {
-        val change = accountChange(entry, account) ?: return
-        record(entry.label, listOf(change, Intent.Confirm(change.id)))
+    fun changeAccount(entry: QueueEntry, account: String, rule: RuleWords? = null) {
+        val change = accountChange(entry, account, rule) ?: return
+        correct(change, null, rule)
     }
 
     /**
-     * Opens [account], dated like the oldest transaction so it covers every open one, sets it as
-     * the counter account of [entry] and confirms it.
+     * Opens [account] on the [openingDate], sets it as the counter account of [entry] and confirms
+     * it; with [rule], also adds a rule that books like this.
      */
-    fun openAccount(entry: QueueEntry, account: String) {
-        val change = accountChange(entry, account) ?: return
-        val date = mutableState.value.defaultOpenDate ?: LocalDate.now(clock).toString()
+    fun openAccount(entry: QueueEntry, account: String, rule: RuleWords? = null) {
+        val change = accountChange(entry, account, rule) ?: return
+        val date = openingDate()
         mutableState.update { state ->
             state.copy(
                 accounts = (state.accounts + LedgerAccount(account, date)).sortedBy { it.name }
             )
         }
-        record(
-            entry.label,
-            listOf(Intent.OpenAccount(account, date), change, Intent.Confirm(change.id)),
-        )
+        correct(change, date, rule)
+    }
+
+    /**
+     * The date a new account opens on: that of the oldest open transaction, so it covers every one,
+     * or today if there is none.
+     */
+    fun openingDate(): String =
+        mutableState.value.defaultOpenDate ?: LocalDate.now(clock).toString()
+
+    /**
+     * Counts the other open transactions that [rule] would move if [entry] were corrected to
+     * [account], opened on [openDate] if that is not `null`. Every tap and chip asks again, so the
+     * core counts only once the choice has rested for [PREVIEW_DELAY], and only the latest count
+     * lands.
+     */
+    fun previewRule(entry: QueueEntry, account: String, openDate: String?, rule: RuleWords) {
+        val id = editableId(entry) ?: return
+        previewJob?.cancel()
+        mutableState.update { it.copy(rulePreview = null) }
+        previewJob = viewModelScope.launch {
+            delay(PREVIEW_DELAY)
+            try {
+                val count = ledger.rulePreview(intentState.pending, id, account, openDate, rule)
+                mutableState.update { it.copy(rulePreview = count) }
+            } catch (e: LedgerException) {
+                mutableState.update { it.copy(loadError = e.error) }
+            }
+        }
+    }
+
+    /** Forgets [notice] once it has shown, unless a newer one replaced it. */
+    fun clearMoved(notice: Moved) {
+        mutableState.update { if (it.moved == notice) it.copy(moved = null) else it }
     }
 
     /** Removes [tag] from [entry]; tagging leaves the transaction open (spec section 6). */
@@ -297,24 +354,99 @@ class QueueViewModel(
         }
     }
 
-    private fun accountChange(entry: QueueEntry, account: String): Intent.SetAccount? {
+    /**
+     * Hides [entry] and remembers [account] if the user may change its counter account to
+     * [account]; returns the change then, otherwise `null`. Its current account changes nothing,
+     * unless the user makes a [rule] of it.
+     */
+    private fun accountChange(
+        entry: QueueEntry,
+        account: String,
+        rule: RuleWords?,
+    ): AccountChange? {
         val id = editableId(entry) ?: return null
-        val posting = entry.counterPosting
-        val old = entry.counterAccount
-        if (posting == null || old == null || account == old) return null
+        val posting = entry.counterPosting ?: return null
+        val old = entry.counterAccount ?: return null
+        if (account == old && rule == null) return null
         settings.rememberAccount(account)
         mutableState.update { state ->
             state.copy(items = state.items.without(id), recentAccounts = settings.recentAccounts())
         }
-        return Intent.SetAccount(id = id, posting = posting, old = old, new = account)
+        return AccountChange(entry, id, posting, old, account)
+    }
+
+    /**
+     * Records the intents the core computes for [change], with the account opened on [openDate] if
+     * that is not `null`: the user's own, the rule of [rule], and the suggestions that move other
+     * open transactions with it (PRD: FR-D14, FR-D15).
+     *
+     * The user's own change is never lost: it runs to its end and is stored even if the view model
+     * is cleared meanwhile, and corrections run one at a time.
+     */
+    private fun correct(change: AccountChange, openDate: String?, rule: RuleWords?) {
+        inCorrection += change.id
+        // The rows as the user saw them, before reloads replace them.
+        val labels =
+            mutableState.value.items.mapNotNull { row -> row.id?.let { it to row.label } }.toMap()
+        viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            withContext(NonCancellable) {
+                correcting.withLock { recordCorrection(change, openDate, rule, labels) }
+            }
+        }
+    }
+
+    /**
+     * Computes and stores the intents of [change]. Each suggestion carries the label of its own
+     * transaction in [labels], so a conflict names the transaction that conflicted. If the core
+     * fails, the user's own change is stored without the rule and the error shows.
+     */
+    private suspend fun recordCorrection(
+        change: AccountChange,
+        openDate: String?,
+        rule: RuleWords?,
+        labels: Map<String, String>,
+    ) {
+        val label = change.entry.label
+        val failure =
+            try {
+                val pending = intentState.pending
+                val correction = ledger.correct(pending, change.id, change.account, openDate, rule)
+                add(
+                    correction.intents.map { intent ->
+                        val own = (intent as? Intent.SuggestAccount)?.let { labels[it.id] }
+                        StoredIntent(newKey(), intent, own ?: label)
+                    }
+                )
+                if (correction.moved > 0) {
+                    val notice = Moved(correction.moved, ++movedSerial)
+                    mutableState.update { it.copy(moved = notice) }
+                }
+                null
+            } catch (e: LedgerException) {
+                add(change.plain(openDate).map { StoredIntent(newKey(), it, label) })
+                e.error
+            } finally {
+                inCorrection -= change.id
+            }
+        persist()
+        failure?.let { error ->
+            // After the reload, which would clear it.
+            loadJob?.join()
+            mutableState.update { it.copy(loadError = error) }
+        }
     }
 
     private fun record(label: String, new: List<Intent>) {
-        intentState = intentState.add(new.map { StoredIntent(newKey(), it, label) })
+        add(new.map { StoredIntent(newKey(), it, label) })
+        viewModelScope.launch { persist() }
+    }
+
+    /** Adds [new] to the pending intents and shows them at once; the caller persists them. */
+    private fun add(new: List<StoredIntent>) {
+        intentState = intentState.add(new)
         publishIntents()
         // At once: a load that started before these intents would undo what the screen shows.
         reload()
-        viewModelScope.launch { persist() }
     }
 
     private fun publishIntents() {
@@ -338,16 +470,17 @@ class QueueViewModel(
             val pending = intentState.pending
             try {
                 val view = ledger.load(pending)
+                val queue = view.queue.filterNot { it.id in inCorrection }
                 mutableState.update {
                     it.copy(
                         loading = false,
-                        items = view.queue,
+                        items = queue,
                         accounts = view.accounts,
                         defaultOpenDate = view.defaultOpenDate,
                         readOnly = view.readOnly,
                         runningTrip = view.runningTrip,
                         loadError = null,
-                        tagPicker = it.tagPicker?.within(view.queue, view.readOnly.isEmpty()),
+                        tagPicker = it.tagPicker?.within(queue, view.readOnly.isEmpty()),
                     )
                 }
             } catch (e: LedgerException) {
@@ -364,6 +497,29 @@ class QueueViewModel(
             }
         }
     }
+}
+
+/** How long a rule's choice must rest before the core counts what it would move. */
+private val PREVIEW_DELAY = 300.milliseconds
+
+/** The change of [entry]'s counter posting [posting], with the ID [id], from [old] to [account]. */
+private data class AccountChange(
+    val entry: QueueEntry,
+    val id: String,
+    val posting: Int,
+    val old: String,
+    val account: String,
+) {
+    /**
+     * The user's own intents without the core: the account opened on [openDate] if that is not
+     * `null`, the change and its confirmation.
+     */
+    fun plain(openDate: String?): List<Intent> =
+        listOfNotNull(
+            openDate?.let { Intent.OpenAccount(account, it) },
+            Intent.SetAccount(id, posting, old, account),
+            Intent.Confirm(id),
+        )
 }
 
 /**

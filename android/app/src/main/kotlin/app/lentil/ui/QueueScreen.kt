@@ -28,14 +28,18 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -61,8 +65,11 @@ fun QueueScreen(viewModel: QueueViewModel, onChangeConnection: () -> Unit) {
     var accountFor by remember { mutableStateOf<QueueEntry?>(null) }
     var dismissFor by remember { mutableStateOf<QueueEntry?>(null) }
     var startingTrip by remember { mutableStateOf(false) }
+    val snackbar = remember { SnackbarHostState() }
+    MovedNotice(state.moved, snackbar, viewModel::clearMoved)
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.queue_title)) },
@@ -82,7 +89,7 @@ fun QueueScreen(viewModel: QueueViewModel, onChangeConnection: () -> Unit) {
                     )
                 },
             )
-        }
+        },
     ) { padding ->
         PullToRefreshBox(
             isRefreshing = state.sync == SyncStatus.Syncing,
@@ -141,13 +148,19 @@ fun QueueScreen(viewModel: QueueViewModel, onChangeConnection: () -> Unit) {
             accounts = state.accounts,
             date = entry.date,
             recent = state.recentAccounts,
-            onSelect = { account ->
-                viewModel.changeAccount(entry, account)
+            words = entry.ruleWords,
+            preview = state.rulePreview,
+            onSelect = { account, rule ->
+                viewModel.changeAccount(entry, account, rule)
                 accountFor = null
             },
-            onOpen = { account ->
-                viewModel.openAccount(entry, account)
+            onOpen = { account, rule ->
+                viewModel.openAccount(entry, account, rule)
                 accountFor = null
+            },
+            onPreview = { account, new, rule ->
+                val openDate = if (new) viewModel.openingDate() else null
+                viewModel.previewRule(entry, account, openDate, rule)
             },
             onClose = { accountFor = null },
         )
@@ -194,6 +207,23 @@ fun QueueScreen(viewModel: QueueViewModel, onChangeConnection: () -> Unit) {
                 }
             },
         )
+    }
+}
+
+/**
+ * Shows in [snackbar] how many other open transactions an account change moved (PRD: FR-D14,
+ * FR-D15), and calls [onShown] with [moved] once the notice is gone; nothing while none moved. A
+ * newer notice replaces one still showing.
+ */
+@Composable
+private fun MovedNotice(moved: Moved?, snackbar: SnackbarHostState, onShown: (Moved) -> Unit) {
+    val text = moved?.let { pluralStringResource(R.plurals.moved_notice, it.count, it.count) }
+    val shown by rememberUpdatedState(onShown)
+    LaunchedEffect(moved) {
+        if (moved != null && text != null) {
+            snackbar.showSnackbar(text)
+            shown(moved)
+        }
     }
 }
 

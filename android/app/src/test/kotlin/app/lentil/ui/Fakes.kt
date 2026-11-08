@@ -89,9 +89,24 @@ class FakeLedger(
     val picked = mutableListOf<Pair<String, String>>()
     var preview = 0
 
+    /** If set, a preview waits for it and then returns [preview] as it was when it started. */
+    var previewGate: CompletableDeferred<Unit>? = null
+
+    /** The arguments of every preview, in the shape of a correction's. */
+    val previews = mutableListOf<CorrectionCall>()
+
     /** What the core's learned refresh and the rule move besides the corrected transaction. */
     var followUps = emptyList<Intent>()
     val corrections = mutableListOf<CorrectionCall>()
+
+    /** The pending intents each correction started on. */
+    val correctedOn = mutableListOf<List<StoredIntent>>()
+
+    /** If set, a correction waits for it after it started. */
+    var correctionGate: CompletableDeferred<Unit>? = null
+
+    /** If set, a correction fails with it, while loads still work. */
+    var correctionError: LedgerError? = null
 
     /** If set, a sync waits for it, so a test can act while the sync runs. */
     var syncGate: CompletableDeferred<Unit>? = null
@@ -173,7 +188,10 @@ class FakeLedger(
         rule: RuleWords,
     ): Int {
         loadError?.let { throw LedgerException(it) }
-        return preview
+        previews += CorrectionCall(id, account, openDate, rule)
+        val count = preview
+        previewGate?.await()
+        return count
     }
 
     /**
@@ -188,8 +206,10 @@ class FakeLedger(
         openDate: String?,
         rule: RuleWords?,
     ): Correction {
-        loadError?.let { throw LedgerException(it) }
+        (correctionError ?: loadError)?.let { throw LedgerException(it) }
         corrections += CorrectionCall(id, account, openDate, rule)
+        correctedOn += pending
+        correctionGate?.await()
         val shown = queue.firstOrNull { it.id == id }
         val change =
             Intent.SetAccount(

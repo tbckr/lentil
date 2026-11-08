@@ -82,6 +82,20 @@
     <string name="account_all">All accounts</string>
     <string name="account_open_new">Open new account “%1$s”</string>
 
+    <!-- A rule from a correction (PRD: FR-D14, FR-D15) -->
+    <string name="always_book">Always book like this when it contains:</string>
+    <string name="rule_counterparty">Counterparty</string>
+    <string name="rule_purpose">Purpose</string>
+    <plurals name="rule_preview">
+        <item quantity="one">Matches %d more open transaction</item>
+        <item quantity="other">Matches %d more open transactions</item>
+    </plurals>
+    <string name="rule_save">Save</string>
+    <plurals name="moved_notice">
+        <item quantity="one">Moved %d more open transaction</item>
+        <item quantity="other">Moved %d more open transactions</item>
+    </plurals>
+
     <!-- Intents in the conflict list -->
     <string name="intent_confirm">Confirm</string>
     <string name="intent_set_account">Set account to %1$s</string>
@@ -107,6 +121,7 @@
     <string name="conflict_invalid_account">The account name isn\'t valid.</string>
     <string name="conflict_invalid_tag">The tag isn\'t valid.</string>
     <string name="conflict_invalid_trip">The trip\'s name or ID isn\'t valid.</string>
+    <string name="conflict_rules_invalid">rules.toml is missing or invalid, or the rule is.</string>
     <string name="conflict_unknown">Unknown conflict: %1$s</string>
     <string name="unknown_value">unknown</string>
 
@@ -148,6 +163,7 @@
     <string name="reason_units">an amount, cost or price</string>
     <string name="reason_removed">a transaction removed instead of commented out</string>
     <string name="reason_trip_name">a trip event whose name isn\'t valid</string>
+    <string name="reason_rules">a change to rules.toml other than new rules at the top</string>
     <!-- Values of the construct argument -->
     <string name="construct_option">an option other than title and operating_currency</string>
     <string name="construct_include">an include outside main.beancount</string>

@@ -76,6 +76,19 @@
     <string name="account_all">Alle Konten</string>
     <string name="account_open_new">Neues Konto „%1$s“ eröffnen</string>
 
+    <string name="always_book">Immer so buchen, wenn enthalten:</string>
+    <string name="rule_counterparty">Gegenpartei</string>
+    <string name="rule_purpose">Verwendungszweck</string>
+    <plurals name="rule_preview">
+        <item quantity="one">Passt auf %d weitere offene Buchung</item>
+        <item quantity="other">Passt auf %d weitere offene Buchungen</item>
+    </plurals>
+    <string name="rule_save">Speichern</string>
+    <plurals name="moved_notice">
+        <item quantity="one">%d weitere offene Buchung umgestellt</item>
+        <item quantity="other">%d weitere offene Buchungen umgestellt</item>
+    </plurals>
+
     <string name="intent_confirm">Bestätigen</string>
     <string name="intent_set_account">Konto auf %1$s setzen</string>
     <string name="intent_suggest_account">Als Vorschlag auf Konto %1$s umstellen</string>
@@ -99,6 +112,7 @@
     <string name="conflict_invalid_account">Der Kontoname ist ungültig.</string>
     <string name="conflict_invalid_tag">Das Schlagwort ist ungültig.</string>
     <string name="conflict_invalid_trip">Name oder ID der Reise sind ungültig.</string>
+    <string name="conflict_rules_invalid">rules.toml fehlt oder ist ungültig, oder die Regel ist es.</string>
     <string name="conflict_unknown">Unbekannter Konflikt: %1$s</string>
     <string name="unknown_value">unbekannt</string>
 
@@ -138,6 +152,7 @@
     <string name="reason_units">ein Betrag, Kostenwert oder Preis</string>
     <string name="reason_removed">eine entfernte statt auskommentierte Buchung</string>
     <string name="reason_trip_name">ein Reise-Eintrag mit ungültigem Namen</string>
+    <string name="reason_rules">eine Änderung an rules.toml außer neuen Regeln am Anfang</string>
     <string name="construct_option">eine andere Option als title und operating_currency</string>
     <string name="construct_include">ein Include außerhalb von main.beancount</string>
     <string name="construct_plugin">ein Plugin</string>

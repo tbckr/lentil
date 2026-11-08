@@ -74,6 +74,7 @@ private val codedArgs =
                 "units" to R.string.reason_units,
                 "removed" to R.string.reason_removed,
                 "trip-name" to R.string.reason_trip_name,
+                "rules" to R.string.reason_rules,
             ),
         "construct" to
             mapOf(
@@ -102,6 +103,7 @@ private val conflictMessages =
         "InvalidAccount" to R.string.conflict_invalid_account,
         "InvalidTag" to R.string.conflict_invalid_tag,
         "InvalidTrip" to R.string.conflict_invalid_trip,
+        "RulesInvalid" to R.string.conflict_rules_invalid,
     )
 
 @Composable
