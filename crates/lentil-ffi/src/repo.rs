@@ -6,10 +6,13 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 
+use jiff::civil::Date;
 use lentil_core::config::{CONFIG_FILE, Config, ConfigError};
+use lentil_core::correction::{self, CorrectionRequest, RuleWords};
 use lentil_core::finding::{Finding, FindingCode};
 use lentil_core::intent::{self, PendingIntent};
 use lentil_core::ledger::{self, Ledger, Txn};
+use lentil_core::snapshot::Snapshot;
 use lentil_core::sync::git::Git2Backend;
 use lentil_core::sync::{self, BRANCH, CommitId, Credentials, GitBackend, Identity, ThreadSleeper};
 use lentil_core::tags::{self, Taxonomy, TaxonomyError};
@@ -18,8 +21,9 @@ use lentil_core::validate::{self, Role};
 
 use crate::error::LentilError;
 use crate::types::{
-    AccountItem, FfiAuthor, FfiCredentials, FfiFinding, FfiIdentity, FfiIntent, FfiPendingIntent,
-    FfiTagChoices, QueueItem, SyncReport, findings, outcomes, pending_intents,
+    AccountItem, FfiAuthor, FfiCorrection, FfiCredentials, FfiFinding, FfiIdentity, FfiIntent,
+    FfiPendingIntent, FfiRuleWords, FfiTagChoices, QueueItem, SyncReport, count, findings,
+    outcomes, pending_intents,
 };
 
 /// A local clone of a Lentil repository.
@@ -39,6 +43,9 @@ struct View {
     head: Option<CommitId>,
     pending: Vec<PendingIntent>,
     config: Config,
+    /// The files of the local `main` with `pending` replayed, which
+    /// `ledger` indexes; corrections run on them.
+    snapshot: Snapshot,
     ledger: Ledger,
     /// `tags.toml`; `None` without the file.
     taxonomy: Option<Result<Taxonomy, TaxonomyError>>,
@@ -120,6 +127,55 @@ impl LentilRepo {
     ) -> Result<Vec<FfiIntent>, LentilError> {
         let view = self.view(pending)?;
         pick_of(&view.ledger, view.taxonomy.as_ref(), id, tag)
+    }
+
+    /// How many other transactions the rule from `rule` would move when the
+    /// user corrects transaction `id` to `account`, with `pending` applied;
+    /// `open_date` is the date to open `account` on, if it is new. The app
+    /// shows the count before the user confirms (PRD: FR-D14). It is
+    /// computed on the loaded ledger without a replay, so it is cheap enough
+    /// for every choice of words.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::queue`]; also [`LentilError::NotCorrectable`] if no active
+    /// transaction has `id` or it has no single counter posting, and
+    /// [`LentilError::Other`] if `open_date` is not a `YYYY-MM-DD` date.
+    pub fn rule_preview(
+        &self,
+        pending: Vec<FfiPendingIntent>,
+        id: &str,
+        account: &str,
+        open_date: Option<String>,
+        rule: FfiRuleWords,
+    ) -> Result<u32, LentilError> {
+        let view = self.view(pending)?;
+        let rule = RuleWords::from(rule);
+        let request = correction_request(id, account, open_date, Some(&rule))?;
+        count(correction::preview(&view.ledger, &view.config, &request)?)
+    }
+
+    /// The intents of correcting transaction `id` to `account`, with
+    /// `pending` applied: the user's own, an `AddRule` for the words in
+    /// `rule`, and the `SuggestAccount` of the other open transactions that
+    /// move with them. The app records them all and syncs them like any
+    /// other (PRD: FR-D14, FR-D15).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::rule_preview`].
+    pub fn correct(
+        &self,
+        pending: Vec<FfiPendingIntent>,
+        id: &str,
+        account: &str,
+        open_date: Option<String>,
+        rule: Option<FfiRuleWords>,
+    ) -> Result<FfiCorrection, LentilError> {
+        let view = self.view(pending)?;
+        let rule = rule.map(RuleWords::from);
+        let request = correction_request(id, account, open_date, rule.as_ref())?;
+        correction::correct(&view.snapshot, &view.config, &request)?.try_into()
     }
 
     /// The name of the running trip with `pending` applied, `None` if no trip
@@ -263,6 +319,7 @@ impl LentilRepo {
             head,
             pending,
             config,
+            snapshot,
             ledger,
             taxonomy,
             trips,
@@ -330,6 +387,29 @@ fn pick_of(
         .collect()
 }
 
+/// The request to correct transaction `id` to `account`, opening `account`
+/// on `open_date` (`YYYY-MM-DD`) if given.
+fn correction_request<'a>(
+    id: &'a str,
+    account: &'a str,
+    open_date: Option<String>,
+    rule: Option<&'a RuleWords>,
+) -> Result<CorrectionRequest<'a>, LentilError> {
+    let open_date = open_date
+        .map(|date| {
+            date.parse::<Date>().map_err(|_| LentilError::Other {
+                detail: format!("invalid open date {date:?}"),
+            })
+        })
+        .transpose()?;
+    Ok(CorrectionRequest {
+        id,
+        account,
+        open_date,
+        rule,
+    })
+}
+
 fn queue_item(config: &Config, txn: &Txn, trips: &Trips) -> QueueItem {
     let source = source_posting(config, txn);
     // Only an unambiguous counter posting is offered for editing; splits and
@@ -371,6 +451,7 @@ fn queue_item(config: &Config, txn: &Txn, trips: &Trips) -> QueueItem {
             tags
         }),
         suggested_tag: trips.suggestion(config, txn),
+        rule_words: correction::rule_words(txn, config).into(),
     }
 }
 
@@ -568,7 +649,54 @@ include "manual/*/*.beancount"
                 line: 1,
                 tags: vec![],
                 suggested_tag: None,
+                rule_words: FfiRuleWords {
+                    counterparty: vec!["corner".to_owned(), "grocery".to_owned()],
+                    purpose: vec!["card".to_owned(), "payment".to_owned()],
+                },
             }
+        );
+    }
+
+    #[test]
+    fn queue_items_carry_the_words_a_rule_can_match() {
+        // A transaction outside the run files of the sources offers none,
+        // and so does one without original fields.
+        let mut files = sample_files();
+        files.insert(
+            "manual/k7p2q9xd/2026-10.beancount",
+            "2026-10-21 ! \"Corner Grocery\" \"Cash\"\n  lentil_id: \"k7p2q9xd-01jc8m2w9z4f7q3r5t6v8x0y1a\"\n  lentil_counterparty: \"CORNER GROCERY\"\n  Assets:Bank:Giro  -5.00 EUR\n  Expenses:Groceries\n",
+        );
+        let (config, ledger) = loaded(&files);
+        let words: Vec<(Option<String>, FfiRuleWords)> =
+            queue_items(&config, &ledger, &Trips::default())
+                .into_iter()
+                .map(|item| (item.id, item.rule_words))
+                .collect();
+        let none = || FfiRuleWords {
+            counterparty: vec![],
+            purpose: vec![],
+        };
+        let id = |id: &str| Some(id.to_owned());
+        assert_eq!(
+            words,
+            vec![
+                (id("k7p2q9xd-01jc8m2w9z4f7q3r5t6v8x0y1a"), none()),
+                (id("giro-111111111111"), none()),
+                (
+                    id("card-222222222222"),
+                    FfiRuleWords {
+                        counterparty: vec!["payment".to_owned(), "received".to_owned()],
+                        purpose: vec![],
+                    }
+                ),
+                (
+                    id("giro-3f9a1c2e7b4d"),
+                    FfiRuleWords {
+                        counterparty: vec!["corner".to_owned(), "grocery".to_owned()],
+                        purpose: vec!["card".to_owned(), "payment".to_owned()],
+                    }
+                ),
+            ]
         );
     }
 

@@ -13,7 +13,7 @@ use lentil_core::sync::git::Git2Backend;
 use lentil_core::sync::{Author, Credentials, GitBackend, PushOutcome};
 use lentil_ffi::{
     AccountItem, FfiAuthor, FfiCredentials, FfiIdentity, FfiIntent, FfiOutcome, FfiPendingIntent,
-    LentilError, LentilRepo, new_device_id,
+    FfiRuleWords, LentilError, LentilRepo, new_device_id,
 };
 use tempfile::TempDir;
 
@@ -110,13 +110,53 @@ fn fixture() -> Snapshot {
     ])
 }
 
-/// A bare remote whose `main` holds the fixture in one admin commit.
+const STREAMFLIX_RUN: &str = r#"; lentil import run
+; source: giro, started: 2026-11-01T08:00:00Z, client: lentil-cli/0.1.0
+
+2026-10-25 ! "Streamflix Intl" "Streamflix Abo"
+  lentil_id: "giro-000000000003"
+  lentil_counterparty: "STREAMFLIX INTL"
+  lentil_purpose: "STREAMFLIX ABO"
+  Assets:Bank:Giro  -9.99 EUR
+  Expenses:Uncategorized
+
+2026-10-26 ! "Streamflix Intl" "Streamflix Abo"
+  lentil_id: "giro-000000000004"
+  lentil_counterparty: "STREAMFLIX INTL"
+  lentil_purpose: "STREAMFLIX ABO"
+  Assets:Bank:Giro  -9.99 EUR
+  Expenses:Uncategorized
+
+2026-10-28 balance Assets:Bank:Giro  -75.05 ~ 0.00 EUR
+"#;
+
+/// `fixture()` with a second run of two open transactions that share their
+/// purpose and sit on the fallback account, and with `Expenses:Subscriptions`
+/// opened.
+fn fixture_with_streamflix() -> Snapshot {
+    let mut snapshot = fixture();
+    snapshot.insert(
+        "accounts.beancount",
+        format!("{ACCOUNTS}2026-01-01 open Expenses:Subscriptions\n"),
+    );
+    snapshot.insert(
+        "imports/giro/2026/20261101T080000Z.beancount",
+        STREAMFLIX_RUN,
+    );
+    snapshot
+}
+
+/// A bare remote whose `main` holds a fixture in one admin commit.
 struct Remote {
     dir: TempDir,
 }
 
 impl Remote {
     fn new() -> Self {
+        Self::seeded(&fixture())
+    }
+
+    fn seeded(files: &Snapshot) -> Self {
         let dir = TempDir::new().unwrap();
         let mut options = git2::RepositoryInitOptions::new();
         options.bare(true).initial_head("main");
@@ -134,7 +174,7 @@ impl Remote {
             email: "admin@example.org".to_owned(),
         };
         let commit = git
-            .commit(None, &Snapshot::new(), &fixture(), "admin: init\n", &author)
+            .commit(None, &Snapshot::new(), files, "admin: init\n", &author)
             .unwrap();
         assert_eq!(git.push(&commit).unwrap(), PushOutcome::Pushed);
         remote
@@ -328,6 +368,285 @@ fn sync_pushes_intents_and_reports_conflicts() {
     );
     // The sync still brought the other device's change.
     assert_eq!(queue_ids(&second, vec![]), vec!["giro-000000000002"]);
+}
+
+/// The `rules.toml` on the remote's `main`.
+fn remote_rules(remote: &Remote) -> String {
+    let dir = TempDir::new().unwrap();
+    let mut git = Git2Backend::clone_bare(
+        &remote.url(),
+        &dir.path().join("check"),
+        Credentials::Default,
+    )
+    .unwrap();
+    let head = git.fetch().unwrap();
+    let snapshot = git.snapshot(head.as_ref()).unwrap();
+    snapshot.text("rules.toml").unwrap().to_owned()
+}
+
+fn purpose_words(words: &[&str]) -> FfiRuleWords {
+    FfiRuleWords {
+        counterparty: vec![],
+        purpose: words.iter().map(|&w| w.to_owned()).collect(),
+    }
+}
+
+#[test]
+fn a_gesture_moves_open_transactions_before_the_sync() {
+    let remote = Remote::seeded(&fixture_with_streamflix());
+    let dir = TempDir::new().unwrap();
+    let repo = remote.clone_app(&dir);
+    let first = "giro-000000000003";
+    let second = "giro-000000000004";
+
+    // The words the user may pick from the corrected transaction come with
+    // the queue.
+    let words = repo
+        .queue(vec![])
+        .unwrap()
+        .into_iter()
+        .find(|item| item.id.as_deref() == Some(first))
+        .unwrap()
+        .rule_words;
+    assert_eq!(
+        words,
+        FfiRuleWords {
+            counterparty: vec!["streamflix".to_owned(), "intl".to_owned()],
+            purpose: vec!["streamflix".to_owned(), "abo".to_owned()],
+        }
+    );
+    // Picking "streamflix" of the purpose moves the other subscription.
+    let rule = purpose_words(&["streamflix"]);
+    let preview = repo
+        .rule_preview(vec![], first, "Expenses:Subscriptions", None, rule.clone())
+        .unwrap();
+    assert_eq!(preview, 1);
+
+    let correction = repo
+        .correct(vec![], first, "Expenses:Subscriptions", None, Some(rule))
+        .unwrap();
+    let pattern = r"(?i)(?:^|\PL)streamflix(?:\PL|$)";
+    assert_eq!(
+        correction.intents,
+        vec![
+            FfiIntent::SetAccount {
+                id: first.to_owned(),
+                posting: 1,
+                old: "Expenses:Uncategorized".to_owned(),
+                new: "Expenses:Subscriptions".to_owned(),
+            },
+            FfiIntent::Confirm {
+                id: first.to_owned(),
+            },
+            FfiIntent::AddRule {
+                counterparty: None,
+                purpose: Some(pattern.to_owned()),
+                account: "Expenses:Subscriptions".to_owned(),
+            },
+            FfiIntent::SuggestAccount {
+                id: second.to_owned(),
+                posting: 1,
+                old: "Expenses:Uncategorized".to_owned(),
+                new: "Expenses:Subscriptions".to_owned(),
+            },
+        ]
+    );
+    assert_eq!(correction.moved, 1);
+
+    // The app records the intents; the queue shows them before the sync.
+    let intents: Vec<FfiPendingIntent> = correction
+        .intents
+        .into_iter()
+        .enumerate()
+        .map(|(i, intent)| pending(&format!("k{i}"), intent))
+        .collect();
+    assert_eq!(
+        queue_ids(&repo, vec![]),
+        vec![second, first, "giro-000000000002", "giro-000000000001"]
+    );
+    // The first transaction is reviewed; the second stays open on the new account.
+    assert_eq!(
+        queue_ids(&repo, intents.clone()),
+        vec![second, "giro-000000000002", "giro-000000000001"]
+    );
+    let queue = repo.queue(intents.clone()).unwrap();
+    assert_eq!(
+        queue[0].counter_account.as_deref(),
+        Some("Expenses:Subscriptions")
+    );
+
+    let report = repo
+        .sync(
+            intents,
+            identity("aaaaaaaa"),
+            author(),
+            FfiCredentials::Default,
+        )
+        .unwrap();
+    assert!(report.committed);
+    assert_eq!(
+        report
+            .outcomes
+            .iter()
+            .map(|o| &o.outcome)
+            .collect::<Vec<_>>(),
+        vec![&FfiOutcome::Applied; 4]
+    );
+    assert_eq!(
+        remote_rules(&remote),
+        format!(
+            "# Suggestion rules (spec section 16).\n\n[[rule]]\nmatch = {{ purpose = '{pattern}' }}\naccount = \"Expenses:Subscriptions\"\n"
+        )
+    );
+}
+
+#[test]
+fn a_correction_that_cannot_be_computed_fails() {
+    let remote = Remote::seeded(&fixture_with_streamflix());
+    let dir = TempDir::new().unwrap();
+    let repo = remote.clone_app(&dir);
+
+    // An unknown transaction has no correction.
+    let unknown = "giro-ffffffffffff";
+    assert!(matches!(
+        repo.correct(vec![], unknown, "Expenses:Subscriptions", None, None),
+        Err(LentilError::NotCorrectable)
+    ));
+    assert!(matches!(
+        repo.rule_preview(
+            vec![],
+            unknown,
+            "Expenses:Subscriptions",
+            None,
+            purpose_words(&["streamflix"]),
+        ),
+        Err(LentilError::NotCorrectable)
+    ));
+    // An open date that is no date is a bug of the caller, with a detail.
+    let id = "giro-000000000003";
+    assert!(matches!(
+        repo.correct(
+            vec![],
+            id,
+            "Expenses:Streaming",
+            Some("tomorrow".to_owned()),
+            None
+        ),
+        Err(LentilError::Other { detail }) if detail.contains("\"tomorrow\"")
+    ));
+    assert!(matches!(
+        repo.rule_preview(
+            vec![],
+            id,
+            "Expenses:Streaming",
+            Some("2026-13-01".to_owned()),
+            purpose_words(&["streamflix"]),
+        ),
+        Err(LentilError::Other { detail }) if detail.contains("\"2026-13-01\"")
+    ));
+}
+
+#[test]
+fn a_correction_starts_from_the_pending_intents() {
+    let remote = Remote::seeded(&fixture_with_streamflix());
+    let dir = TempDir::new().unwrap();
+    let repo = remote.clone_app(&dir);
+    let id = "giro-000000000003";
+    let moved = pending(
+        "k1",
+        FfiIntent::SetAccount {
+            id: id.to_owned(),
+            posting: 1,
+            old: "Expenses:Uncategorized".to_owned(),
+            new: "Expenses:Food:Groceries".to_owned(),
+        },
+    );
+    let dismissed = pending("k2", FfiIntent::Dismiss { id: id.to_owned() });
+
+    // The old value of the new set-account is the one the pending intent set.
+    let correction = repo
+        .correct(
+            vec![moved.clone()],
+            id,
+            "Expenses:Subscriptions",
+            None,
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        correction.intents[0],
+        FfiIntent::SetAccount {
+            id: id.to_owned(),
+            posting: 1,
+            old: "Expenses:Food:Groceries".to_owned(),
+            new: "Expenses:Subscriptions".to_owned(),
+        }
+    );
+    // A transaction dismissed by a pending intent cannot be corrected.
+    assert!(matches!(
+        repo.correct(
+            vec![dismissed.clone()],
+            id,
+            "Expenses:Subscriptions",
+            None,
+            None
+        ),
+        Err(LentilError::NotCorrectable)
+    ));
+    assert!(matches!(
+        repo.rule_preview(
+            vec![dismissed],
+            id,
+            "Expenses:Subscriptions",
+            None,
+            purpose_words(&["streamflix"]),
+        ),
+        Err(LentilError::NotCorrectable)
+    ));
+}
+
+#[test]
+fn a_new_account_opens_first_and_a_plain_correction_adds_no_rule_but_learns() {
+    let remote = Remote::seeded(&fixture_with_streamflix());
+    let dir = TempDir::new().unwrap();
+    let repo = remote.clone_app(&dir);
+    let id = "giro-000000000003";
+
+    let correction = repo
+        .correct(
+            vec![],
+            id,
+            "Expenses:Streaming",
+            Some("2026-10-25".to_owned()),
+            None,
+        )
+        .unwrap();
+
+    assert_eq!(
+        correction.intents,
+        vec![
+            FfiIntent::OpenAccount {
+                account: "Expenses:Streaming".to_owned(),
+                date: "2026-10-25".to_owned(),
+            },
+            FfiIntent::SetAccount {
+                id: id.to_owned(),
+                posting: 1,
+                old: "Expenses:Uncategorized".to_owned(),
+                new: "Expenses:Streaming".to_owned(),
+            },
+            FfiIntent::Confirm { id: id.to_owned() },
+            // Without a rule, the learned refresh still moves the open
+            // transaction with the same words to the corrected one's account.
+            FfiIntent::SuggestAccount {
+                id: "giro-000000000004".to_owned(),
+                posting: 1,
+                old: "Expenses:Uncategorized".to_owned(),
+                new: "Expenses:Streaming".to_owned(),
+            },
+        ]
+    );
+    assert_eq!(correction.moved, 1);
 }
 
 #[test]

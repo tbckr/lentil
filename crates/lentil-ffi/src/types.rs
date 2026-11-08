@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use jiff::civil::Date;
+use lentil_core::correction::{Correction, RuleWords};
 use lentil_core::finding::{Finding, FindingCode, Severity};
 use lentil_core::intent::{ConflictCode, Intent, Outcome, PendingIntent};
 use lentil_core::sync::{Author, Credentials};
@@ -29,10 +30,34 @@ pub enum FfiIntent {
         /// The account the user chose.
         new: String,
     },
+    /// Change the account of a posting that is not the source posting to a
+    /// computed suggestion, such as that of a rule just added. The flag
+    /// stays, so a suggestion moves an open transaction without confirming
+    /// it.
+    SuggestAccount {
+        /// `lentil_id` of the transaction.
+        id: String,
+        /// 0-based index of the posting in file order.
+        posting: u32,
+        /// The account the suggestion was computed for.
+        old: String,
+        /// The suggested account.
+        new: String,
+    },
     /// Comment out an active transaction in place.
     Dismiss {
         /// `lentil_id` of the transaction.
         id: String,
+    },
+    /// Insert a rule before the first rule of `rules.toml`, as `correct`
+    /// computes it from the words the user picked.
+    AddRule {
+        /// The regular expression on `lentil_counterparty`, if any.
+        counterparty: Option<String>,
+        /// The regular expression on `lentil_purpose`, if any.
+        purpose: Option<String>,
+        /// The counter account the rule sets.
+        account: String,
     },
     /// Open an account in `accounts.beancount`.
     OpenAccount {
@@ -101,7 +126,29 @@ impl TryFrom<FfiPendingIntent> for PendingIntent {
                 old,
                 new,
             },
+            FfiIntent::SuggestAccount {
+                id,
+                posting,
+                old,
+                new,
+            } => Intent::SuggestAccount {
+                id,
+                posting: usize::try_from(posting).map_err(|_| LentilError::Other {
+                    detail: format!("posting index {posting} out of range"),
+                })?,
+                old,
+                new,
+            },
             FfiIntent::Dismiss { id } => Intent::Dismiss { id },
+            FfiIntent::AddRule {
+                counterparty,
+                purpose,
+                account,
+            } => Intent::AddRule {
+                counterparty,
+                purpose,
+                account,
+            },
             FfiIntent::OpenAccount { account, date } => Intent::OpenAccount {
                 account,
                 date: parse_date(&date, &pending.key)?,
@@ -136,7 +183,8 @@ impl TryFrom<Intent> for FfiIntent {
     type Error = LentilError;
 
     /// An intent the core computed for the app to record, such as those of
-    /// a tag pick. The app never records `set-payee` or `add-import-run`.
+    /// a tag pick or a correction. The app never records `set-payee` or
+    /// `add-import-run`.
     fn try_from(intent: Intent) -> Result<Self, Self::Error> {
         Ok(match intent {
             Intent::Confirm { id } => Self::Confirm { id },
@@ -153,7 +201,29 @@ impl TryFrom<Intent> for FfiIntent {
                 old,
                 new,
             },
+            Intent::SuggestAccount {
+                id,
+                posting,
+                old,
+                new,
+            } => Self::SuggestAccount {
+                id,
+                posting: u32::try_from(posting).map_err(|_| LentilError::Other {
+                    detail: format!("posting index {posting} out of range"),
+                })?,
+                old,
+                new,
+            },
             Intent::Dismiss { id } => Self::Dismiss { id },
+            Intent::AddRule {
+                counterparty,
+                purpose,
+                account,
+            } => Self::AddRule {
+                counterparty,
+                purpose,
+                account,
+            },
             Intent::OpenAccount { account, date } => Self::OpenAccount {
                 account,
                 date: date.to_string(),
@@ -169,10 +239,7 @@ impl TryFrom<Intent> for FfiIntent {
                 id,
                 date: date.to_string(),
             },
-            other @ (Intent::SetPayee { .. }
-            | Intent::AddImportRun { .. }
-            | Intent::SuggestAccount { .. }
-            | Intent::AddRule { .. }) => {
+            other @ (Intent::SetPayee { .. } | Intent::AddImportRun { .. }) => {
                 return Err(LentilError::Other {
                     detail: format!("the app does not record {}", other.op_name()),
                 });
@@ -186,6 +253,67 @@ pub(crate) fn pending_intents(
     pending: Vec<FfiPendingIntent>,
 ) -> Result<Vec<PendingIntent>, LentilError> {
     pending.into_iter().map(PendingIntent::try_from).collect()
+}
+
+/// The words of a transaction's counterparty and purpose that the user can
+/// pick for a rule, and those the user picked.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct FfiRuleWords {
+    /// The words of `lentil_counterparty`, lowercase, in text order, each once.
+    pub counterparty: Vec<String>,
+    /// The words of `lentil_purpose`, lowercase, in text order, each once.
+    pub purpose: Vec<String>,
+}
+
+impl From<RuleWords> for FfiRuleWords {
+    fn from(words: RuleWords) -> Self {
+        Self {
+            counterparty: words.counterparty,
+            purpose: words.purpose,
+        }
+    }
+}
+
+impl From<FfiRuleWords> for RuleWords {
+    fn from(words: FfiRuleWords) -> Self {
+        Self {
+            counterparty: words.counterparty,
+            purpose: words.purpose,
+        }
+    }
+}
+
+/// The intents of one account correction, for the app to record.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct FfiCorrection {
+    /// In the order the core replays them: the user's own (`OpenAccount` if
+    /// requested, `SetAccount`, `Confirm`, `AddRule` with a rule), then the
+    /// `SuggestAccount` of the rule, then those of the learned refresh.
+    pub intents: Vec<FfiIntent>,
+    /// How many other transactions the `SuggestAccount` intents move.
+    pub moved: u32,
+}
+
+impl TryFrom<Correction> for FfiCorrection {
+    type Error = LentilError;
+
+    fn try_from(correction: Correction) -> Result<Self, Self::Error> {
+        Ok(Self {
+            intents: correction
+                .intents
+                .into_iter()
+                .map(FfiIntent::try_from)
+                .collect::<Result<_, _>>()?,
+            moved: count(correction.moved)?,
+        })
+    }
+}
+
+/// A count for the app, which counts in `u32`.
+pub(crate) fn count(count: usize) -> Result<u32, LentilError> {
+    u32::try_from(count).map_err(|_| LentilError::Other {
+        detail: format!("count {count} out of range"),
+    })
 }
 
 /// Credentials for the remote. Never stored in the repository, and never
@@ -458,6 +586,10 @@ pub struct QueueItem {
     /// accepts it through `pick_tag` (spec section 9); never written by
     /// itself.
     pub suggested_tag: Option<String>,
+    /// The words of its counterparty and purpose that a rule from a
+    /// correction can match (PRD: FR-D14); none unless it has a `lentil_id`
+    /// in the run file of a configured source.
+    pub rule_words: FfiRuleWords,
 }
 
 /// Where the tag picker's choices come from.
@@ -535,6 +667,7 @@ pub struct AccountItem {
 mod tests {
     use std::collections::BTreeMap;
 
+    use lentil_core::correction::{Correction, RuleWords};
     use lentil_core::intent::Conflict;
     use lentil_core::tags::{ChoiceSource, TagChoice, TagChoices};
 
@@ -720,6 +853,23 @@ mod tests {
                     date: "2026-04-21".to_owned(),
                 },
             },
+            FfiPendingIntent {
+                key: "k9".to_owned(),
+                intent: FfiIntent::SuggestAccount {
+                    id: "giro-3f9a1c2e7b4d".to_owned(),
+                    posting: 1,
+                    old: "Expenses:Uncategorized".to_owned(),
+                    new: "Expenses:Subscriptions".to_owned(),
+                },
+            },
+            FfiPendingIntent {
+                key: "k10".to_owned(),
+                intent: FfiIntent::AddRule {
+                    counterparty: None,
+                    purpose: Some(STREAMFLIX_PATTERN.to_owned()),
+                    account: "Expenses:Subscriptions".to_owned(),
+                },
+            },
         ];
 
         let converted = pending_intents(pending).unwrap();
@@ -784,9 +934,28 @@ mod tests {
                         date: Date::constant(2026, 4, 21),
                     },
                 },
+                PendingIntent {
+                    key: "k9".to_owned(),
+                    intent: Intent::SuggestAccount {
+                        id: "giro-3f9a1c2e7b4d".to_owned(),
+                        posting: 1,
+                        old: "Expenses:Uncategorized".to_owned(),
+                        new: "Expenses:Subscriptions".to_owned(),
+                    },
+                },
+                PendingIntent {
+                    key: "k10".to_owned(),
+                    intent: Intent::AddRule {
+                        counterparty: None,
+                        purpose: Some(STREAMFLIX_PATTERN.to_owned()),
+                        account: "Expenses:Subscriptions".to_owned(),
+                    },
+                },
             ]
         );
     }
+
+    const STREAMFLIX_PATTERN: &str = r"(?i)(?:^|\PL)streamflix(?:\PL|$)";
 
     const TRIP_START: &str = "k7p2q9xd-01jc8m2w9z4f7q3r5t6v8x0y1a";
     const TRIP_END: &str = "k7p2q9xd-01jcfh3k5n7p9r1s3t5v7w9y2b";
@@ -838,12 +1007,120 @@ mod tests {
                 tag: "friends".to_owned(),
             }
         );
-        assert!(matches!(
-            FfiIntent::try_from(Intent::SetPayee {
+        assert_eq!(
+            FfiIntent::try_from(Intent::SuggestAccount {
+                id: id.clone(),
+                posting: 1,
+                old: "Expenses:Uncategorized".to_owned(),
+                new: "Expenses:Subscriptions".to_owned(),
+            })
+            .unwrap(),
+            FfiIntent::SuggestAccount {
+                id: id.clone(),
+                posting: 1,
+                old: "Expenses:Uncategorized".to_owned(),
+                new: "Expenses:Subscriptions".to_owned(),
+            }
+        );
+        assert_eq!(
+            FfiIntent::try_from(Intent::AddRule {
+                counterparty: Some("(?i)^corner".to_owned()),
+                purpose: None,
+                account: "Expenses:Food:Groceries".to_owned(),
+            })
+            .unwrap(),
+            FfiIntent::AddRule {
+                counterparty: Some("(?i)^corner".to_owned()),
+                purpose: None,
+                account: "Expenses:Food:Groceries".to_owned(),
+            }
+        );
+        for intent in [
+            Intent::SetPayee {
                 id,
                 old: None,
                 new: "Shop".to_owned(),
-            }),
+            },
+            Intent::AddImportRun {
+                source: "giro".to_owned(),
+                file: "imports/giro/2026/20261020T071502Z.beancount".to_owned(),
+                content: String::new(),
+            },
+        ] {
+            assert!(matches!(
+                FfiIntent::try_from(intent),
+                Err(LentilError::Other { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn rule_words_convert_both_ways() {
+        let words = RuleWords {
+            counterparty: vec!["streamflix".to_owned(), "intl".to_owned()],
+            purpose: vec!["abo".to_owned()],
+        };
+        let ffi = FfiRuleWords::from(words.clone());
+
+        assert_eq!(
+            ffi,
+            FfiRuleWords {
+                counterparty: vec!["streamflix".to_owned(), "intl".to_owned()],
+                purpose: vec!["abo".to_owned()],
+            }
+        );
+        assert_eq!(RuleWords::from(ffi), words);
+    }
+
+    #[test]
+    fn a_correction_converts_with_its_count() {
+        let correction = Correction {
+            intents: vec![
+                Intent::Confirm {
+                    id: "giro-3f9a1c2e7b4d".to_owned(),
+                },
+                Intent::SuggestAccount {
+                    id: "giro-0123456789ab".to_owned(),
+                    posting: 1,
+                    old: "Expenses:Uncategorized".to_owned(),
+                    new: "Expenses:Subscriptions".to_owned(),
+                },
+            ],
+            moved: 1,
+        };
+
+        assert_eq!(
+            FfiCorrection::try_from(correction).unwrap(),
+            FfiCorrection {
+                intents: vec![
+                    FfiIntent::Confirm {
+                        id: "giro-3f9a1c2e7b4d".to_owned(),
+                    },
+                    FfiIntent::SuggestAccount {
+                        id: "giro-0123456789ab".to_owned(),
+                        posting: 1,
+                        old: "Expenses:Uncategorized".to_owned(),
+                        new: "Expenses:Subscriptions".to_owned(),
+                    },
+                ],
+                moved: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn a_correction_with_an_intent_the_app_never_records_fails() {
+        let correction = Correction {
+            intents: vec![Intent::SetPayee {
+                id: "giro-3f9a1c2e7b4d".to_owned(),
+                old: None,
+                new: "Shop".to_owned(),
+            }],
+            moved: 0,
+        };
+
+        assert!(matches!(
+            FfiCorrection::try_from(correction),
             Err(LentilError::Other { .. })
         ));
     }

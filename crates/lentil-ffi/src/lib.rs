@@ -13,9 +13,9 @@ mod types;
 pub use error::LentilError;
 pub use repo::LentilRepo;
 pub use types::{
-    AccountItem, FfiAuthor, FfiChoiceSource, FfiCredentials, FfiFinding, FfiIdentity, FfiIntent,
-    FfiOutcome, FfiPendingIntent, FfiSeverity, FfiTagChoice, FfiTagChoices, IntentOutcome,
-    QueueItem, SyncReport,
+    AccountItem, FfiAuthor, FfiChoiceSource, FfiCorrection, FfiCredentials, FfiFinding,
+    FfiIdentity, FfiIntent, FfiOutcome, FfiPendingIntent, FfiRuleWords, FfiSeverity, FfiTagChoice,
+    FfiTagChoices, IntentOutcome, QueueItem, SyncReport,
 };
 
 /// A new device ID of spec section 9, created once on the device's first start.

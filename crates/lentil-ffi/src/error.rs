@@ -4,6 +4,7 @@
 //! network and lookup errors drop libgit2's message, which may contain the
 //! remote URL, and the remaining details have URL user info masked.
 
+use lentil_core::correction::CorrectionError;
 use lentil_core::sync::{GitError, SyncError};
 
 use crate::types::{FfiFinding, findings};
@@ -38,6 +39,10 @@ pub enum LentilError {
     /// Others kept pushing first; try again later.
     #[error("gave up after too many attempts")]
     TooManyAttempts,
+    /// The transaction to correct has changed: no active transaction has its
+    /// `lentil_id`, or it no longer has exactly one counter posting.
+    #[error("the transaction cannot be corrected")]
+    NotCorrectable,
     /// Reading or writing the clone failed.
     #[error("file system error: {detail}")]
     Io {
@@ -77,6 +82,14 @@ impl From<SyncError> for LentilError {
                 findings: findings(found),
             },
             SyncError::TooManyAttempts => Self::TooManyAttempts,
+        }
+    }
+}
+
+impl From<CorrectionError> for LentilError {
+    fn from(error: CorrectionError) -> Self {
+        match error {
+            CorrectionError::NotFound | CorrectionError::NotEditable => Self::NotCorrectable,
         }
     }
 }
@@ -189,6 +202,13 @@ mod tests {
             panic!("expected Blocked");
         };
         assert_eq!(findings[0].code, "AccountNotOpen");
+    }
+
+    #[test]
+    fn correction_errors_become_one_code() {
+        for error in [CorrectionError::NotFound, CorrectionError::NotEditable] {
+            assert_eq!(LentilError::from(error), LentilError::NotCorrectable);
+        }
     }
 
     #[test]
