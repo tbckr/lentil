@@ -18,10 +18,12 @@ use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use lentil_core::finding::FindingCode;
+use lentil_core::import::Original;
 use lentil_core::layout::{InitOptions, init_files};
+use lentil_core::learn::Learner;
 use lentil_core::ledger;
 use lentil_core::snapshot::Snapshot;
 use lentil_core::validate::{Context, Role, validate};
@@ -479,6 +481,21 @@ fn empty_include_glob() {
     compare("include glob without matches", &files, false);
 }
 
+/// Counter accounts of the synthetic large ledgers; all but the fallback
+/// account are opened.
+const COUNTERS: [&str; 6] = [
+    "Expenses:Food:Groceries",
+    "Expenses:Utilities",
+    "Expenses:Books",
+    "Expenses:Travel",
+    "Income:Salary",
+    "Expenses:Uncategorized",
+];
+/// Transactions of the synthetic large ledgers.
+const TOTAL: usize = 50_000;
+/// Months of the synthetic large ledgers: ten years.
+const MONTHS: usize = 120;
+
 /// A synthetic ledger covering ten years with 50,000 transactions (PRD
 /// performance NFR): three sources, one run file per source and month, each
 /// closed by a passing balance assertion.
@@ -488,16 +505,6 @@ fn large_repository() -> (Snapshot, usize) {
         ("savings", "Assets:Bank:Savings"),
         ("card", "Liabilities:Card"),
     ];
-    const COUNTERS: [&str; 6] = [
-        "Expenses:Food:Groceries",
-        "Expenses:Utilities",
-        "Expenses:Books",
-        "Expenses:Travel",
-        "Income:Salary",
-        "Expenses:Uncategorized",
-    ];
-    const TOTAL: usize = 50_000;
-    const MONTHS: usize = 120;
     let mut files = init_files(&InitOptions {
         title: "Large".into(),
         currency: "EUR".into(),
@@ -595,4 +602,83 @@ fn large_ledger_load_time() {
     let elapsed = start.elapsed();
     assert!(!validation.is_blocking(), "{:?}", &validation.findings[..1]);
     println!("validate of the same ledger: {elapsed:?}");
+}
+
+/// `n` in base 26 with the digits `a` to `z`, at least two of them.
+fn letters(mut n: usize) -> String {
+    let mut digits = Vec::new();
+    while digits.len() < 2 || n > 0 {
+        digits.push(char::from(b'a' + u8::try_from(n % 26).unwrap()));
+        n /= 26;
+    }
+    digits.iter().rev().collect()
+}
+
+/// One source with 50,000 reviewed transactions over ten years, 2,000
+/// counterparties and recurring words in the purpose, one run file per month.
+fn learner_repository() -> Snapshot {
+    let mut files = init_files(&InitOptions {
+        title: "Learner".into(),
+        currency: "EUR".into(),
+    });
+    let mut accounts = files.text("accounts.beancount").unwrap().to_owned();
+    writeln!(accounts, "2016-01-01 open Assets:Bank:Giro EUR").unwrap();
+    for account in &COUNTERS[..5] {
+        writeln!(accounts, "2016-01-01 open {account}").unwrap();
+    }
+    files.insert("accounts.beancount", accounts);
+    let per_month = TOTAL / MONTHS + 1;
+    for month in 0..MONTHS {
+        let year = 2016 + month / 12;
+        let mon = month % 12 + 1;
+        let mut text = String::from("; lentil import run\n; source: giro\n\n");
+        for i in (month * per_month..TOTAL).take(per_month) {
+            let day = i % 28 + 1;
+            let counterparty = format!("MERCHANT {}", letters(i % 2_000));
+            let purpose = format!("PURCHASE {} {}", letters(i % 97), letters(i % 13));
+            let counter = COUNTERS[(i % 2_000) % 5];
+            write!(
+                text,
+                "{year}-{mon:02}-{day:02} * \"{counterparty}\" \"{purpose}\"\n  lentil_id: \"giro-{i:012}\"\n  lentil_counterparty: \"{counterparty}\"\n  lentil_purpose: \"{purpose}\"\n  Assets:Bank:Giro  -1.00 EUR\n  {counter}\n\n"
+            )
+            .unwrap();
+        }
+        files.insert(
+            format!("imports/giro/{year}/{year}{mon:02}28T120000Z.beancount"),
+            text,
+        );
+    }
+    files
+}
+
+#[test]
+#[ignore = "performance measurement; run with --ignored --nocapture"]
+fn learner_time() {
+    let ledger = ledger::load(&learner_repository(), MAIN);
+    assert!(
+        ledger.errors.is_empty(),
+        "{:?}",
+        &ledger.errors[..ledger.errors.len().min(5)]
+    );
+    assert_eq!(ledger.transactions.len(), TOTAL);
+    let texts: Vec<Original<'_>> = ledger
+        .transactions
+        .iter()
+        .step_by(TOTAL / 1_000)
+        .map(Original::from)
+        .collect();
+    assert_eq!(texts.len(), 1_000);
+
+    let start = Instant::now();
+    let learner = Learner::train(&ledger, "Assets:Bank:Giro", "Expenses:Uncategorized", &[]);
+    let suggested = texts
+        .iter()
+        .filter(|text| learner.suggest(text).is_some())
+        .count();
+    let elapsed = start.elapsed();
+    println!(
+        "Learner::train on {TOTAL} reviewed transactions and suggest for {} texts ({suggested} suggested): {elapsed:?}",
+        texts.len()
+    );
+    assert!(elapsed < Duration::from_millis(500));
 }

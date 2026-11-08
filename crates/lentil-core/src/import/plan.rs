@@ -9,10 +9,11 @@ use jiff::{SignedDuration, Timestamp};
 use rust_decimal::Decimal;
 
 use super::render::{render_run, run_path};
-use super::{Learned, Original, Record, Rules, Statement};
+use super::{Original, Record, Rules, Statement};
 use crate::config::{Config, SourceConfig};
 use crate::id;
 use crate::layout::OPENING_BALANCES_ACCOUNT;
+use crate::learn::Learner;
 use crate::ledger::{Ledger, Txn};
 
 /// Everything an import run needs.
@@ -219,9 +220,8 @@ pub fn plan_import(request: &ImportRequest<'_>) -> ImportPlan {
     let existing = ledger.all_ids();
     let opening_id = opening_id(&source.id);
     let orphans = orphans(ledger, source, records, &ids, &opening_id);
-    let learned = Learned::from_ledger(ledger, &source.account, &config.fallback_account);
 
-    let mut transactions = Vec::new();
+    let mut new = Vec::new();
     let mut possible_duplicates = Vec::new();
     let mut skipped_existing = 0;
     let mut skipped_run_date = 0;
@@ -234,14 +234,13 @@ pub fn plan_import(request: &ImportRequest<'_>) -> ImportPlan {
             skipped_run_date += 1;
             continue;
         }
-        let desc = id::description(record);
         if !request.accepted_duplicates.contains(id)
             && let Some(orphan) = orphans.iter().find(|o| o.matches(record))
         {
             possible_duplicates.push(PossibleDuplicate {
                 new_id: id.clone(),
                 line: record.line,
-                desc,
+                desc: id::description(record),
                 date: record.booking_date,
                 amount: record.amount,
                 currency: record.currency.clone(),
@@ -252,6 +251,24 @@ pub fn plan_import(request: &ImportRequest<'_>) -> ImportPlan {
             });
             continue;
         }
+        new.push((record, id));
+    }
+    // The run's new transactions count for the weights of learned
+    // suggestions (spec section 16).
+    let extra: Vec<Original<'_>> = new
+        .iter()
+        .map(|(record, _)| {
+            Original::new(
+                record.counterparty.as_deref(),
+                record.purpose.as_deref(),
+                record.booking_type.as_deref(),
+            )
+        })
+        .collect();
+    let learner = Learner::train(ledger, &source.account, &config.fallback_account, &extra);
+
+    let mut transactions = Vec::new();
+    for (record, id) in new {
         let counterparty = original(record.counterparty.as_deref());
         let purpose = original(record.purpose.as_deref());
         let booking_type = original(record.booking_type.as_deref());
@@ -273,7 +290,7 @@ pub fn plan_import(request: &ImportRequest<'_>) -> ImportPlan {
             .or_else(|| counterparty.clone());
         let narration = purpose.clone().unwrap_or_default();
         let (counter_account, suggestion) =
-            suggest(request, &learned, record, found.account, &desc);
+            suggest(request, &learner, record, found.account, &fields);
         transactions.push(PlannedTxn {
             id: id.clone(),
             date: record.booking_date,
@@ -391,19 +408,19 @@ fn original(text: Option<&str>) -> Option<String> {
 }
 
 /// The counter account: a rule's account first, then a learned account for
-/// the original text `desc` that is open on the booking date and not a
-/// source account, then `fallback_account`.
+/// the original fields that is open on the booking date and not a source
+/// account, then `fallback_account`.
 fn suggest(
     request: &ImportRequest<'_>,
-    learned: &Learned,
+    learner: &Learner,
     record: &Record,
     rule_account: Option<&str>,
-    desc: &str,
+    fields: &Original<'_>,
 ) -> (String, SuggestionKind) {
     if let Some(account) = rule_account {
         return (account.to_owned(), SuggestionKind::Rule);
     }
-    if let Some(account) = learned.suggest(desc).filter(|a| {
+    if let Some(account) = learner.suggest(fields).filter(|a| {
         request.ledger.is_open_on(a, record.booking_date) && !request.config.is_source_account(a)
     }) {
         return (account.to_owned(), SuggestionKind::Learned);
@@ -922,7 +939,7 @@ mapping = "sources/card.toml"
     #[test]
     fn a_reviewed_run_teaches_the_wording_it_was_imported_with() {
         // Quotes, backslashes and runs of whitespace pass through the run
-        // file, so the written transaction learns under the record's key.
+        // file, so the written transaction teaches the record's words.
         let (counterparty, purpose) = (Some(" Café \"Zum  Eck\" "), Some("C:\\Karte\t4711"));
         let mut record = rec("2026-10-18", "-4.20", counterparty, purpose);
         record.booking_type = Some(" Karten\\zahlung  \"girocard\" ".into());

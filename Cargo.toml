@@ -16,6 +16,10 @@ lentil-core = { path = "crates/lentil-core" }
 rustledger-core = { version = "=0.24.0", default-features = false }
 rustledger-parser = { version = "=0.24.0", default-features = false }
 rustledger-loader = { version = "=0.24.0", default-features = false, features = ["validation"] }
+# Learned suggestions: TF-IDF and Naive Bayes from the same release. It pulls in
+# blake3, which builds C or assembly through cc on x86_64 and aarch64, the NDK
+# targets included, plus rustledger-plugin-types and constant_time_eq.
+rustledger-ops = { version = "=0.24.0" }
 
 # Pinned exactly, because the runtime crate and the generated bindings must match.
 uniffi = { version = "=0.32.2" }

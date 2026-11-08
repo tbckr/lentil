@@ -21,7 +21,7 @@ pub use plan::{
     BalanceOutcome, ImportPlan, ImportRequest, PlannedTxn, PossibleDuplicate, RunFile,
     SuggestionKind, UserBalance, opening_id, plan_import,
 };
-pub use rules::{Learned, Original, RuleMatch, Rules, RulesError};
+pub use rules::{Original, RuleMatch, Rules, RulesError};
 
 /// One booked transaction from a bank export (spec section 15).
 #[derive(Clone, Debug, PartialEq, Eq)]

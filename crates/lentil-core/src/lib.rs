@@ -12,6 +12,7 @@ pub mod id;
 pub mod import;
 pub mod intent;
 pub mod layout;
+pub mod learn;
 pub mod ledger;
 pub mod reapply;
 pub mod snapshot;
