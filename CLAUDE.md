@@ -11,7 +11,7 @@ Lentil has a first, unreleased draft next to its design documents:
 - `CONTRIBUTING.md`: engineering standards for testing, linting, dependencies, CI and releases.
 - `README.md`: short overview with links to the documents above and the non-goals. When a non-goal changes in the PRD, change the README too.
 - `flake.nix`: the Nix development shell, the only source of development tools, and the `lentil` package of the CLI, built with crane. Rust is pinned in `rust-toolchain.toml`, Python Beancount in `pyproject.toml` and `uv.lock`.
-- `crates/lentil-core`: all logic, on rustledger. Everything works on a `Snapshot` (repository files in memory): `ledger` indexes a snapshot with exact byte spans, `intent` replays edit intents, `validate` checks a state and a role's changes, `import` plans CSV import runs, `reapply` re-applies the rules to imported transactions as editor intents, `tags` reads the tag taxonomy and checks tags against it, `trips` reads trip events and computes the trip tag an open transaction gets suggested, `sync` runs the fetch–replay–validate–commit–push loop on libgit2.
+- `crates/lentil-core`: all logic, on rustledger. Everything works on a `Snapshot` (repository files in memory): `ledger` indexes a snapshot with exact byte spans, `intent` replays edit intents, `validate` checks a state and a role's changes, `import` plans CSV import runs, `reapply` re-applies the rules to imported transactions as editor intents, `learn` derives learned suggestions from the words of reviewed transactions, `correction` computes the intents of one account correction in the app, with its rule and the open transactions that move with it, `tags` reads the tag taxonomy and checks tags against it, `trips` reads trip events and computes the trip tag an open transaction gets suggested, `sync` runs the fetch–replay–validate–commit–push loop on libgit2.
 - `crates/lentil-cli`: the `lentil` binary (`init`, `import`, `rules apply`, `status`, `check`); its messages come from a catalog in `i18n.rs`, English and German.
 - `crates/lentil-ffi`: UniFFI bindings of the core for the Android app.
 - `android/`: the Kotlin and Compose triage app. It holds no finance logic: pending intents live in a JSON file in app storage and the core replays them. `build-logic` runs cargo-ndk and uniffi-bindgen through AGP's Variant API; versions, including the NDK, live in `gradle/libs.versions.toml`, which the flake reads.
@@ -51,7 +51,7 @@ Every development tool comes from the flake's development shell, Python packages
 
 - Everything in the repository is written in English: code, comments, commit messages, docs and UI strings.
 - Sections open with one sentence that states their conclusion, followed by bullets or a table. Keep that shape.
-- Requirement and scenario IDs never change, and an ID that leaves the PRD is never reused. The highest IDs used so far are N18, FR-A8, FR-B5, FR-C21, FR-D13, FR-E8 and FR-F8, so new numbers start above them. The tables are grouped by topic: a new entry takes the next free number in its group and goes where its topic fits, even if that breaks the numeric order.
+- Requirement and scenario IDs never change, and an ID that leaves the PRD is never reused. The highest IDs used so far are N18, FR-A8, FR-B5, FR-C22, FR-D15, FR-E8 and FR-F8, so new numbers start above them. The tables are grouped by topic: a new entry takes the next free number in its group and goes where its topic fits, even if that breaks the numeric order.
 - The documents refer to each other by number. The spec cites `PRD: FR-D13`, `PRD: Security` and its own sections ("section 15"), and the PRD cites "Spec section 15". If you renumber spec sections or rename PRD sections, update the references in both files in the same change.
 - In SPEC §18, tick resolved open questions with their outcome, and keep the counts in the lead sentence in line with the lists below it.
 - The repository is public. Documents describe the product, not the author's setup, so leave out hosting details, personal tool stack, real banks, account types and household details. Keep examples fictional and test data synthetic. Real bank mappings and sample exports belong in the user's private ledger repository, and tests against real ledgers run only locally, never in CI.
@@ -62,11 +62,11 @@ Every development tool comes from the flake's development shell, Python packages
 
 There is no server. A Git repository of standard Beancount files is the single source of truth, and every client works on its own clone.
 
-- **Clients:** the CLI handles `init`, CSV import, re-applying rules (`rules apply`), `status` and `check`. The Android app handles triage, tags and trips. Fava or rustfava is the read-only desktop view. An own web UI (`lentil serve`) and a Tauri app wait until Fava plus the CLI demonstrably fall short.
+- **Clients:** the CLI handles `init`, CSV import, re-applying rules (`rules apply`), `status` and `check`. The Android app handles triage, tags, trips and rules from corrections ("Always book like this"). Fava or rustfava is the read-only desktop view. An own web UI (`lentil serve`) and a Tauri app wait until Fava plus the CLI demonstrably fall short.
 - **One core:** all clients compute with the same core, which is rustledger pinned to an exact version (GPL-3.0-only). Lentil uses rustledger as it is and builds the convention and the clients around it: a plugin is in the profile only if rustledger runs it natively and its Python original exists for Fava, otherwise Lentil writes the data into the files. The spec itself does not depend on any core library. If a ledger uses anything outside the supported profile (SPEC §14), the client treats the repository as read-only instead of computing it approximately. Git runs inside the core too, so the CLI and the Android app share one sync implementation. The Android app holds no finance logic; it keeps its pending intents in its own storage and hands them to the core for replay. UniFFI generates the Kotlin bindings to the core.
 - **Roles and write areas (§7):**
   - Importers only create new files (`imports/<source-id>/`, `prices/`).
-  - Editors change the flag, account, payee, narration, tags and metadata of existing transactions, and write only under `manual/<device-id>/`.
+  - Editors change the flag, account, payee, narration, tags and metadata of existing transactions, insert rules at the top of `rules.toml`, and write their own entries only under `manual/<device-id>/`.
   - The admin role may change anything.
 
   Fixed include globs in `main.beancount` pick up new files, so no writer maintains include lists. Validation checks every commit against its role.
@@ -80,7 +80,7 @@ There is no server. A Git repository of standard Beancount files is the single s
 - **Import pipeline (§8, §15, §16):**
   1. An adapter reads the bank export. In v0 that is CSV with a declarative mapping in `sources/*.toml`. Mappings are pure data and never name commands.
   2. The adapter produces statement records.
-  3. The importer assigns IDs, removes duplicates and picks the payee and a suggested account. Rules in `rules.toml` match the original fields and set the payee, the account or both, the first matching rule per field, and add tags, those of all matching rules. Without a rule, the payee is the counterparty, and the account is a suggestion learned from the counterparty and purpose of reviewed transactions, otherwise `fallback_account`.
+  3. The importer assigns IDs, removes duplicates and picks the payee and a suggested account. Rules in `rules.toml` match the original fields and set the payee, the account or both, the first matching rule per field, and add tags, those of all matching rules. Without a rule, the payee is the counterparty, and the account is a suggestion learned from the words of the counterparty and purpose of reviewed transactions, otherwise `fallback_account`.
   4. It adds a balance assertion and writes everything to one new run file.
 
 ## Invariants that are easy to get wrong

@@ -122,7 +122,7 @@ Every transaction Lentil writes carries a stable `lentil_id`; all edits, dedupli
 
 - `lentil_id` MUST be unique among active and commented-out transactions and trip events (section 10, `dismiss`).
 - No client may change, add or remove `lentil_id`, `lentil_ref` or the original fields `lentil_counterparty`, `lentil_purpose` and `lentil_type`. Users rename payees and narrations freely; the original fields keep the bank's wording, for example for finding the original statement line.
-- A transaction's original text is `lentil_counterparty` and `lentil_purpose` joined by one space, a missing field counting as empty, and normalized as above. Learned suggestions key on it, while rules match each original field on its own (section 16).
+- A transaction's original text is `lentil_counterparty` and `lentil_purpose` joined by one space, a missing field counting as empty, and normalized as above. Learned suggestions learn from its words, while rules match each original field on its own (section 16).
 - Transactions without `lentil_id` (for example written by hand in an editor) are valid but read-only for Lentil until the admin role assigns IDs.
 
 ## 6. Review state
@@ -132,7 +132,7 @@ Review state lives only in the standard transaction flag, so any Beancount tool 
 | Flag | Meaning | Set by |
 | --- | --- | --- |
 | `!` | Open: needs review | Importers, on every transaction they write |
-| `*` | Reviewed | Editors, through `confirm` or any other edit by the user, except that adding or removing a tag leaves the flag as it is (section 10), as re-applied rules do (section 16); manual entries start as `*` |
+| `*` | Reviewed | Editors, through `confirm` or any other edit by the user, except that adding or removing a tag and `suggest-account` leave the flag as it is (section 10), as re-applied rules do (section 16); manual entries start as `*` |
 
 - Importers MUST write `!`. Editors MUST NOT set `!` back once a transaction is `*`, except through an explicit user action.
 - The review queue is the set of active transactions with flag `!`, across all files.
@@ -146,13 +146,14 @@ Every client acts in one of three roles, and each role may only touch its own ar
 | Role | Used by | May create | May change | MUST NOT |
 | --- | --- | --- | --- | --- |
 | Importer | CLI import | New run files under `imports/<source-id>/`; price files under `prices/`; `status/<bot-id>.json` | Nothing that already exists | Change, move or remove existing transactions |
-| Editor | Android; CLI `rules apply` | Files under `manual/<device-id>/`, including balance snapshots and trip events (section 9); `open` directives in `accounts.beancount` | Flag, payee, narration, tags, links, metadata other than `lentil_id`, `lentil_ref` and the original fields (section 5), and the account of postings that are not on a source account | Change dates, a source posting, `lentil_id`, `lentil_ref` or an original field; move a posting onto a source account; delete transactions; write manual transactions or pads that post to a source account |
+| Editor | Android; CLI `rules apply` | Files under `manual/<device-id>/`, including balance snapshots and trip events (section 9); `open` directives in `accounts.beancount`; rules at the top of `rules.toml` (section 16) | Flag, payee, narration, tags, links, metadata other than `lentil_id`, `lentil_ref` and the original fields (section 5), and the account of postings that are not on a source account | Change dates, a source posting, `lentil_id`, `lentil_ref` or an original field; move a posting onto a source account; delete transactions; write manual transactions or pads that post to a source account |
 | Admin | CLI `init`; hand edits | Anything | Anything | Break any rule of this spec in the resulting state |
 
 - Every posting on a source account is a source posting. Editors never move a posting onto a source account, and suggestions never name one (section 16), so each side of a transfer between two source accounts stays a transaction of its own (section 8).
 - A client declares its role in every commit (section 12). Validation checks the commit's changes against that role (section 13).
 - At most one importer per source may run at a time. Two importers running on the same source is a configuration error.
 - An editor that needs a new account adds its `open` directive through the `open-account` operation (section 10).
+- An editor inserts rules into `rules.toml` only through the `add-rule` operation (section 10), and only in the editor shape of section 16.
 
 ## 8. Import runs
 
@@ -268,9 +269,11 @@ Clients never ship text diffs; they record intents that name what they change, u
 | --- | --- | --- | --- | --- |
 | `confirm` | id | Transaction is active | Flag becomes `*` | Editor |
 | `set-account` | id, posting index, old, new | Posting has account `old` and is not a source posting; `new` is open and not a source account | Account becomes `new` | Editor |
+| `suggest-account` | id, posting index, old, new | Transaction is open (`!`); posting has account `old` and is not a source posting; `new` is open and not a source account | Account becomes `new`; the flag stays `!` | Editor |
 | `set-payee` | id, old, new | Payee equals `old`; `old` is absent if the transaction has no payee | Payee becomes `new`; without a payee, `"<new>" ` is inserted before the narration | Editor |
 | `dismiss` | id | Transaction is active | Transaction is commented out in place | Editor |
 | `open-account` | account, date | Account is not open | `<date> open <account>` appended to `accounts.beancount` | Editor, Admin |
+| `add-rule` | match (`counterparty`, `purpose` or both), account | `rules.toml` exists, parses and passes the checks of section 16; `account` is a valid account name and not a source account | The rule block is inserted before the first rule, or appended at the end of a file without rules | Editor |
 | `add-import-run` | source, file, content | File does not exist | New run file written | Importer |
 | `add-tag` | id, tag | Transaction is active | `#<tag>` added to the header | Editor |
 | `remove-tag` | id, tag | Transaction is active | `#<tag>` removed from the header | Editor |
@@ -283,7 +286,7 @@ Clients never ship text diffs; they record intents that name what they change, u
 
 **Applying an intent.** For each intent, in creation order:
 
-1. Find the transaction by `lentil_id`. If it does not exist, the intent is a conflict. Intents that name no transaction (`open-account`, `add-import-run`, `start-trip`, `end-trip`) skip this step and follow their precondition and the rules below.
+1. Find the transaction by `lentil_id`. If it does not exist, the intent is a conflict. Intents that name no transaction (`open-account`, `add-rule`, `add-import-run`, `start-trip`, `end-trip`) skip this step and follow their precondition and the rules below.
 2. If the current value already equals the new value, the intent is done and is not applied again.
 3. If the current value equals the expected old value, apply it.
 4. Otherwise the intent is a conflict.
@@ -291,6 +294,8 @@ Clients never ship text diffs; they record intents that name what they change, u
 **Rules.**
 
 - Applying an intent changes only the bytes of the affected element: the flag character, the account name or the string. Everything else in the file stays byte-identical (PRD: principle 7).
+- `suggest-account` writes a computed suggestion, such as the account of a rule an editor has just added (section 16), not a decision of the user. It is done under step 2 if the account already equals `new`, and also if an active transaction is reviewed (`*`): a human decision outranks a computed suggestion, so a suggestion never changes a reviewed transaction. It is a conflict if the transaction is missing or dismissed, or if it is open and its account is neither `old` nor `new`. It never changes the flag.
+- `add-rule` writes a `[[rule]]` block in the editor shape of section 16: a `match` with the given regular expressions and the given `account`. It is done under step 2 only if the first rule of `rules.toml` is identical, with the same `match`, the same `account` and no other keys. An identical rule further down does not count, because a rule above it may win: the block is inserted again on top, so a rule from a correction never loses silently. It is a conflict if `rules.toml` is missing, does not parse or fails the checks of section 16; if `account` is not a valid account name or is a source account; and if the rule has no regular expression, one that does not compile, or one that the block cannot hold as written, so that the block would not read back as exactly this rule (a TOML literal string holds no `'` and no line break). Otherwise it inserts the block before the first `[[rule]]` table, and before the comment lines directly above that table, which belong to its rule, unless those comment lines reach the start of the file; one blank line separates the block from what follows. In a file without rules, it appends the block at the end. The newest rule therefore comes first and wins (section 16). Everything else in `rules.toml` stays byte-identical, and the file is never reformatted.
 - `add-tag` and `remove-tag` carry no old value. If the tag is already present, or already absent, the intent is done under step 2, so the only conflicts are a missing or dismissed transaction. Adding inserts ` #<tag>` into the header line, before a comment on that line if there is one. Removing deletes the tag where it stands, in the header line or on a following line of the transaction that holds tags or links, together with one separating space; a tag alone on a line is deleted with its whole line. Editing tags never changes the flag (section 6).
 - `start-trip` and `end-trip` get their `lentil_id` when they are created. They are done if an event with their `lentil_id` exists, so a trip that is started, ended and started again on one day keeps all three events.
 - `dismiss` prepends ` ;  ` to every line of the transaction. It is used for duplicates, for example a transaction imported again after the bank changed its wording (section 8). Commented-out IDs still count for deduplication (section 8), so a dismissed transaction is never imported again.
@@ -341,6 +346,7 @@ A client validates the complete ledger after applying its intents and before com
 | A posting uses an account that is not open or already closed | Blocking |
 | Two transactions share a `lentil_id` | Blocking |
 | A change lies outside the write areas of the commit's role (section 7) | Blocking |
+| An editor's change to `rules.toml` other than inserting rules of section 16's editor shape before the first rule, or at its end if it has none | Blocking |
 | A change introduces a construct outside the supported profile (section 14) | Blocking |
 | `main.beancount` differs from section 3, or an include points outside the repository | Blocking |
 | A new balance assertion written by an importer has no explicit zero tolerance (section 8) | Blocking |
@@ -350,6 +356,7 @@ A client validates the complete ledger after applying its intents and before com
 
 - A dismissed transaction counts as unchanged only if its comment block holds the whole transaction, every line prefixed as in section 10. Removing a transaction, or keeping only its `lentil_id` line, is a change outside the editor's write area.
 - In its own manual files an editor may append the entries of section 9: transactions with a `lentil_id`, the balance assertions and pads of snapshots, and `event "trip"` entries with a `lentil_id` and a name as in section 9. Any other directive added there, or a trip event with another name, lies outside the editor's write area.
+- An editor's change to `rules.toml` is an insertion only if removing the inserted text yields the previous file byte for byte. The inserted text stands before the first rule of the previous file, or at its end if it has none, and holds only rule blocks and blank lines, such as each block `add-rule` writes together with the blank line that separates it (section 10); a comment line in it lies outside the editor's write area. Each inserted rule is a rule of the resulting file, not text inside a comment line; it has a `match` with only `counterparty`, `purpose` or both and sets only `account`; and the resulting file parses and follows section 16, for example no rule sets a source account.
 - If the state fetched from the remote already has blocking findings or lies outside the profile, editors and importers MUST NOT write. The client shows the findings; only the admin role can repair the repository.
 - Validation uses the client's core. The CLI additionally offers a check against the reference implementation, `bean-check` (PRD: FR-B4).
 
@@ -443,7 +450,7 @@ column = "Saldo"                       # with from = "column"
 
 ## 16. Suggestion rules
 
-Explicit rules live in `rules.toml`, set the payee and the counter account from the original fields, add tags, and always win; learned suggestions are derived from the ledger's history and are never stored, and an optional `tags.toml` lists the tags a ledger uses.
+Explicit rules live in `rules.toml`, set the payee and the counter account from the original fields, add tags, and always win; learned suggestions are derived from the words of reviewed transactions and need no file of their own, and an optional `tags.toml` lists the tags a ledger uses.
 
 ```toml
 [[rule]]
@@ -482,8 +489,14 @@ add_tags = ["recurring"]
 - A client MAY re-apply the rules to transactions already imported (PRD: FR-C19, FR-C21). It acts as editor (section 7) and writes only `set-payee`, `set-account`, `add-tag` and `remove-tag` operations (section 10), so the flag stays as it is. It considers open (`!`) and reviewed (`*`) active transactions with a `lentil_id` in the run files of configured sources, except a source's opening transaction (section 8), and matches `source` against the run file's source. It SHOULD change reviewed transactions only when the user asks for it.
 - When re-applying, a field changes only if a rule sets it to a different value, and the account only if exactly one posting of the transaction is not on a source account. Tags of the evaluation that the transaction lacks are added. A change whose operation conflicts is shown to the user and left out; the others are committed.
 - A client lists removal candidates only when the user asks for them, for example after narrowing a rule. A removal candidate is a tag on a considered transaction that appears in the `add_tags` of some rule in `rules.toml`, but that the evaluation does not yield for the transaction when it starts from the transaction's tags that appear in no rule's `add_tags`. The hold-back always uses the tags the transaction carries. Lentil cannot tell a tag a rule added from one the user added, so the client removes each candidate only after the user confirms it, through a `remove-tag` intent created at confirmation and not planned again on a newly fetched state. Tags to add are computed after the confirmed removals are applied, so a removed tag never justifies an added one.
-- Learned suggestions are computed from reviewed (`*`) transactions. Their input is the original text (section 5) and the source account, never payee or narration, which users may edit (PRD: FR-C8). They suggest only the counter account, never a source account and never tags, and they need no file of their own, so any client can recompute them.
-- Only the admin role edits `rules.toml`.
+- Learned suggestions are computed from reviewed (`*`) transactions. Their input is the words of the original text (section 5) and the source account, never payee or narration, which users may edit (PRD: FR-C8, FR-C22). They suggest only the counter account, never a source account and never tags, and they need no file of their own, so any client can compute them.
+- The words of a text are its maximal runs of characters of Unicode general category L (Letter) that have at least two letters, lowercased by Unicode's full lowercase mapping with its final-sigma rule, except that "İ" (U+0130) stays as it is, because its lowercase is two characters. Digits and every other character separate words. A varying wording, such as a changing card number or date in the purpose, therefore still teaches.
+- A reviewed transaction teaches the suggestions of a source account if it is active, has exactly two postings, one of them on that source account, and its counter account is not `fallback_account`. `fallback_account` is never learned.
+- A word's weight is `ln(N / df)`. `N` is the number of active transactions that post to the source account and whose original text is not empty, whatever their flag, and `df` is the number of them whose words contain the word. At import, the run's new transactions count too. A word that occurs in every one of them weighs 0, so wording common to most of a source's transactions, such as the name of a payment service, counts little.
+- A client picks at most one candidate account from the words, by a method of its choice; if the reviewed transactions teach exactly one account, that account is the candidate. The candidate is suggested only if a reviewed transaction that teaches it shares words with the transaction, and the weights of the distinct words they share add up to at least half of the weights of all the transaction's distinct words. A transaction whose words weigh 0 in total gets no learned suggestion. A candidate that fails this test gives no learned suggestion: a client MUST NOT try another account, and `fallback_account` stays.
+- Clients need not pick the same candidate, because a suggestion is written into the run file or into an intent once and never recomputed.
+- Editors MAY insert rules at the top of `rules.toml` through `add-rule` (section 10), so a correction on the phone becomes a rule that wins over the existing ones (PRD: FR-D14). A rule in the editor shape has a `match` with only `counterparty`, `purpose` or both and sets only `account`. Any other change to `rules.toml` is the admin role's (section 13).
+- After the user changes a transaction's account, an editor MAY write `suggest-account` (section 10) for open transactions, computed once when the user saves (PRD: FR-D14, FR-D15). If the user also added a rule through `add-rule`, it writes one for every other open transaction whose account re-applying that rule alone would change (above). Then, on the resulting state, it writes one for every open transaction in the run files of configured sources whose single counter posting is on `fallback_account` and that now gets a learned suggestion. A learned suggestion written this way never replaces an account other than `fallback_account`. It sees only the account, so it also replaces `fallback_account` where a rule sets it on purpose.
 
 **Tag taxonomy (`tags.toml`).** An optional `tags.toml` at the repository root lists the tags a ledger uses, so editors can offer them and `lentil check` can find typos and clashes (PRD: FR-A8).
 

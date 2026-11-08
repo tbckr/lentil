@@ -95,7 +95,7 @@ Every client acts in one of three roles with separate write areas, so concurrent
 | Role | Clients | Writes |
 | --- | --- | --- |
 | Importer | CLI import | New files only: import runs |
-| Editor | Android; `lentil rules apply` | Flag, account, payee, narration, tags and metadata of existing transactions; new accounts; manual entries, balance snapshots and trip events in its own device's files |
+| Editor | Android; `lentil rules apply` | Flag, account, payee, narration, tags and metadata of existing transactions; new accounts; rules at the top of `rules.toml`; manual entries, balance snapshots and trip events in its own device's files |
 | Admin | CLI `init` and hand edits checked with `lentil check` | Anything, as long as the result follows the spec |
 
 Fava and rustfava only read the repository.
@@ -136,6 +136,7 @@ Every requirement has an ID; how it is implemented is defined in the [convention
 | FR-C6 | If the CSV contains no balance, the CLI asks for the balance shown in online banking and the date it refers to, and writes it as a balance assertion with zero tolerance. The user may skip; `lentil status` then reports the import as unchecked. |
 | FR-C7 | If the export no longer reproduces the ID of an already imported transaction in its date range, for example after a mapping change, a new transaction with the same date, amount and currency is reported as a possible duplicate and imported only after confirmation. |
 | FR-C8 | Imported transactions keep the bank's counterparty, purpose and booking type as separate protected metadata. Suggestions learn from counterparty and purpose, not from a payee or narration the user has edited. |
+| FR-C22 | Learned suggestions come from the words of counterparty and purpose, so a varying wording still teaches. Words that occur in many transactions of a source count little, and an account is suggested only if the words a transaction shares with a reviewed transaction booked to it carry at least half of the transaction's weight; otherwise `fallback_account` stays ([Spec section 16](SPEC.md#16-suggestion-rules)). |
 | FR-C18 | Rules in `rules.toml` match the bank's counterparty, purpose and booking type and set the payee, the counter account or both; for each field, the first matching rule that sets it wins ([Spec section 16](SPEC.md#16-suggestion-rules)). |
 | FR-C19 | `lentil rules apply` applies the rules again to transactions already imported and commits the changed payees and counter accounts. By default it changes only open transactions; options include reviewed ones, limit it to the payee or the account, or only list the changes. It never confirms a transaction ([Spec section 16](SPEC.md#16-suggestion-rules)). |
 | FR-C20 | Rules in `rules.toml` also add tags. The tags of all matching rules are united, a rule may match tags if it only adds tags, and a rule never adds a tag whose exclusive rival the transaction already carries ([Spec section 16](SPEC.md#16-suggestion-rules)). |
@@ -148,6 +149,8 @@ Every requirement has an ID; how it is implemented is defined in the [convention
 | FR-D1 | A queue shows all open transactions, newest first. |
 | FR-D2 | Confirming with one gesture sets the flag to `*`. |
 | FR-D3 | The counter account can be changed via search and recently used accounts; a missing account can be opened directly. Changing the account confirms the transaction. |
+| FR-D14 | When changing the account, the user can switch on "Always book like this" and pick words of counterparty and purpose; a rule on these words that sets the account goes to the top of `rules.toml`, and open transactions it matches get the account as their suggestion and stay open. Without the switch, changing the account stays one tap ([Spec section 16](SPEC.md#16-suggestion-rules)). |
+| FR-D15 | Changing the account refreshes the open transactions still on the fallback account from what was learned ([Spec section 16](SPEC.md#16-suggestion-rules)). |
 | FR-D4 | A duplicate, such as a transaction imported again after the bank changed its wording, can be dismissed; it stays in its file as a comment and is never imported again. |
 | FR-D5 | Triage works offline; changes are transferred on the next sync. |
 | FR-D6 | The UI syncs without using Git terminology. |
@@ -161,7 +164,7 @@ Every requirement has an ID; how it is implemented is defined in the [convention
 | --- | --- |
 | FR-E1 | [Fava](https://github.com/beancount/fava) or [rustfava](https://github.com/rustledger/rustfava) serves as a read-only desktop view, including monthly income and expenses per category and net worth over time. |
 | FR-E2 | `lentil status` lists unreviewed transactions, failed balance assertions and import runs without a balance check. |
-| FR-E3 | Suggestion rules live in `rules.toml` and are edited directly. |
+| FR-E3 | Suggestion rules live in `rules.toml` and are edited directly; rules from the app's "Always book like this" go to the top. |
 | FR-E6 | Rare complex corrections (splitting, rebooking, several transactions at once) are made in a text editor; `lentil check` validates them before commit. |
 
 ### F. Synchronization

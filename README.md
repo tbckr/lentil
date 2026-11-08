@@ -44,7 +44,7 @@ Three clients share one Git repository, and each of them does one job.
 Lentil is an unreleased draft that covers the core loop of import and mobile triage, plus tags and trips.
 
 - The CLI sets up a repository and imports CSV exports, re-applies the rules, lists what is open and checks the ledger: `lentil init`, `import`, `rules apply`, `status` and `check`. Rules add tags, and `lentil check` warns about tags outside `tags.toml`.
-- The Android app confirms transactions, changes the counter account, opens a missing account, dismisses duplicates, edits tags and records trips.
+- The Android app confirms transactions, changes the counter account, turns a correction into a rule, opens a missing account, dismisses duplicates, edits tags and records trips.
 - Fava or rustfava is the read-only view.
 
 The CLI and the app speak English and German; the CLI follows `LANG`.
@@ -132,7 +132,7 @@ This walkthrough creates a ledger, adds one bank account and imports its CSV exp
    column = "Balance"
    ```
 
-   Optionally, add a rule to `rules.toml`. A rule matches the bank's counterparty, purpose or booking type and sets the account, the payee, tags or several of them. Without a rule for the account, Lentil learns from the transactions you have reviewed, and only then falls back to `Expenses:Uncategorized`. A rule with `add_tags = ["recurring"]` tags what it matches, and an optional `tags.toml` lists the tags you use, so `lentil check` can warn about typos ([Spec section 16](docs/SPEC.md#16-suggestion-rules)):
+   Optionally, add a rule to `rules.toml`. A rule matches the bank's counterparty, purpose or booking type and sets the account, the payee, tags or several of them. Without a rule for the account, Lentil learns from the words of the counterparty and purpose of transactions you have reviewed, and only then falls back to `Expenses:Uncategorized`. A rule with `add_tags = ["recurring"]` tags what it matches, and an optional `tags.toml` lists the tags you use, so `lentil check` can warn about typos ([Spec section 16](docs/SPEC.md#16-suggestion-rules)):
 
    ```toml
    [[rule]]
@@ -207,6 +207,8 @@ After a change in a text editor, `lentil check` validates the repository, and `l
 The app is the triage client: it shows a queue of open transactions, newest first, and one tap confirms one.
 
 - It changes a counter account through search and recently used accounts, and opens a missing account directly. Changing the account confirms the transaction.
+- With "Always book like this" switched on, it turns a correction into a rule on words you pick from the counterparty and purpose. The rule goes to the top of `rules.toml`, and the other open transactions it matches get the account as their suggestion and stay open. Without the switch, changing the account stays one tap.
+- Every account change also refreshes the open transactions still on `Expenses:Uncategorized` with what Lentil has learned, and they stay open.
 - It dismisses a duplicate, for example a transaction imported again after the bank changed its wording. The transaction stays in its file as a comment and is never imported again.
 - It shows the tags of each transaction. A tag's × removes it, and "Add tag" picks one from `tags.toml`, or from the tags the ledger already uses while `tags.toml` is missing or unreadable. Picking a tag replaces the other member of its exclusive group in `tags.toml`, and tagging never confirms a transaction.
 - It records trips: start one in the menu when you leave and end it when you are back. Open transactions dated from the start to three days after the end get the trip's tag suggested, and one tap accepts it.
