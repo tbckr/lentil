@@ -385,6 +385,7 @@ private fun LedgerError.toSyncStatus(): SyncStatus =
         is LedgerError.Blocked -> SyncStatus.Blocked(findings)
         is LedgerError.ReadOnly -> SyncStatus.ReadOnly(findings)
         LedgerError.LocalChanges -> SyncStatus.Failed("local changes")
+        LedgerError.NotCorrectable -> SyncStatus.Failed("transaction changed")
         is LedgerError.Io -> SyncStatus.Failed(detail)
         is LedgerError.Other -> SyncStatus.Failed(detail)
     }

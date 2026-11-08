@@ -2,6 +2,7 @@ package app.lentil.ui
 
 import app.lentil.data.Author
 import app.lentil.data.Connection
+import app.lentil.data.Correction
 import app.lentil.data.Credentials
 import app.lentil.data.Identity
 import app.lentil.data.Intent
@@ -14,6 +15,7 @@ import app.lentil.data.LedgerException
 import app.lentil.data.LedgerRepository
 import app.lentil.data.LedgerView
 import app.lentil.data.QueueEntry
+import app.lentil.data.RuleWords
 import app.lentil.data.SecretStore
 import app.lentil.data.SettingsStore
 import app.lentil.data.StoredIntent
@@ -85,6 +87,11 @@ class FakeLedger(
     var choices = TagChoices(emptyList(), emptyList(), TagSource.Taxonomy)
     var picks: (String, String) -> List<Intent> = { id, tag -> listOf(Intent.AddTag(id, tag)) }
     val picked = mutableListOf<Pair<String, String>>()
+    var preview = 0
+
+    /** What the core's learned refresh and the rule move besides the corrected transaction. */
+    var followUps = emptyList<Intent>()
+    val corrections = mutableListOf<CorrectionCall>()
 
     /** If set, a sync waits for it, so a test can act while the sync runs. */
     var syncGate: CompletableDeferred<Unit>? = null
@@ -95,6 +102,13 @@ class FakeLedger(
     val loads = mutableListOf<List<StoredIntent>>()
     val syncs = mutableListOf<SyncCall>()
     var cloned: Pair<String, Credentials>? = null
+
+    data class CorrectionCall(
+        val id: String,
+        val account: String,
+        val openDate: String?,
+        val rule: RuleWords?,
+    )
 
     data class SyncCall(
         val pending: List<StoredIntent>,
@@ -149,6 +163,55 @@ class FakeLedger(
         loadError?.let { throw LedgerException(it) }
         picked += id to tag
         return picks(id, tag)
+    }
+
+    override suspend fun rulePreview(
+        pending: List<StoredIntent>,
+        id: String,
+        account: String,
+        openDate: String?,
+        rule: RuleWords,
+    ): Int {
+        loadError?.let { throw LedgerException(it) }
+        return preview
+    }
+
+    /**
+     * The core's order: the account to open, the change and its confirmation, the rule, then
+     * [followUps]. The rule's regular expressions are the picked words joined by spaces, since the
+     * tests don't match text.
+     */
+    override suspend fun correct(
+        pending: List<StoredIntent>,
+        id: String,
+        account: String,
+        openDate: String?,
+        rule: RuleWords?,
+    ): Correction {
+        loadError?.let { throw LedgerException(it) }
+        corrections += CorrectionCall(id, account, openDate, rule)
+        val shown = queue.firstOrNull { it.id == id }
+        val change =
+            Intent.SetAccount(
+                id,
+                shown?.counterPosting ?: 1,
+                shown?.counterAccount ?: "Expenses:Uncategorized",
+                account,
+            )
+        val intents =
+            listOfNotNull(
+                openDate?.let { Intent.OpenAccount(account, it) },
+                change,
+                Intent.Confirm(id),
+                rule?.let {
+                    Intent.AddRule(
+                        counterparty = it.counterparty.joinToString(" ").ifEmpty { null },
+                        purpose = it.purpose.joinToString(" ").ifEmpty { null },
+                        account = account,
+                    )
+                },
+            ) + followUps
+        return Correction(intents, moved = followUps.size)
     }
 
     override fun newManualId(device: String): String = "$device-01jc8m2w9z4f7q3r5t6v8x0y1a"

@@ -104,6 +104,46 @@ class IntentStateTest {
     }
 
     @Test
+    fun `new intents survive a round trip through the store`() = runTest {
+        val directory = Files.createTempDirectory("intents").toFile()
+        val file = directory.resolve("intents.json")
+        val store = JsonIntentStore(file)
+        val state =
+            IntentState(
+                pending =
+                    listOf(
+                        StoredIntent(
+                            "i",
+                            Intent.SuggestAccount(
+                                "giro-1",
+                                1,
+                                "Expenses:Uncategorized",
+                                "Expenses:Food",
+                            ),
+                            "i",
+                        ),
+                        StoredIntent(
+                            "j",
+                            Intent.AddRule(
+                                purpose = "(?i)(?:^|\\PL)streamflix(?:\\PL|$)",
+                                account = "Expenses:Subscriptions",
+                            ),
+                            "j",
+                        ),
+                    )
+            )
+
+        store.write(state)
+
+        val json = file.readText()
+        listOf("\"op\":\"suggest-account\"", "\"op\":\"add-rule\"").forEach {
+            assertTrue("missing $it in $json", json.contains(it))
+        }
+        assertEquals(state, store.read())
+        directory.deleteRecursively()
+    }
+
+    @Test
     fun `a missing file is an empty state`() = runTest {
         val directory = Files.createTempDirectory("intents").toFile()
 

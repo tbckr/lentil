@@ -21,6 +21,11 @@ data class QueueEntry(
     val tags: List<String> = emptyList(),
     /** The tag of the trip its date lies in, until the user accepts it (spec section 9). */
     val suggestedTag: String? = null,
+    /**
+     * The words of its counterparty and purpose that a rule from a correction can match; none
+     * unless it was imported from a configured source (PRD: FR-D14).
+     */
+    val ruleWords: RuleWords = RuleWords(emptyList(), emptyList()),
 ) {
     /** Whether the app can edit the transaction at all. */
     val editable: Boolean
@@ -86,6 +91,29 @@ data class TagChoices(
     val source: TagSource,
 )
 
+/**
+ * The words of a transaction's original counterparty and purpose that a rule can match, lowercase,
+ * in text order, each once; or the words the user picked from them.
+ */
+data class RuleWords(val counterparty: List<String>, val purpose: List<String>) {
+    /** Whether there is no word in either field. */
+    val isEmpty: Boolean
+        get() = counterparty.isEmpty() && purpose.isEmpty()
+}
+
+/** The intents of one account correction, as the core computes them for the app to record. */
+data class Correction(
+    /**
+     * In the order the core replays them: the user's own, then those of the rule and of the learned
+     * refresh.
+     */
+    val intents: List<Intent>,
+    /**
+     * How many other open transactions the [SuggestAccount][Intent.SuggestAccount] intents move.
+     */
+    val moved: Int,
+)
+
 /** What a sync did with one intent. */
 sealed interface IntentOutcome {
     data object Applied : IntentOutcome
@@ -129,6 +157,9 @@ sealed interface LedgerError {
 
     data object TooManyAttempts : LedgerError
 
+    /** The transaction to correct has changed meanwhile, for example on another device. */
+    data object NotCorrectable : LedgerError
+
     data class Io(val detail: String) : LedgerError
 
     data class Other(val detail: String) : LedgerError
@@ -139,6 +170,7 @@ class LedgerException(val error: LedgerError, cause: Throwable? = null) :
     Exception(error.toString(), cause)
 
 /** The Git clone and the core behind it: the app's I/O boundary to the ledger. */
+@Suppress("TooManyFunctions") // One function per call into the core.
 interface LedgerRepository {
     /** Whether a clone exists on the device. */
     fun hasClone(): Boolean
@@ -165,6 +197,31 @@ interface LedgerRepository {
 
     /** The intents of picking [tag] for transaction [id]: removing its rivals, then adding it. */
     suspend fun pickTag(pending: List<StoredIntent>, id: String, tag: String): List<Intent>
+
+    /**
+     * How many other open transactions the rule of [rule] would move when transaction [id] is
+     * corrected to [account], which is opened on [openDate] if that is not `null`.
+     */
+    suspend fun rulePreview(
+        pending: List<StoredIntent>,
+        id: String,
+        account: String,
+        openDate: String?,
+        rule: RuleWords,
+    ): Int
+
+    /**
+     * The intents of correcting transaction [id] to [account], which is opened on [openDate] if
+     * that is not `null`: the user's own, the rule of [rule] if it is not `null`, and the
+     * suggestions that move other open transactions with it.
+     */
+    suspend fun correct(
+        pending: List<StoredIntent>,
+        id: String,
+        account: String,
+        openDate: String?,
+        rule: RuleWords?,
+    ): Correction
 
     /** A new `lentil_id` for an entry this device creates, such as a trip event. */
     fun newManualId(device: String): String

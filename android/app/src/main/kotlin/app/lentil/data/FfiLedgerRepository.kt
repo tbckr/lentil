@@ -1,13 +1,17 @@
+@file:Suppress("TooManyFunctions") // One mapping per type of the generated bindings.
+
 package app.lentil.data
 
 import app.lentil.ffi.FfiAuthor
 import app.lentil.ffi.FfiChoiceSource
+import app.lentil.ffi.FfiCorrection
 import app.lentil.ffi.FfiCredentials
 import app.lentil.ffi.FfiFinding
 import app.lentil.ffi.FfiIdentity
 import app.lentil.ffi.FfiIntent
 import app.lentil.ffi.FfiOutcome
 import app.lentil.ffi.FfiPendingIntent
+import app.lentil.ffi.FfiRuleWords
 import app.lentil.ffi.FfiSeverity
 import app.lentil.ffi.FfiTagChoices
 import app.lentil.ffi.LentilException
@@ -71,6 +75,28 @@ class FfiLedgerRepository(
         tag: String,
     ): List<Intent> = call {
         repo().pickTag(pending.map { it.toFfi() }, id, tag).map { it.toIntent() }
+    }
+
+    override suspend fun rulePreview(
+        pending: List<StoredIntent>,
+        id: String,
+        account: String,
+        openDate: String?,
+        rule: RuleWords,
+    ): Int = call {
+        repo().rulePreview(pending.map { it.toFfi() }, id, account, openDate, rule.toFfi()).toInt()
+    }
+
+    override suspend fun correct(
+        pending: List<StoredIntent>,
+        id: String,
+        account: String,
+        openDate: String?,
+        rule: RuleWords?,
+    ): Correction = call {
+        repo()
+            .correct(pending.map { it.toFfi() }, id, account, openDate, rule?.toFfi())
+            .toCorrection()
     }
 
     override suspend fun sync(
@@ -146,8 +172,21 @@ private fun StoredIntent.toFfi(): FfiPendingIntent =
                         old = intent.old,
                         new = intent.new,
                     )
+                is Intent.SuggestAccount ->
+                    FfiIntent.SuggestAccount(
+                        id = intent.id,
+                        posting = intent.posting.toUInt(),
+                        old = intent.old,
+                        new = intent.new,
+                    )
                 is Intent.Dismiss -> FfiIntent.Dismiss(intent.id)
                 is Intent.OpenAccount -> FfiIntent.OpenAccount(intent.account, intent.date)
+                is Intent.AddRule ->
+                    FfiIntent.AddRule(
+                        counterparty = intent.counterparty,
+                        purpose = intent.purpose,
+                        account = intent.account,
+                    )
                 is Intent.AddTag -> FfiIntent.AddTag(intent.id, intent.tag)
                 is Intent.RemoveTag -> FfiIntent.RemoveTag(intent.id, intent.tag)
                 is Intent.StartTrip -> FfiIntent.StartTrip(intent.id, intent.date, intent.name)
@@ -160,13 +199,26 @@ private fun FfiIntent.toIntent(): Intent =
         is FfiIntent.Confirm -> Intent.Confirm(id)
         is FfiIntent.SetAccount ->
             Intent.SetAccount(id = id, posting = posting.toInt(), old = old, new = new)
+        is FfiIntent.SuggestAccount ->
+            Intent.SuggestAccount(id = id, posting = posting.toInt(), old = old, new = new)
         is FfiIntent.Dismiss -> Intent.Dismiss(id)
         is FfiIntent.OpenAccount -> Intent.OpenAccount(account, date)
+        is FfiIntent.AddRule ->
+            Intent.AddRule(counterparty = counterparty, purpose = purpose, account = account)
         is FfiIntent.AddTag -> Intent.AddTag(id, tag)
         is FfiIntent.RemoveTag -> Intent.RemoveTag(id, tag)
         is FfiIntent.StartTrip -> Intent.StartTrip(id, date, name)
         is FfiIntent.EndTrip -> Intent.EndTrip(id, date)
     }
+
+private fun FfiRuleWords.toWords(): RuleWords =
+    RuleWords(counterparty = counterparty, purpose = purpose)
+
+private fun RuleWords.toFfi(): FfiRuleWords =
+    FfiRuleWords(counterparty = counterparty, purpose = purpose)
+
+private fun FfiCorrection.toCorrection(): Correction =
+    Correction(intents = intents.map { it.toIntent() }, moved = moved.toInt())
 
 private fun FfiTagChoices.toChoices(): TagChoices =
     TagChoices(
@@ -196,6 +248,7 @@ private fun QueueItem.toEntry(): QueueEntry =
         line = line.toInt(),
         tags = tags,
         suggestedTag = suggestedTag,
+        ruleWords = ruleWords.toWords(),
     )
 
 private fun FfiFinding.toFinding(): Finding =
@@ -223,6 +276,7 @@ private fun LentilException.toError(): LedgerError =
         is LentilException.ReadOnly -> LedgerError.ReadOnly(findings.map { it.toFinding() })
         is LentilException.Blocked -> LedgerError.Blocked(findings.map { it.toFinding() })
         is LentilException.TooManyAttempts -> LedgerError.TooManyAttempts
+        is LentilException.NotCorrectable -> LedgerError.NotCorrectable
         is LentilException.Io -> LedgerError.Io(detail)
         is LentilException.Other -> LedgerError.Other(detail)
     }

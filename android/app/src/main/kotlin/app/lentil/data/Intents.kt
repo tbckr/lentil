@@ -15,6 +15,16 @@ sealed interface Intent {
     data class SetAccount(val id: String, val posting: Int, val old: String, val new: String) :
         Intent
 
+    /**
+     * Change the account of posting [posting] of transaction [id] from [old] to the computed
+     * suggestion [new], such as the account of a rule just added. The flag stays, so the
+     * transaction moves without being confirmed.
+     */
+    @Serializable
+    @SerialName("suggest-account")
+    data class SuggestAccount(val id: String, val posting: Int, val old: String, val new: String) :
+        Intent
+
     /** Comment out transaction [id] in place, for example a duplicate. */
     @Serializable @SerialName("dismiss") data class Dismiss(val id: String) : Intent
 
@@ -22,6 +32,19 @@ sealed interface Intent {
     @Serializable
     @SerialName("open-account")
     data class OpenAccount(val account: String, val date: String) : Intent
+
+    /**
+     * Insert a rule at the top of `rules.toml` that sets [account] for transactions whose original
+     * counterparty matches the regular expression [counterparty] and whose original purpose matches
+     * [purpose]; a `null` field is not matched.
+     */
+    @Serializable
+    @SerialName("add-rule")
+    data class AddRule(
+        val counterparty: String? = null,
+        val purpose: String? = null,
+        val account: String,
+    ) : Intent
 
     /** Add [tag], without `#`, to transaction [id]; it leaves the flag as it is. */
     @Serializable @SerialName("add-tag") data class AddTag(val id: String, val tag: String) : Intent

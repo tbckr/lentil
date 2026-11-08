@@ -78,8 +78,10 @@
 
     <string name="intent_confirm">Bestätigen</string>
     <string name="intent_set_account">Konto auf %1$s setzen</string>
+    <string name="intent_suggest_account">Als Vorschlag auf Konto %1$s umstellen</string>
     <string name="intent_dismiss">Als Duplikat verwerfen</string>
     <string name="intent_open_account">Konto %1$s eröffnen</string>
+    <string name="intent_add_rule">Regel hinzufügen, die das Konto %1$s setzt</string>
     <string name="intent_add_tag">Schlagwort #%1$s hinzufügen</string>
     <string name="intent_remove_tag">Schlagwort #%1$s entfernen</string>
     <string name="intent_start_trip">Reise %1$s starten</string>
@@ -153,6 +155,7 @@
     <string name="error_read_only">Das Haushaltsbuch hat Fehler, die nur ein Admin beheben kann.</string>
     <string name="error_blocked">Speichern nicht möglich: Das Haushaltsbuch hat Fehler.</string>
     <string name="error_too_many_attempts">Der Server ist ausgelastet. Versuche es später noch einmal.</string>
+    <string name="error_not_correctable">Diese Buchung hat sich inzwischen geändert.</string>
     <string name="error_io">Gerätespeicher nicht nutzbar: %1$s</string>
     <string name="error_other">Etwas ist schiefgegangen: %1$s</string>
 </resources>

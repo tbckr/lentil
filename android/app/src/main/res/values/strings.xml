@@ -85,8 +85,10 @@
     <!-- Intents in the conflict list -->
     <string name="intent_confirm">Confirm</string>
     <string name="intent_set_account">Set account to %1$s</string>
+    <string name="intent_suggest_account">Move to account %1$s as a suggestion</string>
     <string name="intent_dismiss">Dismiss as duplicate</string>
     <string name="intent_open_account">Open account %1$s</string>
+    <string name="intent_add_rule">Add a rule that sets account %1$s</string>
     <string name="intent_add_tag">Add tag #%1$s</string>
     <string name="intent_remove_tag">Remove tag #%1$s</string>
     <string name="intent_start_trip">Start trip %1$s</string>
@@ -165,6 +167,7 @@
     <string name="error_read_only">The ledger has problems that only an admin can fix.</string>
     <string name="error_blocked">Couldn\'t save: the ledger has problems.</string>
     <string name="error_too_many_attempts">The server is busy. Try again later.</string>
+    <string name="error_not_correctable">This transaction has changed in the meantime.</string>
     <string name="error_io">Couldn\'t use the device storage: %1$s</string>
     <string name="error_other">Something went wrong: %1$s</string>
 </resources>

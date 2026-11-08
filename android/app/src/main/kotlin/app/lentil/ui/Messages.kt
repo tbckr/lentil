@@ -141,8 +141,10 @@ fun intentText(intent: Intent): String =
     when (intent) {
         is Intent.Confirm -> stringResource(R.string.intent_confirm)
         is Intent.SetAccount -> stringResource(R.string.intent_set_account, intent.new)
+        is Intent.SuggestAccount -> stringResource(R.string.intent_suggest_account, intent.new)
         is Intent.Dismiss -> stringResource(R.string.intent_dismiss)
         is Intent.OpenAccount -> stringResource(R.string.intent_open_account, intent.account)
+        is Intent.AddRule -> stringResource(R.string.intent_add_rule, intent.account)
         is Intent.AddTag -> stringResource(R.string.intent_add_tag, intent.tag)
         is Intent.RemoveTag -> stringResource(R.string.intent_remove_tag, intent.tag)
         is Intent.StartTrip -> stringResource(R.string.intent_start_trip, intent.name)
@@ -159,6 +161,7 @@ fun errorText(error: LedgerError): String =
         is LedgerError.ReadOnly -> stringResource(R.string.error_read_only)
         is LedgerError.Blocked -> stringResource(R.string.error_blocked)
         LedgerError.TooManyAttempts -> stringResource(R.string.error_too_many_attempts)
+        LedgerError.NotCorrectable -> stringResource(R.string.error_not_correctable)
         is LedgerError.Io -> stringResource(R.string.error_io, error.detail)
         is LedgerError.Other -> stringResource(R.string.error_other, error.detail)
     }
