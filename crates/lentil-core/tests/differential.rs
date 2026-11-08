@@ -20,6 +20,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+use lentil_core::config::Config;
+use lentil_core::correction::{self, CorrectionRequest, RuleWords};
 use lentil_core::finding::FindingCode;
 use lentil_core::import::Original;
 use lentil_core::layout::{InitOptions, init_files};
@@ -617,6 +619,12 @@ fn letters(mut n: usize) -> String {
 /// One source with 50,000 reviewed transactions over ten years, 2,000
 /// counterparties and recurring words in the purpose, one run file per month.
 fn learner_repository() -> Snapshot {
+    learner_repository_with(|_| false)
+}
+
+/// [`learner_repository`], with transaction `i` open on the fallback account
+/// instead where `open(i)` holds.
+fn learner_repository_with(open: impl Fn(usize) -> bool) -> Snapshot {
     let mut files = init_files(&InitOptions {
         title: "Learner".into(),
         currency: "EUR".into(),
@@ -636,10 +644,14 @@ fn learner_repository() -> Snapshot {
             let day = i % 28 + 1;
             let counterparty = format!("MERCHANT {}", letters(i % 2_000));
             let purpose = format!("PURCHASE {} {}", letters(i % 97), letters(i % 13));
-            let counter = COUNTERS[(i % 2_000) % 5];
+            let (flag, counter) = if open(i) {
+                ('!', "Expenses:Uncategorized")
+            } else {
+                ('*', COUNTERS[(i % 2_000) % 5])
+            };
             write!(
                 text,
-                "{year}-{mon:02}-{day:02} * \"{counterparty}\" \"{purpose}\"\n  lentil_id: \"giro-{i:012}\"\n  lentil_counterparty: \"{counterparty}\"\n  lentil_purpose: \"{purpose}\"\n  Assets:Bank:Giro  -1.00 EUR\n  {counter}\n\n"
+                "{year}-{mon:02}-{day:02} {flag} \"{counterparty}\" \"{purpose}\"\n  lentil_id: \"giro-{i:012}\"\n  lentil_counterparty: \"{counterparty}\"\n  lentil_purpose: \"{purpose}\"\n  Assets:Bank:Giro  -1.00 EUR\n  {counter}\n\n"
             )
             .unwrap();
         }
@@ -681,4 +693,49 @@ fn learner_time() {
         texts.len()
     );
     assert!(elapsed < Duration::from_millis(500));
+}
+
+#[test]
+#[ignore = "performance measurement; run with --ignored --nocapture"]
+fn correction_time() {
+    // Every tenth transaction is open on the fallback account, the first one
+    // among them.
+    let mut files = learner_repository_with(|i| i % 10 == 0);
+    files.insert("lentil.toml", CONFIG);
+    let config = Config::parse(CONFIG).unwrap();
+    let ledger = ledger::load(&files, MAIN);
+    assert!(
+        ledger.errors.is_empty(),
+        "{:?}",
+        &ledger.errors[..ledger.errors.len().min(5)]
+    );
+    let id = format!("giro-{:012}", 0);
+    let words = correction::rule_words(ledger.find(&id).unwrap(), &config);
+    // The counterparty's words, as the app selects them.
+    let rule = RuleWords {
+        counterparty: words.counterparty,
+        purpose: vec![],
+    };
+    let request = CorrectionRequest {
+        id: &id,
+        account: COUNTERS[1],
+        open_date: None,
+        rule: Some(&rule),
+    };
+
+    let start = Instant::now();
+    let previewed = correction::preview(&ledger, &config, &request).unwrap();
+    let preview_time = start.elapsed();
+    let start = Instant::now();
+    let corrected = correction::correct(&files, &config, &request).unwrap();
+    let correct_time = start.elapsed();
+    println!(
+        "correction::preview on {TOTAL} transactions ({previewed} moved by the rule): {preview_time:?}"
+    );
+    println!(
+        "correction::correct on the same ledger ({} intents, {} moved): {correct_time:?}",
+        corrected.intents.len(),
+        corrected.moved
+    );
+    assert!(preview_time < Duration::from_secs(2));
 }

@@ -104,7 +104,7 @@ pub struct RuleChange {
 /// file of a configured source, except the source's opening balance
 /// transaction; open (`!`) ones always, and reviewed (`*`) ones only with
 /// [`ReapplyOptions::reviewed`].
-fn considered<'l>(
+pub(crate) fn considered<'l>(
     ledger: &'l Ledger,
     config: &'l Config,
     options: &ReapplyOptions,
@@ -454,7 +454,7 @@ where
 
 /// Index and account of the only posting of `txn` that is not on a source
 /// account, or `None` if there is none or more than one.
-fn counter_posting<'t>(txn: &'t Txn, config: &Config) -> Option<(usize, &'t str)> {
+pub(crate) fn counter_posting<'t>(txn: &'t Txn, config: &Config) -> Option<(usize, &'t str)> {
     let mut counters = txn
         .postings
         .iter()

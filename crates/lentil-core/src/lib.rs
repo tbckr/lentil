@@ -5,6 +5,7 @@
 //! traits in [`env`] and [`sync::GitBackend`].
 
 pub mod config;
+pub mod correction;
 pub mod edit;
 pub mod env;
 pub mod finding;

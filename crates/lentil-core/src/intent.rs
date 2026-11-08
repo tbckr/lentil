@@ -285,6 +285,18 @@ pub fn replay_for_device(
     replay_with_device(snapshot, config, intents, Some(device))
 }
 
+/// Like [`replay`], on `ledger`, which must be the ledger of `snapshot`, so
+/// a caller that has loaded it already does not load it again.
+#[must_use]
+pub(crate) fn replay_loaded(
+    snapshot: &Snapshot,
+    config: &Config,
+    ledger: &Ledger,
+    intents: &[PendingIntent],
+) -> ReplayResult {
+    replay_on(snapshot, config, ledger, intents, None)
+}
+
 fn replay_with_device(
     snapshot: &Snapshot,
     config: &Config,
@@ -292,7 +304,17 @@ fn replay_with_device(
     device: Option<&str>,
 ) -> ReplayResult {
     let ledger = ledger::load(snapshot, &config.main_file);
-    let mut replay = Replay::new(snapshot, config, &ledger);
+    replay_on(snapshot, config, &ledger, intents, device)
+}
+
+fn replay_on(
+    snapshot: &Snapshot,
+    config: &Config,
+    ledger: &Ledger,
+    intents: &[PendingIntent],
+    device: Option<&str>,
+) -> ReplayResult {
+    let mut replay = Replay::new(snapshot, config, ledger);
     replay.device = device;
     let mut outcomes: Vec<(String, Outcome)> = intents
         .iter()

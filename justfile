@@ -41,7 +41,7 @@ coverage *args:
 mutants *ref:
     scripts/mutation.sh "$@"
 
-# Measures the load time of a synthetic 50,000-transaction ledger.
+# Measures loading, validation, learning and a correction on a synthetic 50,000-transaction ledger.
 [group('rust')]
 load-time:
     cargo test -p lentil-core --release --test differential -- --ignored --nocapture
