@@ -6,6 +6,8 @@
 # counterparty. Without an account from a rule, the importer learns from
 # reviewed transactions, and only then uses fallback_account. `lentil rules
 # apply` applies changed rules to the open transactions already imported.
+# The app inserts rules from "Always book like this" before the first rule,
+# or at the end while there is none, so the newest one wins.
 #
 # [[rule]]
 # match = { source = "giro", counterparty = "(?i)^corner grocery" }

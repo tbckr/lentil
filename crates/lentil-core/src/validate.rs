@@ -18,7 +18,8 @@ use rustledger_parser::ParseResult;
 
 use crate::config::{CONFIG_FILE, Config, ConfigError, SourceConfig, is_valid_name};
 use crate::finding::{Finding, FindingCode, Severity};
-use crate::layout::{ACCOUNTS_FILE, FAVA_FILE, MAIN_INCLUDES, PLACEHOLDERS};
+use crate::import::{EditorRule, Rules};
+use crate::layout::{ACCOUNTS_FILE, FAVA_FILE, MAIN_INCLUDES, PLACEHOLDERS, RULES_FILE};
 use crate::ledger::{self, ConstructKind, Ledger, META_ID, PROTECTED_META};
 use crate::snapshot::{Change, Snapshot, glob_match, is_load_cache};
 use crate::tags::is_plain_name;
@@ -667,6 +668,10 @@ pub mod reason {
     /// A trip event an editor added has a value that is neither empty nor a
     /// trip name.
     pub const TRIP_NAME: &str = "trip-name";
+    /// An editor changed `rules.toml` other than by inserting rules of the
+    /// editor shape before its first rule, or at its end if it has none
+    /// (spec sections 13 and 16).
+    pub const RULES: &str = "rules";
 }
 
 fn check_write_areas(
@@ -693,6 +698,13 @@ fn check_write_areas(
                 match (source, after.text(path)) {
                     (Some(source), Some(text)) => areas.check_run_file(path, text, source),
                     _ => areas.outside(path, None, reason::PATH),
+                }
+            }
+            (Role::Editor, change) if change.path() == RULES_FILE => {
+                let path = change.path();
+                match (before.text(path), after.text(path)) {
+                    (Some(old), Some(new)) => areas.check_rules_insert(path, old, new),
+                    _ => areas.outside(path, None, reason::RULES),
                 }
             }
             (Role::Editor, Change::Added(path)) => match (context.device, after.text(path)) {
@@ -890,6 +902,69 @@ impl Areas<'_, '_> {
                 );
             }
         }
+    }
+
+    /// Editors change `rules.toml` only by inserting rules of the editor
+    /// shape (spec section 16) before the first rule of `old`, or at its end
+    /// if it has none, and the result must parse and pass the checks of
+    /// section 16 (spec section 13).
+    fn check_rules_insert(&mut self, path: &str, old: &str, new: &str) {
+        if !self.is_rules_insert(old, new) {
+            self.outside(path, None, reason::RULES);
+        }
+    }
+
+    /// Whether `new` is `old` with one run of text inserted that parses as
+    /// rules of the editor shape and has no comment line, such as the
+    /// blocks `add-rule` writes together with their blank-line separator
+    /// (spec section 10): editors insert rules, not comments. A comment
+    /// after a value on the same line is not looked for, but `new` must
+    /// have as many more rules as the run holds, so a run inside a comment
+    /// line does not count. A run that starts or ends like the text next to
+    /// it can lie at several places; one of them must have no rule of `old`
+    /// before it and, if `old` has no rules, only blank space after it.
+    fn is_rules_insert(&self, old: &str, new: &str) -> bool {
+        let Some(len) = new.len().checked_sub(old.len()) else {
+            return false;
+        };
+        // Without a valid configuration, which validation reports anyway,
+        // only the parse counts.
+        let Ok(new_rules) = Rules::parse(new) else {
+            return false;
+        };
+        if self
+            .config
+            .is_some_and(|config| new_rules.check(config).is_err())
+        {
+            return false;
+        }
+        let old_rules = Rules::parse(old).map_or(0, |rules| rules.len());
+        let (old_bytes, new_bytes) = (old.as_bytes(), new.as_bytes());
+        // Both at most `old.len()`: the inserted run starts at a `k` with
+        // `old[..k]` in common at the start and `old[k..]` at the end.
+        let prefix = old_bytes
+            .iter()
+            .zip(new_bytes)
+            .take_while(|(o, n)| o == n)
+            .count();
+        let suffix = old_bytes
+            .iter()
+            .rev()
+            .zip(new_bytes.iter().rev())
+            .take_while(|(o, n)| o == n)
+            .count();
+        let only_at_end = old_rules == 0;
+        // Once `new[..k]` is text, `k` is a character boundary of `old` too.
+        (old.len() - suffix..=prefix).any(|k| {
+            new.get(..k)
+                .is_some_and(|head| Rules::parse(head).is_ok_and(|rules| rules.is_empty()))
+                && new.get(k..k + len).is_some_and(|run| {
+                    EditorRule::parse_blocks(run)
+                        .is_some_and(|blocks| new_rules.len() == old_rules + blocks.len())
+                        && !run.lines().any(|line| line.trim_start().starts_with('#'))
+                })
+                && (!only_at_end || old[k..].trim().is_empty())
+        })
     }
 
     /// Editors change transactions only through the edit operations of spec
@@ -1198,6 +1273,7 @@ fn line_of(text: &str, offset: usize) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::import::insert_rule;
     use crate::layout::{InitOptions, init_files};
 
     const DEVICE: &str = "k7p2q9xd";
@@ -2778,22 +2854,275 @@ txn-free comment lines are fine too
     #[test]
     fn editor_never_changes_configuration_or_removes_files() {
         let cases = [
-            with(
-                &base(),
-                CONFIG_FILE,
-                "price_currencies = []",
-                "price_currencies = [\"USD\"]",
+            (
+                with(
+                    &base(),
+                    CONFIG_FILE,
+                    "price_currencies = []",
+                    "price_currencies = [\"USD\"]",
+                ),
+                "path",
             ),
-            appended(&base(), "rules.toml", "# more\n"),
-            appended(&base(), "sources/giro.toml", "# more\n"),
-            appended(&base(), FAVA_FILE, "; more\n"),
-            removed(&base(), CARD_RUN),
-            removed(&base(), "README.md"),
+            (appended(&base(), RULES_FILE, "# more\n"), "rules"),
+            (appended(&base(), "sources/giro.toml", "# more\n"), "path"),
+            (appended(&base(), FAVA_FILE, "; more\n"), "path"),
+            (removed(&base(), CARD_RUN), "path"),
+            (removed(&base(), "README.md"), "path"),
         ];
-        for files in cases {
+        for (files, reason) in cases {
             let v = editor(&files);
             assert_codes(&v, &[FindingCode::OutsideWriteArea]);
-            assert_eq!(args(&v, FindingCode::OutsideWriteArea, "reason"), ["path"]);
+            assert_eq!(args(&v, FindingCode::OutsideWriteArea, "reason"), [reason]);
+        }
+    }
+
+    // --- Rules from editors (spec sections 7, 13 and 16) ------------------
+
+    /// The rule of [`one_rule`].
+    const RULE: &str = "[[rule]]\nmatch = { counterparty = \"(?i)grocery\" }\npayee = \"Corner Grocery\"\naccount = \"Expenses:Food\"\n";
+
+    /// A rule of the editor shape in an inline array, without a header.
+    const INLINE: &str = "rule = [{ match = { purpose = '(?i)x' }, account = \"Expenses:Books\" }]";
+
+    /// A `rules.toml` with a header and [`RULE`] under its own comment.
+    fn one_rule() -> String {
+        format!("# Rules\n\n# Groceries\n{RULE}")
+    }
+
+    fn editor_rule(counterparty: &[&str], purpose: &[&str], account: &str) -> EditorRule {
+        let words = |words: &[&str]| words.iter().map(|w| (*w).to_owned()).collect::<Vec<_>>();
+        EditorRule::from_words(&words(counterparty), &words(purpose), account).unwrap()
+    }
+
+    /// `base()` with `rules` as its `rules.toml`.
+    fn with_rules(rules: &str) -> Snapshot {
+        inserted(&base(), RULES_FILE, rules)
+    }
+
+    /// The editor's validation of `before` with `rules.toml` set to `rules`.
+    fn rules_change(before: &Snapshot, rules: &str) -> Validation {
+        as_role(Role::Editor, before, &inserted(before, RULES_FILE, rules))
+    }
+
+    #[test]
+    fn editors_may_insert_rules_before_the_first_rule() {
+        let books = editor_rule(&["bookshop"], &[], "Expenses:Books").block();
+        let market = editor_rule(&["market"], &["vegetables"], "Expenses:Food").block();
+        let before = with_rules(&one_rule());
+        // One block, as add-rule inserts it: above the rule's comment.
+        let one = insert_rule(&one_rule(), &books);
+        assert_eq!(one, format!("# Rules\n\n{books}\n# Groceries\n{RULE}"));
+        assert_clean(&rules_change(&before, &one));
+        // Two blocks, the newest first.
+        let two = insert_rule(&one, &market);
+        assert_eq!(
+            two,
+            format!("# Rules\n\n{market}\n{books}\n# Groceries\n{RULE}")
+        );
+        assert_clean(&rules_change(&before, &two));
+        // Also between the rule and its comment, which is still before it.
+        let after = with(
+            &before,
+            RULES_FILE,
+            "[[rule]]",
+            &format!("{books}\n[[rule]]"),
+        );
+        assert_clean(&as_role(Role::Editor, &before, &after));
+        // A `#` inside a line is no comment line.
+        let hash = "[[rule]]\nmatch = { purpose = '(?i)order #' }\naccount = \"Expenses:Books\"\n";
+        assert_clean(&rules_change(&before, &insert_rule(&one_rule(), hash)));
+
+        // The first rule at the start of the file, after a byte order mark,
+        // with CRLF line breaks or without a final line break; each block
+        // starts like that rule.
+        for text in [
+            RULE.to_owned(),
+            format!("\u{feff}{RULE}"),
+            format!("\u{feff}# Groceries\n{RULE}"),
+            one_rule().replace('\n', "\r\n"),
+            one_rule().trim_end().to_owned(),
+        ] {
+            let before = with_rules(&text);
+            let one = insert_rule(&text, &books);
+            assert_clean(&rules_change(&before, &one));
+            assert_clean(&rules_change(&before, &insert_rule(&one, &market)));
+        }
+    }
+
+    #[test]
+    fn editors_may_insert_into_a_file_without_rules() {
+        let books = editor_rule(&["bookshop"], &[], "Expenses:Books").block();
+        let market = editor_rule(&[], &["vegetables"], "Expenses:Food").block();
+        // The commented examples that init writes: the block goes at the end.
+        let text = base().text(RULES_FILE).unwrap().to_owned();
+        let after = appended(&base(), RULES_FILE, &format!("\n{books}"));
+        assert_eq!(
+            after.text(RULES_FILE),
+            Some(insert_rule(&text, &books).as_str())
+        );
+        assert_clean(&editor(&after));
+        let two = insert_rule(&insert_rule(&text, &books), &market);
+        assert_clean(&rules_change(&base(), &two));
+        // A comment without a final line break, an empty file and a file
+        // with only a byte order mark.
+        for text in ["# no rules yet", "", "\u{feff}", "\u{feff}# no rules yet\n"] {
+            let before = with_rules(text);
+            let one = insert_rule(text, &books);
+            assert_clean(&rules_change(&before, &one));
+            assert_clean(&rules_change(&before, &insert_rule(&one, &market)));
+        }
+    }
+
+    #[test]
+    fn other_editor_changes_to_rules_toml_are_outside() {
+        let books = editor_rule(&["bookshop"], &[], "Expenses:Books").block();
+        let before = with_rules(&one_rule());
+        let first = |block: &str| insert_rule(&one_rule(), block);
+        let cases = [
+            // A comment appended.
+            (base(), appended(&base(), RULES_FILE, "# more\n")),
+            // A block among the comments of a file without rules, not at its end.
+            (
+                base(),
+                with(
+                    &base(),
+                    RULES_FILE,
+                    "#\n# [[rule]]\n",
+                    &format!("#\n{books}\n# [[rule]]\n"),
+                ),
+            ),
+            // The existing rule changed or removed, also next to a new block,
+            // and the file removed or created.
+            (
+                before.clone(),
+                with(&before, RULES_FILE, "Expenses:Food", "Expenses:Books"),
+            ),
+            (
+                before.clone(),
+                with_rules(&first(&books).replace("Expenses:Food", "Expenses:Books")),
+            ),
+            (before.clone(), with_rules("# Rules\n\n")),
+            (before.clone(), with_rules(&format!("# Rules\n\n{books}"))),
+            (before.clone(), removed(&before, RULES_FILE)),
+            (removed(&base(), RULES_FILE), base()),
+            // A block after the first rule.
+            (
+                before.clone(),
+                appended(&before, RULES_FILE, &format!("\n{books}")),
+            ),
+            // Blocks that are not in the editor shape.
+            (
+                before.clone(),
+                with_rules(&first(
+                    &books.replace("account", "payee = \"Bookshop\"\naccount"),
+                )),
+            ),
+            (
+                before.clone(),
+                with_rules(&first(&format!("{books}add_tags = [\"books\"]\n"))),
+            ),
+            (
+                before.clone(),
+                with_rules(&first(&books.replace("{ ", "{ source = \"card\", "))),
+            ),
+            (
+                before.clone(),
+                with_rules(&first(&books.replace("counterparty", "type"))),
+            ),
+            // A comment line in the inserted text, before or after a valid
+            // block, also indented or in a file without rules.
+            (
+                before.clone(),
+                with_rules(&first(&format!("# note\n{books}"))),
+            ),
+            (
+                before.clone(),
+                with_rules(&first(&format!("{books}# note\n"))),
+            ),
+            (
+                before.clone(),
+                with_rules(&first(&format!("{books}\n  # note\n"))),
+            ),
+            (
+                base(),
+                appended(&base(), RULES_FILE, &format!("\n{books}# note\n")),
+            ),
+            (
+                base(),
+                appended(&base(), RULES_FILE, &format!("\n# note\n{books}")),
+            ),
+            // A block whose account is a source account.
+            (
+                before.clone(),
+                with_rules(&first(
+                    &editor_rule(&["transfer"], &[], "Assets:Bank:Giro").block(),
+                )),
+            ),
+            // Blocks that leave the file unparsable: a regular expression that
+            // does not compile, an invalid account, and a block glued to a
+            // comment line, which comments out its header.
+            (
+                before.clone(),
+                with_rules(&first(
+                    "[[rule]]\nmatch = { counterparty = '(' }\naccount = \"Expenses:Books\"\n",
+                )),
+            ),
+            (
+                before.clone(),
+                with_rules(&first(&books.replace("Expenses:Books", "books"))),
+            ),
+            (
+                before.clone(),
+                with(
+                    &before,
+                    RULES_FILE,
+                    "# Groceries\n",
+                    &format!("# Groceries{books}\n"),
+                ),
+            ),
+            // Rules written into a comment line, which stay a comment: in
+            // front of the first rule and at the end of a file without
+            // rules.
+            (
+                before.clone(),
+                with(&before, RULES_FILE, "# Rules", &format!("# {INLINE} Rules")),
+            ),
+            (
+                with_rules("# no rules yet"),
+                with_rules(&format!("# no rules yet {INLINE}")),
+            ),
+        ];
+        for (before, after) in cases {
+            let v = as_role(Role::Editor, &before, &after);
+            assert_codes(&v, &[FindingCode::OutsideWriteArea]);
+            assert_eq!(
+                args(&v, FindingCode::OutsideWriteArea, "reason"),
+                ["rules"],
+                "{:?}",
+                after.text(RULES_FILE)
+            );
+        }
+        // Rules the importer writes are still outside its write area.
+        let v = as_role(Role::Importer, &before, &with_rules(&first(&books)));
+        assert_codes(&v, &[FindingCode::OutsideWriteArea]);
+        assert_eq!(args(&v, FindingCode::OutsideWriteArea, "reason"), ["path"]);
+    }
+
+    #[test]
+    fn admins_still_change_rules_toml_freely() {
+        let books = editor_rule(&["bookshop"], &[], "Expenses:Books").block();
+        let before = with_rules(&one_rule());
+        for after in [
+            appended(&before, RULES_FILE, "# more\n"),
+            with(&before, RULES_FILE, "Expenses:Food", "Expenses:Books"),
+            appended(&before, RULES_FILE, &format!("\n{books}")),
+            with_rules(&insert_rule(
+                &one_rule(),
+                &format!("{books}add_tags = [\"books\"]\n"),
+            )),
+            with_rules(""),
+        ] {
+            assert_clean(&as_role(Role::Admin, &before, &after));
         }
     }
 

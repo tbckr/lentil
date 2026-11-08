@@ -192,6 +192,8 @@ const RULES: &str = r#"# Suggestion rules (Lentil Convention Spec, section 16). 
 # counterparty. Without an account from a rule, the importer learns from
 # reviewed transactions, and only then uses fallback_account. `lentil rules
 # apply` applies changed rules to the open transactions already imported.
+# The app inserts rules from "Always book like this" before the first rule,
+# or at the end while there is none, so the newest one wins.
 #
 # [[rule]]
 # match = { source = "giro", counterparty = "(?i)^corner grocery" }
@@ -240,7 +242,7 @@ Every file has exactly one kind of writer, and fixed include patterns in `main.b
 | `main.beancount` | Entry point: two options and five includes; never change the includes | Admin |
 | `fava.beancount` | Fava options and sidebar links | Admin |
 | `accounts.beancount` | `open`, `close` and `commodity` directives | Admin; editors append `open` directives |
-| `rules.toml` | Suggestion rules for imports and `lentil rules apply` | Admin |
+| `rules.toml` | Suggestion rules for imports and `lentil rules apply` | Admin; editors insert rules at the top |
 | `tags.toml` | Optional tag taxonomy: known tags, families and exclusive groups; `lentil init` does not write it | Admin |
 | `sources/<source-id>.toml` | CSV mapping of one source | Admin |
 | `imports/<source-id>/<YYYY>/<YYYYMMDDTHHMMSSZ>.beancount` | One import run | Importer |
@@ -283,7 +285,7 @@ Tags such as `#recurring` mark transactions for evaluations across accounts.
 Every change belongs to one role, and validation rejects changes outside that role's area.
 
 - **Importer** (`lentil import`): only creates new run files under `imports/<source-id>/` and never changes existing files.
-- **Editor** (the Android app, `lentil rules apply`): changes the flag, payee, narration, tags, links, metadata and the counter account of existing transactions, comments out duplicates, appends `open` directives to `accounts.beancount` and writes only its own `manual/<device-id>/` files.
+- **Editor** (the Android app, `lentil rules apply`): changes the flag, payee, narration, tags, links, metadata and the counter account of existing transactions, comments out duplicates, appends `open` directives to `accounts.beancount`, inserts rules at the top of `rules.toml` and writes only its own `manual/<device-id>/` files.
 - **Admin** (`lentil init`, a text editor followed by `lentil check`): may change anything, as long as the result still follows the convention.
 
 ## Protected metadata

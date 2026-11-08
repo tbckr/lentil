@@ -18,7 +18,7 @@ use std::time::Duration;
 use git2::Repository;
 use lentil_core::config::Config;
 use lentil_core::finding::{FindingCode, Severity};
-use lentil_core::import::{Rules, RulesError};
+use lentil_core::import::{EditorRule, Rules, RulesError};
 use lentil_core::intent::{Conflict, ConflictCode, Intent, Outcome, PendingIntent};
 use lentil_core::ledger::{self, Ledger};
 use lentil_core::reapply::{self, Field, Reapplied, ReapplyError, ReapplyOptions, TagRemoval};
@@ -1241,6 +1241,88 @@ fn trips_of_racing_devices_are_recorded_once_each() {
     );
     assert_eq!(again.commit, None);
     assert_eq!(remote.history().len(), 3);
+}
+
+/// The editor rule on the words of the counterparty and of the purpose.
+fn editor_rule(counterparty: &[&str], purpose: &[&str], account: &str) -> EditorRule {
+    let words = |words: &[&str]| words.iter().map(|w| (*w).to_owned()).collect::<Vec<_>>();
+    EditorRule::from_words(&words(counterparty), &words(purpose), account).unwrap()
+}
+
+fn add_rule(key: &str, rule: &EditorRule) -> PendingIntent {
+    PendingIntent {
+        key: key.to_owned(),
+        intent: Intent::AddRule {
+            counterparty: rule.counterparty.clone(),
+            purpose: rule.purpose.clone(),
+            account: rule.account.clone(),
+        },
+    }
+}
+
+#[test]
+fn two_devices_add_rules_at_the_same_time() {
+    const RULE: &str =
+        "[[rule]]\nmatch = { counterparty = \"^BAKERY$\" }\naccount = \"Expenses:Household\"\n";
+    let remote = Remote::with(&with_rules(RULE));
+    let mut a = Client::new("aaaaaaaa", "Alice");
+    let mut b = Client::new("bbbbbbbb", "Bob");
+    let rule_a = editor_rule(&["corner"], &[], "Expenses:Food:Groceries");
+    let rule_b = editor_rule(&[], &["utilities"], "Expenses:Utilities");
+    let intents_a = [add_rule("a1", &rule_a)];
+    let intents_b = [add_rule("b1", &rule_b)];
+
+    // B pushes while A is between fetch and push.
+    let mut git_b = b.clone_from(&remote);
+    let mut result_b = None;
+    let (result_a, pushes_a) = {
+        let mut git_a = Interleaved::new(
+            a.clone_from(&remote),
+            vec![Box::new(|| result_b = Some(b.sync(&mut git_b, &intents_b)))],
+        );
+        let result_a = a.sync(&mut git_a, &intents_a);
+        let pushes_a = git_a.pushes.clone();
+        drop(git_a);
+        (result_a, pushes_a)
+    };
+    let result_a = result_a.unwrap();
+    let result_b = result_b.unwrap().unwrap();
+    assert_eq!(outcomes(&result_a), vec![("a1", &Outcome::Applied)]);
+    assert_eq!(outcomes(&result_b), vec![("b1", &Outcome::Applied)]);
+    assert_eq!(pushes_a, vec![PushOutcome::Rejected, PushOutcome::Pushed]);
+    assert_eq!(a.sleeper.0, secs(&[1]));
+
+    // One linear chain: seed, B, A.
+    let history = remote.history();
+    let ids: Vec<_> = history.iter().map(|c| Some(c.id.clone())).collect();
+    assert_eq!(ids[1..], [result_b.commit.clone(), result_a.commit.clone()]);
+    assert_eq!(
+        history[1].message,
+        message("editor", "add-rule 1", "bbbbbbbb")
+    );
+    assert_eq!(
+        history[2].message,
+        message("editor", "add-rule 1", "aaaaaaaa")
+    );
+
+    // A's rule first, then B's, then the original one; nothing else changed.
+    let state = remote.snapshot();
+    assert_eq!(
+        state.text("rules.toml").unwrap(),
+        format!("{}\n{}\n{RULE}", rule_a.block(), rule_b.block())
+    );
+    let mut seeded = state.clone();
+    seeded.insert("rules.toml", RULE);
+    assert_eq!(seeded, with_rules(RULE));
+    let rules = Rules::parse(state.text("rules.toml").unwrap()).unwrap();
+    assert_eq!(
+        rules.accounts().collect::<Vec<_>>(),
+        [
+            (1, "Expenses:Food:Groceries"),
+            (2, "Expenses:Utilities"),
+            (3, "Expenses:Household")
+        ]
+    );
 }
 
 #[test]
