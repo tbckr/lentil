@@ -16,6 +16,14 @@ ignore = [
     # Unmaintained, not vulnerable; reaches us only through uniffi_bindgen at
     # build time. Revisit with the next UniFFI upgrade.
     { id = "RUSTSEC-2026-0374", reason = "build-time only, via uniffi_bindgen" },
+    # Heap overflow in zlib's gzwrite and gzprintf. libz-sys reaches us only
+    # through libgit2 and libssh2, which use zlib to deflate and inflate and
+    # call none of the gz functions. Revisit with the next git2 upgrade.
+    { id = "RUSTSEC-2026-0544", reason = "gz functions unused, via libgit2 and libssh2" },
+    # Stack overflow in Url::origin. url reaches us only through git2, which
+    # calls Url::parse, host and path, never origin.
+    # Revisit with the next git2 upgrade.
+    { id = "RUSTSEC-2026-0592", reason = "Url::origin unused, via git2" },
 ]
 
 [licenses]
